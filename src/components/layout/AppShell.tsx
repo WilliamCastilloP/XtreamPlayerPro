@@ -52,17 +52,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               : "bg-transparent"
           }`}
         >
-          {/* Fade veil so content vanishes under the header while scrolling */}
           <div
             className={`pointer-events-none absolute inset-x-0 top-full h-10 bg-gradient-to-b from-[rgba(11,15,20,0.9)] to-transparent transition-opacity duration-300 ${
               scrolled ? "opacity-100" : "opacity-0"
             }`}
           />
-          <div className="relative flex items-center justify-between">
+          <div className="relative flex items-center">
             <BrandMark size="sm" />
-            <span className="max-w-[42%] truncate rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-[var(--xp-muted)]">
-              {activePlaylist.name}
-            </span>
           </div>
         </header>
         <main className="flex-1">{children}</main>

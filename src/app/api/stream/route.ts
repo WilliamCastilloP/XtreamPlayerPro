@@ -1,5 +1,8 @@
 import { NextRequest } from "next/server";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 const HOP_BY_HOP = new Set([
   "connection",
   "keep-alive",
@@ -13,33 +16,66 @@ const HOP_BY_HOP = new Set([
   "content-length",
 ]);
 
+/** Panels often block unknown UAs; mimic a common browser. */
+const UPSTREAM_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+
 function rewritePlaylist(body: string, playlistUrl: string): string {
   const base = new URL(playlistUrl);
   return body
-    .split("\n")
+    .split(/\r?\n/)
     .map((line) => {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith("#")) {
+        if (trimmed.includes("URI=")) {
+          return line.replace(/URI="([^"]+)"/g, (_match, uri: string) => {
+            try {
+              const absolute = new URL(uri, base).toString();
+              return `URI="/api/stream?url=${encodeURIComponent(absolute)}"`;
+            } catch {
+              return `URI="${uri}"`;
+            }
+          });
+        }
         return line;
       }
 
-      let absolute: string;
       try {
-        absolute = new URL(trimmed, base).toString();
+        const absolute = new URL(trimmed, base).toString();
+        return `/api/stream?url=${encodeURIComponent(absolute)}`;
       } catch {
         return line;
       }
-
-      if (trimmed.endsWith(".m3u8") || trimmed.includes(".m3u8?")) {
-        return `/api/stream?url=${encodeURIComponent(absolute)}`;
-      }
-
-      return `/api/stream?url=${encodeURIComponent(absolute)}`;
     })
     .join("\n");
 }
 
-export async function GET(request: NextRequest) {
+function shouldBufferAsPlaylist(contentType: string, pathname: string) {
+  if (pathname.endsWith(".ts") || pathname.endsWith(".mp4") || pathname.endsWith(".mkv")) {
+    return false;
+  }
+  return (
+    contentType.includes("mpegurl") ||
+    contentType.includes("m3u8") ||
+    contentType.startsWith("text/") ||
+    pathname.endsWith(".m3u8") ||
+    // extensionless live URLs sometimes return HLS
+    /\/live\/[^/]+\/[^/]+\/[^/.]+$/i.test(pathname)
+  );
+}
+
+function corsHeaders(extra?: HeadersInit): Headers {
+  const headers = new Headers(extra);
+  headers.set("Access-Control-Allow-Origin", "*");
+  headers.set(
+    "Access-Control-Expose-Headers",
+    "Content-Length, Content-Range, Accept-Ranges",
+  );
+  headers.set("Cache-Control", "no-store");
+  return headers;
+}
+
+async function proxy(request: NextRequest) {
   const target = request.nextUrl.searchParams.get("url");
   if (!target) {
     return Response.json({ error: "Missing url" }, { status: 400 });
@@ -56,49 +92,68 @@ export async function GET(request: NextRequest) {
     return Response.json({ error: "Unsupported protocol" }, { status: 400 });
   }
 
+  const forwardHeaders: Record<string, string> = {
+    "User-Agent": UPSTREAM_UA,
+    Accept: "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+  };
+
+  const range = request.headers.get("range");
+  if (range) forwardHeaders.Range = range;
+  forwardHeaders.Referer = `${parsed.origin}/`;
+  forwardHeaders.Origin = parsed.origin;
+
   try {
     const upstream = await fetch(parsed.toString(), {
       cache: "no-store",
-      headers: {
-        "User-Agent": "XtreamPlayerPro/1.0",
-        Accept: "*/*",
-      },
+      headers: forwardHeaders,
       redirect: "follow",
     });
 
-    if (!upstream.ok) {
-      return new Response(`Upstream error ${upstream.status}`, {
-        status: upstream.status,
-      });
+    if (!upstream.ok && upstream.status !== 206) {
+      const detail = await upstream.text().catch(() => "");
+      return Response.json(
+        {
+          error: `Upstream error ${upstream.status}`,
+          detail: detail.slice(0, 240),
+        },
+        { status: upstream.status === 404 ? 404 : 502 },
+      );
     }
 
     const contentType = upstream.headers.get("content-type") || "";
-    const isPlaylist =
-      contentType.includes("mpegurl") ||
-      contentType.includes("m3u8") ||
-      parsed.pathname.endsWith(".m3u8");
+    const finalUrl = upstream.url || parsed.toString();
+    const finalPath = new URL(finalUrl).pathname;
 
-    if (isPlaylist) {
+    if (shouldBufferAsPlaylist(contentType, finalPath)) {
       const text = await upstream.text();
-      const rewritten = rewritePlaylist(text, parsed.toString());
-      return new Response(rewritten, {
-        status: 200,
-        headers: {
-          "Content-Type": "application/vnd.apple.mpegurl",
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "no-store",
-        },
-      });
+      if (text.includes("#EXTM3U")) {
+        const rewritten = rewritePlaylist(text, finalUrl);
+        return new Response(rewritten, {
+          status: 200,
+          headers: corsHeaders({
+            "Content-Type": "application/vnd.apple.mpegurl",
+          }),
+        });
+      }
+
+      // Claimed playlist but wasn't — stream original text/bytes through
+      const headers = corsHeaders();
+      headers.set("Content-Type", contentType || "application/octet-stream");
+      return new Response(text, { status: upstream.status, headers });
     }
 
-    const headers = new Headers();
+    const headers = corsHeaders();
     upstream.headers.forEach((value, key) => {
       if (!HOP_BY_HOP.has(key.toLowerCase())) {
         headers.set(key, value);
       }
     });
-    headers.set("Access-Control-Allow-Origin", "*");
-    headers.set("Cache-Control", "no-store");
+    if (!headers.has("Content-Type")) {
+      if (finalPath.endsWith(".ts")) headers.set("Content-Type", "video/mp2t");
+      else if (finalPath.endsWith(".mp4")) headers.set("Content-Type", "video/mp4");
+      else headers.set("Content-Type", contentType || "application/octet-stream");
+    }
 
     return new Response(upstream.body, {
       status: upstream.status,
@@ -109,4 +164,24 @@ export async function GET(request: NextRequest) {
       error instanceof Error ? error.message : "Stream proxy failed";
     return Response.json({ error: message }, { status: 502 });
   }
+}
+
+export async function GET(request: NextRequest) {
+  return proxy(request);
+}
+
+export async function HEAD(request: NextRequest) {
+  return proxy(request);
+}
+
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+      "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
+      "Access-Control-Max-Age": "86400",
+    },
+  });
 }

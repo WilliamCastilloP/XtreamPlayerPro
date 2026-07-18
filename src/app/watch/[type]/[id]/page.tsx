@@ -5,7 +5,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { VideoPlayer } from "@/components/player/VideoPlayer";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import { upsertContinue } from "@/lib/library/storage";
-import { buildProxiedStreamUrl } from "@/lib/xtream/urls";
+import { buildStreamCandidates } from "@/lib/xtream/urls";
 import type { StreamKind } from "@/lib/xtream/types";
 
 function WatchInner() {
@@ -16,7 +16,7 @@ function WatchInner() {
 
   const kind = params.type as StreamKind;
   const title = search.get("title") || "Now playing";
-  const ext = search.get("ext") || "m3u8";
+  const ext = search.get("ext") || "";
   const image = search.get("image") || undefined;
   const seriesId = search.get("seriesId") || undefined;
   const season = search.get("season") || undefined;
@@ -29,21 +29,14 @@ function WatchInner() {
     }
   }, [ready, activePlaylist, router]);
 
-  const src = useMemo(() => {
-    if (!credentials) return "";
-    const extension =
-      kind === "live"
-        ? "m3u8"
-        : ext.includes("m3u8")
-          ? "m3u8"
-          : ext || "mp4";
-    const streamExt =
-      kind === "live"
-        ? "m3u8"
-        : extension === "mp4" || extension === "mkv" || extension === "ts"
-          ? extension
-          : "m3u8";
-    return buildProxiedStreamUrl(credentials, kind, params.id, streamExt);
+  const sources = useMemo(() => {
+    if (!credentials) return [];
+    return buildStreamCandidates(
+      credentials,
+      kind,
+      params.id,
+      kind === "live" ? "m3u8" : ext || undefined,
+    );
   }, [credentials, kind, params.id, ext]);
 
   const onProgress = useCallback(
@@ -76,7 +69,7 @@ function WatchInner() {
     ],
   );
 
-  if (!ready || !credentials || !src) {
+  if (!ready || !credentials || !sources.length) {
     return (
       <div className="flex h-dvh items-center justify-center bg-black text-white/70">
         Preparing player…
@@ -94,7 +87,7 @@ function WatchInner() {
 
   return (
     <VideoPlayer
-      src={src}
+      sources={sources}
       title={title}
       poster={image}
       onProgress={onProgress}

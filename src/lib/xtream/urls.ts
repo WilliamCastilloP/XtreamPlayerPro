@@ -24,6 +24,11 @@ export function buildPlayerApiUrl(
   return url.toString();
 }
 
+/** Path-safe credential segment (Xtream expects these in the URL path). */
+function pathSegment(value: string): string {
+  return encodeURIComponent(value).replace(/%40/g, "@");
+}
+
 export function buildDirectStreamUrl(
   credentials: XtreamCredentials,
   kind: StreamKind,
@@ -32,15 +37,62 @@ export function buildDirectStreamUrl(
 ): string {
   const base = normalizeServerUrl(credentials.serverUrl);
   const pathKind = kind === "movie" ? "movie" : kind;
-  return `${base}/${pathKind}/${encodeURIComponent(credentials.username)}/${encodeURIComponent(credentials.password)}/${streamId}.${extension}`;
+  const user = pathSegment(credentials.username);
+  const pass = pathSegment(credentials.password);
+  const ext = extension.replace(/^\./, "");
+  if (!ext) {
+    return `${base}/${pathKind}/${user}/${pass}/${streamId}`;
+  }
+  return `${base}/${pathKind}/${user}/${pass}/${streamId}.${ext}`;
 }
 
-export function buildProxiedStreamUrl(
+export function buildProxiedStreamUrl(directUrl: string): string {
+  return `/api/stream?url=${encodeURIComponent(directUrl)}`;
+}
+
+/**
+ * Candidate stream URLs for a given asset. Order matters: first success wins.
+ * Live panels vary between HLS (.m3u8) and MPEG-TS (.ts).
+ */
+export function buildStreamCandidates(
   credentials: XtreamCredentials,
   kind: StreamKind,
   streamId: string | number,
-  extension = "m3u8",
-): string {
-  const direct = buildDirectStreamUrl(credentials, kind, streamId, extension);
-  return `/api/stream?url=${encodeURIComponent(direct)}`;
+  preferredExt?: string,
+): string[] {
+  const preferred = preferredExt?.replace(/^\./, "").toLowerCase();
+  const extensions: string[] =
+    kind === "live"
+      ? ["m3u8", "ts", ""]
+      : preferred
+        ? [preferred, preferred === "m3u8" ? "mp4" : "m3u8", "mp4", "mkv", "ts"]
+        : ["mp4", "m3u8", "mkv", "ts"];
+
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const ext of extensions) {
+    const direct = buildDirectStreamUrl(credentials, kind, streamId, ext);
+    if (seen.has(direct)) continue;
+    seen.add(direct);
+    urls.push(buildProxiedStreamUrl(direct));
+  }
+  return urls;
+}
+
+export function looksLikeHlsUrl(url: string): boolean {
+  const decoded = (() => {
+    try {
+      const param = new URL(url, "http://local").searchParams.get("url");
+      return param || url;
+    } catch {
+      return url;
+    }
+  })();
+
+  if (/\.(mp4|mkv|avi|mov)(\?|$)/i.test(decoded)) return false;
+  if (/\.ts(\?|$)/i.test(decoded)) return false;
+  if (decoded.includes(".m3u8") || decoded.includes("mpegurl")) return true;
+
+  // Extensionless live URLs are often HLS manifests
+  return /\/live\/[^/]+\/[^/]+\/[^/.]+$/i.test(decoded);
 }

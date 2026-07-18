@@ -1,0 +1,66 @@
+"use client";
+
+import Link from "next/link";
+import { PosterCard } from "./PosterCard";
+
+export type MediaRowItem = {
+  key: string;
+  href: string;
+  title: string;
+  image?: string;
+  subtitle?: string;
+  aspect?: "poster" | "live";
+};
+
+type Props = {
+  title: string;
+  href?: string;
+  items: MediaRowItem[];
+  emptyLabel?: string;
+};
+
+export function MediaRow({ title, href, items, emptyLabel }: Props) {
+  if (!items.length) {
+    return emptyLabel ? (
+      <section className="xp-fade-in space-y-3">
+        <h2 className="px-4 font-[family-name:var(--xp-font-display)] text-lg font-semibold md:px-6 md:text-xl">
+          {title}
+        </h2>
+        <p className="px-4 text-sm text-[var(--xp-muted)] md:px-6">
+          {emptyLabel}
+        </p>
+      </section>
+    ) : null;
+  }
+
+  return (
+    <section className="xp-fade-in space-y-3">
+      <div className="flex items-end justify-between px-4 md:px-6">
+        <h2 className="font-[family-name:var(--xp-font-display)] text-lg font-semibold md:text-xl">
+          {title}
+        </h2>
+        {href ? (
+          <Link
+            href={href}
+            className="text-sm text-[var(--xp-accent)] hover:underline"
+          >
+            See all
+          </Link>
+        ) : null}
+      </div>
+      <div className="flex gap-3 overflow-x-auto px-4 pb-1 scrollbar-none md:px-6">
+        {items.map((item) => (
+          <div key={item.key} className="w-28 shrink-0 md:w-36">
+            <PosterCard
+              href={item.href}
+              title={item.title}
+              image={item.image}
+              subtitle={item.subtitle}
+              aspect={item.aspect}
+            />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}

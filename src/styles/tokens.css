@@ -1,0 +1,15 @@
+:root {
+  --xp-ink: #0b0f14;
+  --xp-charcoal: #121820;
+  --xp-surface: #1a222d;
+  --xp-surface-2: #243040;
+  --xp-border: rgba(255, 255, 255, 0.08);
+  --xp-text: #eef3f8;
+  --xp-muted: #8b9aab;
+  --xp-accent: #2ee6a6;
+  --xp-accent-dim: rgba(46, 230, 166, 0.16);
+  --xp-danger: #ff6b7a;
+  --xp-radius: 14px;
+  --xp-font-display: var(--font-syne), ui-sans-serif, sans-serif;
+  --xp-font-ui: var(--font-figtree), ui-sans-serif, sans-serif;
+}

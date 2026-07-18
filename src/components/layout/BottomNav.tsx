@@ -1,0 +1,56 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import {
+  Clapperboard,
+  Heart,
+  Radio,
+  Search,
+  Tv2,
+  UserRound,
+} from "lucide-react";
+
+const items = [
+  { href: "/live", label: "Live", icon: Radio },
+  { href: "/movies", label: "Movies", icon: Clapperboard },
+  { href: "/series", label: "Series", icon: Tv2 },
+  { href: "/search", label: "Search", icon: Search },
+  { href: "/account", label: "Account", icon: UserRound },
+];
+
+export function BottomNav() {
+  const pathname = usePathname();
+
+  return (
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--xp-border)] bg-[rgba(11,15,20,0.92)] backdrop-blur-xl md:hidden">
+      <ul className="mx-auto flex max-w-lg items-stretch justify-between px-2 pb-[env(safe-area-inset-bottom)] pt-1">
+        {items.map(({ href, label, icon: Icon }) => {
+          const active =
+            pathname === href ||
+            (href !== "/" && pathname.startsWith(href)) ||
+            (href === "/account" && pathname.startsWith("/favorites"));
+          return (
+            <li key={href} className="flex-1">
+              <Link
+                href={href}
+                className={`flex flex-col items-center gap-0.5 px-1 py-2 text-[10px] ${
+                  active
+                    ? "text-[var(--xp-accent)]"
+                    : "text-[var(--xp-muted)]"
+                }`}
+              >
+                <Icon className="h-5 w-5" />
+                <span>{label}</span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+      <Link href="/favorites" className="sr-only">
+        Favorites
+        <Heart />
+      </Link>
+    </nav>
+  );
+}

@@ -6,10 +6,7 @@ import Link from "next/link";
 import { CategoryChips } from "@/components/catalog/CategoryChips";
 import { ChannelSkeletonList } from "@/components/catalog/Skeleton";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
-import {
-  isFavorite,
-  toggleFavorite,
-} from "@/lib/library/storage";
+import { isFavorite, toggleFavorite } from "@/lib/library/storage";
 import {
   getLiveCategories,
   getLiveStreams,
@@ -22,7 +19,6 @@ function decodeMaybeBase64(value?: string) {
   if (!value) return "";
   try {
     if (typeof window === "undefined") return value;
-    // Xtream often base64-encodes EPG titles
     if (/^[A-Za-z0-9+/=]+$/.test(value) && value.length % 4 === 0) {
       const decoded = atob(value);
       if (/^[\x20-\x7E\s]+$/.test(decoded)) return decoded;
@@ -40,39 +36,60 @@ export default function LivePage() {
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [selected, setSelected] = useState<LiveStream | null>(null);
   const [epg, setEpg] = useState<ShortEpgListing[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loadingCats, setLoadingCats] = useState(true);
+  const [loadingStreams, setLoadingStreams] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [favTick, setFavTick] = useState(0);
 
+  // Load categories only — never fetch every live channel at once (crashes UI)
   useEffect(() => {
     if (!credentials) return;
     let cancelled = false;
-    async function load() {
-      setLoading(true);
+    async function loadCats() {
+      setLoadingCats(true);
       setError(null);
       try {
-        const [cats, live] = await Promise.all([
-          getLiveCategories(credentials!),
-          getLiveStreams(credentials!, categoryId || undefined),
-        ]);
+        const cats = await getLiveCategories(credentials!);
         if (cancelled) return;
         setCategories(cats);
-        setStreams(live);
-        setSelected((prev) => {
-          if (prev && live.some((s) => s.stream_id === prev.stream_id)) {
-            return prev;
-          }
-          return live[0] ?? null;
-        });
+        setCategoryId((prev) => prev ?? cats[0]?.category_id ?? null);
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load live");
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setLoadingCats(false);
       }
     }
-    void load();
+    void loadCats();
+    return () => {
+      cancelled = true;
+    };
+  }, [credentials]);
+
+  useEffect(() => {
+    if (!credentials || !categoryId) return;
+    const activeCategory = categoryId;
+    let cancelled = false;
+    async function loadStreams() {
+      setLoadingStreams(true);
+      setError(null);
+      try {
+        const live = await getLiveStreams(credentials!, activeCategory);
+        if (cancelled) return;
+        setStreams(live);
+        setSelected(live[0] ?? null);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load channels");
+          setStreams([]);
+          setSelected(null);
+        }
+      } finally {
+        if (!cancelled) setLoadingStreams(false);
+      }
+    }
+    void loadStreams();
     return () => {
       cancelled = true;
     };
@@ -108,25 +125,40 @@ export default function LivePage() {
           Live TV
         </h1>
         <p className="text-sm text-[var(--xp-muted)]">
-          Categories, channels, and short EPG
+          Pick a category, then a channel
         </p>
       </div>
 
       <div className="mt-4">
-        <CategoryChips
-          categories={categories}
-          activeId={categoryId}
-          onChange={setCategoryId}
-        />
+        {loadingCats ? (
+          <p className="px-4 text-sm text-[var(--xp-muted)] md:px-6">
+            Loading categories…
+          </p>
+        ) : (
+          <CategoryChips
+            categories={categories}
+            activeId={categoryId}
+            onChange={setCategoryId}
+            allLabel="Choose category"
+            hideAll
+          />
+        )}
       </div>
 
       {error ? (
         <p className="px-4 text-sm text-[var(--xp-danger)] md:px-6">{error}</p>
       ) : null}
 
-      {loading ? (
+      {!categoryId && !loadingCats ? (
+        <p className="px-4 py-10 text-sm text-[var(--xp-muted)] md:px-6">
+          Select a category to load channels. Loading all live channels at once
+          can freeze the app.
+        </p>
+      ) : null}
+
+      {loadingStreams ? (
         <ChannelSkeletonList />
-      ) : (
+      ) : categoryId ? (
         <div className="grid flex-1 gap-0 md:grid-cols-[minmax(0,1fr)_320px]">
           <ul className="divide-y divide-[var(--xp-border)] px-2 md:px-4">
             {streams.map((stream) => {
@@ -246,7 +278,7 @@ export default function LivePage() {
             )}
           </aside>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

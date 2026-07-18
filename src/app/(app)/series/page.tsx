@@ -13,22 +13,45 @@ export default function SeriesPage() {
   const [categories, setCategories] = useState<XtreamCategory[]>([]);
   const [items, setItems] = useState<SeriesItem[]>([]);
   const [categoryId, setCategoryId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadingCats, setLoadingCats] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!credentials) return;
     let cancelled = false;
+    async function loadCats() {
+      setLoadingCats(true);
+      setError(null);
+      try {
+        const cats = await getSeriesCategories(credentials!);
+        if (cancelled) return;
+        setCategories(cats);
+        setCategoryId((prev) => prev ?? cats[0]?.category_id ?? null);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load series");
+        }
+      } finally {
+        if (!cancelled) setLoadingCats(false);
+      }
+    }
+    void loadCats();
+    return () => {
+      cancelled = true;
+    };
+  }, [credentials]);
+
+  useEffect(() => {
+    if (!credentials || !categoryId) return;
+    const activeCategory = categoryId;
+    let cancelled = false;
     async function load() {
       setLoading(true);
       setError(null);
       try {
-        const [cats, series] = await Promise.all([
-          getSeriesCategories(credentials!),
-          getSeries(credentials!, categoryId || undefined),
-        ]);
+        const series = await getSeries(credentials!, activeCategory);
         if (cancelled) return;
-        setCategories(cats);
         setItems(series);
       } catch (err) {
         if (!cancelled) {
@@ -54,11 +77,18 @@ export default function SeriesPage() {
           Seasons and episodes, streaming-style
         </p>
       </div>
-      <CategoryChips
-        categories={categories}
-        activeId={categoryId}
-        onChange={setCategoryId}
-      />
+      {loadingCats ? (
+        <p className="px-4 text-sm text-[var(--xp-muted)] md:px-6">
+          Loading categories…
+        </p>
+      ) : (
+        <CategoryChips
+          categories={categories}
+          activeId={categoryId}
+          onChange={setCategoryId}
+          hideAll
+        />
+      )}
       {error ? (
         <p className="px-4 text-sm text-[var(--xp-danger)] md:px-6">{error}</p>
       ) : null}
@@ -77,7 +107,7 @@ export default function SeriesPage() {
           ))}
         </div>
       )}
-      {!loading && !items.length ? (
+      {!loading && !loadingCats && !items.length ? (
         <p className="px-4 text-sm text-[var(--xp-muted)] md:px-6">
           No series found.
         </p>

@@ -12,38 +12,56 @@ import {
   VolumeX,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { looksLikeHlsUrl } from "@/lib/xtream/urls";
+import {
+  looksLikeHlsUrl,
+  type StreamCandidate,
+} from "@/lib/xtream/urls";
 
 type Props = {
-  sources: string[];
+  sources: StreamCandidate[];
   title: string;
   poster?: string;
   onProgress?: (position: number, duration: number) => void;
 };
 
+function bufferPercent(video: HTMLVideoElement): number | null {
+  if (!video.duration || !Number.isFinite(video.duration) || video.duration <= 0) {
+    return null;
+  }
+  if (!video.buffered.length) return 0;
+  try {
+    const end = video.buffered.end(video.buffered.length - 1);
+    return Math.max(0, Math.min(100, Math.round((end / video.duration) * 100)));
+  } catch {
+    return null;
+  }
+}
+
 export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const router = useRouter();
   const [sourceIndex, setSourceIndex] = useState(0);
-  const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showChrome, setShowChrome] = useState(true);
   const [reloadToken, setReloadToken] = useState(0);
+  const [loadPercent, setLoadPercent] = useState(0);
+  const [statusText, setStatusText] = useState("Connecting…");
   const hideTimer = useRef<number | null>(null);
   const hlsRef = useRef<Hls | null>(null);
-  const sourcesKey = sources.join("|");
+  const sourcesKey = sources.map((s) => s.url).join("|");
   const [seenSourcesKey, setSeenSourcesKey] = useState(sourcesKey);
 
   if (sourcesKey !== seenSourcesKey) {
     setSeenSourcesKey(sourcesKey);
     setSourceIndex(0);
     setError(null);
-    setReady(false);
+    setLoadPercent(0);
   }
 
-  const src = sources[sourceIndex] || "";
+  const candidate = sources[sourceIndex];
+  const src = candidate?.url || "";
 
   const bumpChrome = () => {
     setShowChrome(true);
@@ -55,11 +73,15 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !src) return;
+    if (!video || !src || !candidate) return;
 
     let disposed = false;
+    let fragTotal = 0;
+    let fragLoaded = 0;
+
     setError(null);
-    setReady(false);
+    setLoadPercent(0);
+    setStatusText(`Connecting (${candidate.label})…`);
 
     if (hlsRef.current) {
       hlsRef.current.destroy();
@@ -79,6 +101,23 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       });
     };
 
+    const updateNativeBuffer = () => {
+      if (disposed) return;
+      const pct = bufferPercent(video);
+      if (pct !== null) {
+        setLoadPercent(pct);
+        if (video.readyState < 3) setStatusText(`Loading ${pct}%`);
+      } else if (video.buffered.length) {
+        try {
+          const secs = Math.round(video.buffered.end(video.buffered.length - 1));
+          setStatusText(`Buffering ${secs}s…`);
+          setLoadPercent(Math.min(95, secs * 5));
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
     const onTime = () => {
@@ -88,12 +127,27 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
     };
     const onNativeError = () => failOver();
     const onLoaded = () => {
-      if (!disposed) setReady(true);
+      if (!disposed) {
+        setLoadPercent(100);
+        setStatusText("Ready");
+      }
+    };
+    const onWaiting = () => {
+      if (!disposed) setStatusText("Buffering…");
+    };
+    const onPlayingEvt = () => {
+      if (!disposed) {
+        setLoadPercent((p) => Math.max(p, 100));
+        setStatusText("Playing");
+      }
     };
 
     video.addEventListener("play", onPlay);
     video.addEventListener("pause", onPause);
     video.addEventListener("timeupdate", onTime);
+    video.addEventListener("progress", updateNativeBuffer);
+    video.addEventListener("waiting", onWaiting);
+    video.addEventListener("playing", onPlayingEvt);
 
     const isHls = looksLikeHlsUrl(src);
     const useHlsJs = isHls && Hls.isSupported();
@@ -106,7 +160,9 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        maxBufferLength: 30,
+        maxBufferLength: 20,
+        maxMaxBufferLength: 40,
+        backBufferLength: 30,
         xhrSetup: (xhr) => {
           xhr.withCredentials = false;
         },
@@ -114,12 +170,33 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       hlsRef.current = hls;
       hls.loadSource(src);
       hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        if (!disposed) {
-          setReady(true);
-          void video.play().catch(() => undefined);
-        }
+
+      hls.on(Hls.Events.MANIFEST_PARSED, (_ev, data) => {
+        if (disposed) return;
+        fragTotal = Math.max(1, data.levels?.[0]?.details?.fragments?.length || 8);
+        setStatusText("Manifest loaded…");
+        setLoadPercent(8);
+        void video.play().catch(() => undefined);
       });
+
+      hls.on(Hls.Events.LEVEL_LOADED, (_ev, data) => {
+        if (disposed) return;
+        const total = data.details?.fragments?.length;
+        if (total) fragTotal = total;
+      });
+
+      hls.on(Hls.Events.FRAG_LOADED, () => {
+        if (disposed) return;
+        fragLoaded += 1;
+        const pct = Math.min(
+          99,
+          Math.round((fragLoaded / Math.max(fragTotal, fragLoaded + 2)) * 100),
+        );
+        setLoadPercent(pct);
+        setStatusText(`Loading ${pct}%`);
+        updateNativeBuffer();
+      });
+
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (disposed || !data.fatal) return;
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
@@ -157,6 +234,9 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       video.removeEventListener("play", onPlay);
       video.removeEventListener("pause", onPause);
       video.removeEventListener("timeupdate", onTime);
+      video.removeEventListener("progress", updateNativeBuffer);
+      video.removeEventListener("waiting", onWaiting);
+      video.removeEventListener("playing", onPlayingEvt);
       video.removeEventListener("loadedmetadata", onLoaded);
       video.removeEventListener("error", onNativeError);
       if (hlsRef.current) {
@@ -166,7 +246,7 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       video.removeAttribute("src");
       video.load();
     };
-  }, [src, onProgress, sources.length, reloadToken]);
+  }, [src, candidate, onProgress, sources.length, reloadToken]);
 
   useEffect(
     () => () => {
@@ -214,10 +294,12 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
 
   const retry = () => {
     setError(null);
-    setReady(false);
+    setLoadPercent(0);
     setSourceIndex(0);
     setReloadToken((n) => n + 1);
   };
+
+  const showLoader = !error && !playing && loadPercent < 100;
 
   return (
     <div
@@ -230,9 +312,47 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
         className="h-full w-full object-contain"
         poster={poster}
         playsInline
+        preload="auto"
         controls={false}
         onClick={togglePlay}
       />
+
+      {showLoader ? (
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/45 px-6">
+          <div className="relative h-16 w-16">
+            <svg className="h-16 w-16 -rotate-90" viewBox="0 0 64 64">
+              <circle
+                cx="32"
+                cy="32"
+                r="28"
+                fill="none"
+                stroke="rgba(255,255,255,0.15)"
+                strokeWidth="4"
+              />
+              <circle
+                cx="32"
+                cy="32"
+                r="28"
+                fill="none"
+                stroke="var(--xp-accent)"
+                strokeWidth="4"
+                strokeLinecap="round"
+                strokeDasharray={`${Math.max(4, loadPercent * 1.76)} 176`}
+              />
+            </svg>
+            <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-white">
+              {loadPercent}%
+            </span>
+          </div>
+          <p className="text-sm text-white/80">{statusText}</p>
+          {sources.length > 1 ? (
+            <p className="text-xs text-white/50">
+              Source {sourceIndex + 1}/{sources.length}
+              {candidate ? ` · ${candidate.label}` : ""}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       <div
         className={`xp-player-chrome absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/50 transition-opacity duration-300 ${
@@ -252,14 +372,6 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
             <p className="truncate font-[family-name:var(--xp-font-display)] text-lg font-semibold text-white">
               {title}
             </p>
-            {!ready && !error ? (
-              <p className="text-xs text-white/60">
-                Loading stream
-                {sources.length > 1
-                  ? ` (${sourceIndex + 1}/${sources.length})…`
-                  : "…"}
-              </p>
-            ) : null}
           </div>
         </div>
 

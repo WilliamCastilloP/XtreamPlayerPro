@@ -16,7 +16,6 @@ const HOP_BY_HOP = new Set([
   "content-length",
 ]);
 
-/** Panels often block unknown UAs; mimic a common browser. */
 const UPSTREAM_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
@@ -50,8 +49,12 @@ function rewritePlaylist(body: string, playlistUrl: string): string {
     .join("\n");
 }
 
+function isLargeProgressivePath(pathname: string) {
+  return /\.(mp4|mkv|avi|mov|m4v)$/i.test(pathname);
+}
+
 function shouldBufferAsPlaylist(contentType: string, pathname: string) {
-  if (pathname.endsWith(".ts") || pathname.endsWith(".mp4") || pathname.endsWith(".mkv")) {
+  if (isLargeProgressivePath(pathname) || pathname.endsWith(".ts")) {
     return false;
   }
   return (
@@ -59,7 +62,6 @@ function shouldBufferAsPlaylist(contentType: string, pathname: string) {
     contentType.includes("m3u8") ||
     contentType.startsWith("text/") ||
     pathname.endsWith(".m3u8") ||
-    // extensionless live URLs sometimes return HLS
     /\/live\/[^/]+\/[^/]+\/[^/.]+$/i.test(pathname)
   );
 }
@@ -90,6 +92,12 @@ async function proxy(request: NextRequest) {
 
   if (!["http:", "https:"].includes(parsed.protocol)) {
     return Response.json({ error: "Unsupported protocol" }, { status: 400 });
+  }
+
+  // Never buffer multi‑GB VOD through the Next server — send the client straight
+  // to the panel. Native <video> can play cross-origin progressive media.
+  if (isLargeProgressivePath(parsed.pathname)) {
+    return Response.redirect(parsed.toString(), 302);
   }
 
   const forwardHeaders: Record<string, string> = {
@@ -125,6 +133,12 @@ async function proxy(request: NextRequest) {
     const finalUrl = upstream.url || parsed.toString();
     const finalPath = new URL(finalUrl).pathname;
 
+    // If upstream redirected a "live m3u8" request to a giant progressive file,
+    // bounce the client there instead of piping bytes through us.
+    if (isLargeProgressivePath(finalPath)) {
+      return Response.redirect(finalUrl, 302);
+    }
+
     if (shouldBufferAsPlaylist(contentType, finalPath)) {
       const text = await upstream.text();
       if (text.includes("#EXTM3U")) {
@@ -137,7 +151,6 @@ async function proxy(request: NextRequest) {
         });
       }
 
-      // Claimed playlist but wasn't — stream original text/bytes through
       const headers = corsHeaders();
       headers.set("Content-Type", contentType || "application/octet-stream");
       return new Response(text, { status: upstream.status, headers });
@@ -151,7 +164,6 @@ async function proxy(request: NextRequest) {
     });
     if (!headers.has("Content-Type")) {
       if (finalPath.endsWith(".ts")) headers.set("Content-Type", "video/mp2t");
-      else if (finalPath.endsWith(".mp4")) headers.set("Content-Type", "video/mp4");
       else headers.set("Content-Type", contentType || "application/octet-stream");
     }
 

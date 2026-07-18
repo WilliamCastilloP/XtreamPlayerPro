@@ -34,6 +34,14 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
   const hideTimer = useRef<number | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const sourcesKey = sources.join("|");
+  const [seenSourcesKey, setSeenSourcesKey] = useState(sourcesKey);
+
+  if (sourcesKey !== seenSourcesKey) {
+    setSeenSourcesKey(sourcesKey);
+    setSourceIndex(0);
+    setError(null);
+    setReady(false);
+  }
 
   const src = sources[sourceIndex] || "";
 
@@ -44,12 +52,6 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       if (playing) setShowChrome(false);
     }, 2800);
   };
-
-  useEffect(() => {
-    setSourceIndex(0);
-    setError(null);
-    setReady(false);
-  }, [sourcesKey]);
 
   useEffect(() => {
     const video = videoRef.current;

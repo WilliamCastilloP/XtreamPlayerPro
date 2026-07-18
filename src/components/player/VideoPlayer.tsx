@@ -80,6 +80,7 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
     let fragLoaded = 0;
 
     setError(null);
+    setPlaying(false);
     setLoadPercent(0);
     setStatusText(`Connecting (${candidate.label})…`);
 
@@ -92,6 +93,8 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
 
     const failOver = () => {
       if (disposed) return;
+      setStatusText("Trying next source…");
+      setLoadPercent(0);
       setSourceIndex((current) => {
         if (current + 1 < sources.length) return current + 1;
         queueMicrotask(() =>
@@ -299,7 +302,8 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
     setReloadToken((n) => n + 1);
   };
 
-  const showLoader = !error && !playing && loadPercent < 100;
+  // Keep loader visible until media is actually playing (not just "metadata ready")
+  const showLoader = !error && !playing;
 
   return (
     <div
@@ -318,9 +322,9 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       />
 
       {showLoader ? (
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/45 px-6">
-          <div className="relative h-16 w-16">
-            <svg className="h-16 w-16 -rotate-90" viewBox="0 0 64 64">
+        <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black/55 px-6">
+          <div className="relative h-20 w-20">
+            <svg className="h-20 w-20 -rotate-90" viewBox="0 0 64 64">
               <circle
                 cx="32"
                 cy="32"
@@ -337,14 +341,18 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
                 stroke="var(--xp-accent)"
                 strokeWidth="4"
                 strokeLinecap="round"
-                strokeDasharray={`${Math.max(4, loadPercent * 1.76)} 176`}
+                strokeDasharray={`${Math.max(6, (loadPercent || 8) * 1.76)} 176`}
+                className={loadPercent < 5 ? "animate-pulse" : undefined}
               />
             </svg>
             <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-white">
-              {loadPercent}%
+              {Math.max(loadPercent, 1)}%
             </span>
           </div>
-          <p className="text-sm text-white/80">{statusText}</p>
+          <p className="text-center text-sm text-white/90">{statusText}</p>
+          <p className="text-center text-xs text-white/55">
+            Rotate your phone for a wider view
+          </p>
           {sources.length > 1 ? (
             <p className="text-xs text-white/50">
               Source {sourceIndex + 1}/{sources.length}

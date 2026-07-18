@@ -1,9 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Heart, Play } from "lucide-react";
+import { TitleHero } from "@/components/catalog/TitleHero";
 import { Shimmer } from "@/components/catalog/Skeleton";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import { isFavorite, toggleFavorite } from "@/lib/library/storage";
@@ -46,6 +45,14 @@ export default function MovieDetailPage() {
   const image = info?.info?.movie_image;
   const extension = info?.movie_data?.container_extension || "mp4";
   const streamId = info?.movie_data?.stream_id || params.id;
+  const meta = [
+    info?.info?.genre,
+    info?.info?.releasedate,
+    info?.info?.rating,
+    info?.info?.duration,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const fav = useMemo(() => {
     if (!activePlaylist) return false;
@@ -53,87 +60,53 @@ export default function MovieDetailPage() {
     return isFavorite(activePlaylist.id, "movie", streamId);
   }, [activePlaylist, streamId, favTick]);
 
-  return (
-    <div className="px-4 py-5 md:px-6 md:py-8">
-      <Link
-        href="/movies"
-        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--xp-muted)]"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Movies
-      </Link>
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <Shimmer className="aspect-[16/11] w-full sm:aspect-[21/9]" />
+        <div className="space-y-3 px-4">
+          <Shimmer className="h-8 w-2/3 rounded-lg" />
+          <Shimmer className="h-20 w-full rounded-lg" />
+        </div>
+      </div>
+    );
+  }
 
-      {loading ? (
-        <div className="grid gap-6 md:grid-cols-[220px_1fr]">
-          <Shimmer className="aspect-[2/3] w-full rounded-2xl" />
-          <div className="space-y-3">
-            <Shimmer className="h-8 w-2/3 rounded-lg" />
-            <Shimmer className="h-24 w-full rounded-lg" />
-          </div>
-        </div>
-      ) : error ? (
-        <p className="text-sm text-[var(--xp-danger)]">{error}</p>
-      ) : (
-        <div className="xp-fade-in grid gap-6 md:grid-cols-[220px_1fr]">
-          <div className="overflow-hidden rounded-2xl bg-[var(--xp-surface)]">
-            {image ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={image} alt="" className="aspect-[2/3] w-full object-cover" />
-            ) : (
-              <div className="flex aspect-[2/3] items-center justify-center text-sm text-[var(--xp-muted)]">
-                No artwork
-              </div>
-            )}
-          </div>
-          <div className="space-y-4">
-            <div>
-              <h1 className="font-[family-name:var(--xp-font-display)] text-3xl font-bold">
-                {title}
-              </h1>
-              <p className="mt-1 text-sm text-[var(--xp-muted)]">
-                {[info?.info?.genre, info?.info?.releasedate, info?.info?.rating]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </p>
-            </div>
-            <p className="max-w-2xl text-sm leading-relaxed text-[var(--xp-text)]/90">
-              {info?.info?.plot || "No synopsis available."}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <Link
-                href={watchPath("movie", streamId, {
-                  title,
-                  ext: extension,
-                  image: image || "",
-                })}
-                className="xp-btn xp-btn-primary"
-              >
-                <Play className="h-4 w-4 fill-current" />
-                Play
-              </Link>
-              <button
-                type="button"
-                className="xp-btn xp-btn-ghost"
-                onClick={() => {
-                  if (!activePlaylist) return;
-                  toggleFavorite(activePlaylist.id, {
-                    kind: "movie",
-                    title,
-                    image,
-                    streamId,
-                  });
-                  setFavTick((n) => n + 1);
-                }}
-              >
-                <Heart
-                  className={`h-4 w-4 ${fav ? "fill-[var(--xp-accent)] text-[var(--xp-accent)]" : ""}`}
-                />
-                Favorite
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+  if (error) {
+    return <p className="px-4 py-10 text-sm text-[var(--xp-danger)]">{error}</p>;
+  }
+
+  return (
+    <div className="xp-fade-in pb-8">
+      <TitleHero
+        backHref="/movies"
+        backLabel="Movies"
+        title={title}
+        meta={meta}
+        plot={info?.info?.plot || "No synopsis available."}
+        image={image}
+        playHref={watchPath("movie", streamId, {
+          title,
+          ext: extension,
+          image: image || "",
+        })}
+        favorited={fav}
+        onToggleFavorite={() => {
+          if (!activePlaylist) return;
+          toggleFavorite(activePlaylist.id, {
+            kind: "movie",
+            title,
+            image,
+            streamId,
+          });
+          setFavTick((n) => n + 1);
+        }}
+      />
+      <div className="hidden px-4 pt-4 md:block md:px-8">
+        <p className="max-w-3xl text-sm leading-relaxed text-[var(--xp-muted)]">
+          {info?.info?.cast ? `Cast: ${info.info.cast}` : null}
+        </p>
+      </div>
     </div>
   );
 }

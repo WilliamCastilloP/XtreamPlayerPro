@@ -29,6 +29,17 @@ function WatchInner() {
     }
   }, [ready, activePlaylist, router]);
 
+  // Soft-lock to landscape on mobile when supported (best-effort)
+  useEffect(() => {
+    const orient = screen.orientation as ScreenOrientation & {
+      lock?: (orientation: string) => Promise<void>;
+    };
+    void orient?.lock?.("landscape").catch(() => undefined);
+    return () => {
+      void screen.orientation?.unlock?.();
+    };
+  }, []);
+
   const sources = useMemo(() => {
     if (!credentials) return [];
     return buildStreamCandidates(
@@ -69,15 +80,16 @@ function WatchInner() {
     ],
   );
 
-  if (!ready || !credentials || !sources.length) {
+  if (!ready || !credentials) {
     return (
-      <div className="flex h-dvh items-center justify-center bg-black text-white/70">
-        Preparing player…
+      <div className="flex h-dvh flex-col items-center justify-center gap-3 bg-black text-white/80">
+        <div className="h-10 w-10 animate-pulse rounded-full border-2 border-[var(--xp-accent)] border-t-transparent" />
+        <p className="text-sm">Preparing player…</p>
       </div>
     );
   }
 
-  if (!["live", "movie", "series"].includes(kind)) {
+  if (!["live", "movie", "series"].includes(kind) || !sources.length) {
     return (
       <div className="flex h-dvh items-center justify-center bg-black text-white">
         Unknown stream type.
@@ -99,8 +111,9 @@ export default function WatchPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex h-dvh items-center justify-center bg-black text-white/70">
-          Preparing player…
+        <div className="flex h-dvh flex-col items-center justify-center gap-3 bg-black text-white/80">
+          <div className="h-10 w-10 animate-pulse rounded-full border-2 border-[var(--xp-accent)] border-t-transparent" />
+          <p className="text-sm">Preparing player…</p>
         </div>
       }
     >

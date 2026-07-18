@@ -22,24 +22,30 @@ type Props = {
   title: string;
   subtitle: string;
   embedded?: boolean;
-  /** How many category rails to load (keeps UI responsive) */
-  maxRails?: number;
 };
 
 type Rail = {
   id: string;
   name: string;
   items: MediaRowItem[];
+  totalCount: number;
+  href: string;
 };
 
 const BATCH = 3;
+/** Preview items per category rail — full list is on the category page */
+const PREVIEW_LIMIT = 6;
+
+function categoryHref(kind: BrowseKind, categoryId: string, name: string) {
+  const params = new URLSearchParams({ name });
+  return `/browse/${kind}/${encodeURIComponent(categoryId)}?${params.toString()}`;
+}
 
 export function BrowseRails({
   kind,
   title,
   subtitle,
   embedded = false,
-  maxRails = 12,
 }: Props) {
   const { credentials } = usePlaylists();
   const [rails, setRails] = useState<Rail[]>([]);
@@ -66,16 +72,16 @@ export function BrowseRails({
 
         if (cancelled) return;
         setTotalCategories(cats.length);
-        const picked = cats.slice(0, maxRails);
 
-        // Progressive batches — never download the entire panel as one giant JSON
+        // Progressive batches — preview only; full category on "Ver todo"
         const collected: Rail[] = [];
-        for (let i = 0; i < picked.length; i += BATCH) {
+        for (let i = 0; i < cats.length; i += BATCH) {
           if (cancelled) return;
           if (i > 0) setLoadingMore(true);
-          const chunk = picked.slice(i, i + BATCH);
+          const chunk = cats.slice(i, i + BATCH);
           const batchRails = await Promise.all(
             chunk.map(async (cat) => {
+              const href = categoryHref(kind, cat.category_id, cat.category_name);
               try {
                 if (kind === "live") {
                   const streams = await loadLiveByCategory(
@@ -85,7 +91,9 @@ export function BrowseRails({
                   return {
                     id: cat.category_id,
                     name: cat.category_name,
-                    items: streams.map((s) => ({
+                    totalCount: streams.length,
+                    href,
+                    items: streams.slice(0, PREVIEW_LIMIT).map((s) => ({
                       key: `live-${s.stream_id}`,
                       href: watchPath("live", s.stream_id, { title: s.name }),
                       title: s.name,
@@ -102,7 +110,9 @@ export function BrowseRails({
                   return {
                     id: cat.category_id,
                     name: cat.category_name,
-                    items: streams.map((s) => ({
+                    totalCount: streams.length,
+                    href,
+                    items: streams.slice(0, PREVIEW_LIMIT).map((s) => ({
                       key: `vod-${s.stream_id}`,
                       href: `/movies/${s.stream_id}`,
                       title: s.name,
@@ -118,7 +128,9 @@ export function BrowseRails({
                 return {
                   id: cat.category_id,
                   name: cat.category_name,
-                  items: series.map((s) => ({
+                  totalCount: series.length,
+                  href,
+                  items: series.slice(0, PREVIEW_LIMIT).map((s) => ({
                     key: `series-${s.series_id}`,
                     href: `/series/${s.series_id}`,
                     title: s.name,
@@ -130,6 +142,8 @@ export function BrowseRails({
                 return {
                   id: cat.category_id,
                   name: cat.category_name,
+                  totalCount: 0,
+                  href,
                   items: [] as MediaRowItem[],
                 };
               }
@@ -157,11 +171,11 @@ export function BrowseRails({
     return () => {
       cancelled = true;
     };
-  }, [credentials, kind, maxRails]);
+  }, [credentials, kind]);
 
   const hero = rails[0]?.items[0];
   const isLive = kind === "live";
-  const total = rails.reduce((sum, rail) => sum + rail.items.length, 0);
+  const previewTotal = rails.reduce((sum, rail) => sum + rail.items.length, 0);
 
   return (
     <div
@@ -188,13 +202,11 @@ export function BrowseRails({
         </div>
       ) : (
         <>
-          {total > 0 ? (
+          {previewTotal > 0 ? (
             <p className="px-4 text-xs text-[var(--xp-muted)] md:px-6">
-              {total.toLocaleString()} titles · {rails.length}
-              {totalCategories > rails.length
-                ? ` / ${totalCategories}`
-                : ""}{" "}
-              categories
+              {rails.length}
+              {totalCategories > rails.length ? ` / ${totalCategories}` : ""}{" "}
+              categories · preview of {PREVIEW_LIMIT} per row
               {loadingMore ? " · loading more…" : ""}
             </p>
           ) : null}
@@ -226,7 +238,13 @@ export function BrowseRails({
           {rails.map((rail) => (
             <MediaRow
               key={rail.id}
-              title={`${rail.name} (${rail.items.length})`}
+              title={rail.name}
+              href={rail.href}
+              seeAllLabel={
+                rail.totalCount > PREVIEW_LIMIT
+                  ? `Ver todo (${rail.totalCount})`
+                  : "Ver todo"
+              }
               items={rail.items}
               posterWidth={
                 isLive

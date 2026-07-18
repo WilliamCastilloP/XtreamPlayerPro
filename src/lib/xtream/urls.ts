@@ -24,9 +24,12 @@ export function buildPlayerApiUrl(
   return url.toString();
 }
 
-/** Path-safe credential segment (Xtream expects these in the URL path). */
+/**
+ * Xtream puts credentials in the path. Only encode chars that break URLs;
+ * over-encoding (e.g. @ → %40) breaks many panels.
+ */
 function pathSegment(value: string): string {
-  return encodeURIComponent(value).replace(/%40/g, "@");
+  return value.replace(/[/#?%\\]/g, (ch) => encodeURIComponent(ch));
 }
 
 export function buildDirectStreamUrl(
@@ -50,33 +53,81 @@ export function buildProxiedStreamUrl(directUrl: string): string {
   return `/api/stream?url=${encodeURIComponent(directUrl)}`;
 }
 
+export type StreamCandidate = {
+  url: string;
+  /** direct = <video src> to panel; proxy = same-origin HLS/segment proxy */
+  transport: "direct" | "proxy";
+  label: string;
+};
+
 /**
- * Candidate stream URLs for a given asset. Order matters: first success wins.
- * Live panels vary between HLS (.m3u8) and MPEG-TS (.ts).
+ * Build playback candidates.
+ * - Live: proxied HLS first (needs rewrite for hls.js), then direct HLS/TS
+ * - VOD: DIRECT progressive file first (avoids proxying multi‑GB mp4s), then proxied HLS
  */
 export function buildStreamCandidates(
   credentials: XtreamCredentials,
   kind: StreamKind,
   streamId: string | number,
   preferredExt?: string,
-): string[] {
+): StreamCandidate[] {
   const preferred = preferredExt?.replace(/^\./, "").toLowerCase();
-  const extensions: string[] =
-    kind === "live"
-      ? ["m3u8", "ts", ""]
-      : preferred
-        ? [preferred, preferred === "m3u8" ? "mp4" : "m3u8", "mp4", "mkv", "ts"]
-        : ["mp4", "m3u8", "mkv", "ts"];
-
+  const out: StreamCandidate[] = [];
   const seen = new Set<string>();
-  const urls: string[] = [];
-  for (const ext of extensions) {
-    const direct = buildDirectStreamUrl(credentials, kind, streamId, ext);
-    if (seen.has(direct)) continue;
-    seen.add(direct);
-    urls.push(buildProxiedStreamUrl(direct));
+
+  const push = (candidate: StreamCandidate) => {
+    if (seen.has(candidate.url)) return;
+    seen.add(candidate.url);
+    out.push(candidate);
+  };
+
+  if (kind === "live") {
+    const m3u8 = buildDirectStreamUrl(credentials, kind, streamId, "m3u8");
+    const ts = buildDirectStreamUrl(credentials, kind, streamId, "ts");
+    const bare = buildDirectStreamUrl(credentials, kind, streamId, "");
+
+    push({
+      url: buildProxiedStreamUrl(m3u8),
+      transport: "proxy",
+      label: "HLS (proxy)",
+    });
+    push({ url: m3u8, transport: "direct", label: "HLS (direct)" });
+    push({ url: ts, transport: "direct", label: "MPEG-TS (direct)" });
+    push({
+      url: buildProxiedStreamUrl(bare),
+      transport: "proxy",
+      label: "Live (proxy)",
+    });
+    return out;
   }
-  return urls;
+
+  const fileExt =
+    preferred && preferred !== "m3u8" ? preferred : "mp4";
+  const fileUrl = buildDirectStreamUrl(credentials, kind, streamId, fileExt);
+  const hlsUrl = buildDirectStreamUrl(credentials, kind, streamId, "m3u8");
+
+  // Progressive download straight from the panel — do NOT proxy (crashes/OOM)
+  push({
+    url: fileUrl,
+    transport: "direct",
+    label: `${fileExt.toUpperCase()} (direct)`,
+  });
+
+  if (preferred && preferred !== fileExt && preferred !== "m3u8") {
+    push({
+      url: buildDirectStreamUrl(credentials, kind, streamId, preferred),
+      transport: "direct",
+      label: `${preferred.toUpperCase()} (direct)`,
+    });
+  }
+
+  push({
+    url: buildProxiedStreamUrl(hlsUrl),
+    transport: "proxy",
+    label: "HLS (proxy)",
+  });
+
+  return out;
 }
 
 export function looksLikeHlsUrl(url: string): boolean {

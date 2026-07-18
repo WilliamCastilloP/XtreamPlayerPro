@@ -4,41 +4,66 @@ import { useEffect, useMemo, useState } from "react";
 import { PosterCard } from "@/components/catalog/PosterCard";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import {
+  getLiveCategories,
   getLiveStreams,
   getSeries,
+  getSeriesCategories,
+  getVodCategories,
   getVodStreams,
   watchPath,
 } from "@/lib/xtream/client";
 import type { LiveStream, SeriesItem, VodStream } from "@/lib/xtream/types";
 
-type Filter = "all" | "live" | "movies" | "series";
+type Filter = "live" | "movies" | "series";
 
 export default function SearchPage() {
   const { credentials } = usePlaylists();
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<Filter>("movies");
   const [live, setLive] = useState<LiveStream[]>([]);
   const [movies, setMovies] = useState<VodStream[]>([]);
   const [series, setSeries] = useState<SeriesItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState<Partial<Record<Filter, boolean>>>({});
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Load one catalog type at a time (first category only) when the user searches
   useEffect(() => {
     if (!credentials) return;
+    const q = query.trim();
+    if (q.length < 2) return;
+    if (loaded[filter]) return;
+
     let cancelled = false;
     async function load() {
       setLoading(true);
       setError(null);
       try {
-        const [l, m, s] = await Promise.all([
-          getLiveStreams(credentials!),
-          getVodStreams(credentials!),
-          getSeries(credentials!),
-        ]);
-        if (cancelled) return;
-        setLive(l);
-        setMovies(m);
-        setSeries(s);
+        if (filter === "live") {
+          const cats = await getLiveCategories(credentials!);
+          const rows = cats[0]
+            ? await getLiveStreams(credentials!, cats[0].category_id)
+            : [];
+          if (!cancelled) setLive(rows);
+        } else if (filter === "movies") {
+          const cats = await getVodCategories(credentials!);
+          // Search across a few categories, not the entire panel dump
+          const picks = cats.slice(0, 6);
+          const chunks = await Promise.all(
+            picks.map((c) => getVodStreams(credentials!, c.category_id)),
+          );
+          if (!cancelled) setMovies(chunks.flat());
+        } else {
+          const cats = await getSeriesCategories(credentials!);
+          const picks = cats.slice(0, 6);
+          const chunks = await Promise.all(
+            picks.map((c) => getSeries(credentials!, c.category_id)),
+          );
+          if (!cancelled) setSeries(chunks.flat());
+        }
+        if (!cancelled) {
+          setLoaded((prev) => ({ ...prev, [filter]: true }));
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Search failed");
@@ -51,65 +76,57 @@ export default function SearchPage() {
     return () => {
       cancelled = true;
     };
-  }, [credentials]);
+  }, [credentials, filter, query, loaded]);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return [];
+    if (q.length < 2) return [];
 
-    const liveHits =
-      filter === "all" || filter === "live"
-        ? live
-            .filter((s) => s.name.toLowerCase().includes(q))
-            .slice(0, 40)
-            .map((s) => ({
-              key: `live-${s.stream_id}`,
-              href: watchPath("live", s.stream_id, { title: s.name }),
-              title: s.name,
-              image: s.stream_icon || undefined,
-              kind: "Live",
-              aspect: "live" as const,
-            }))
-        : [];
+    if (filter === "live") {
+      return live
+        .filter((s) => s.name.toLowerCase().includes(q))
+        .slice(0, 60)
+        .map((s) => ({
+          key: `live-${s.stream_id}`,
+          href: watchPath("live", s.stream_id, { title: s.name }),
+          title: s.name,
+          image: s.stream_icon || undefined,
+          kind: "Live",
+          aspect: "live" as const,
+        }));
+    }
 
-    const movieHits =
-      filter === "all" || filter === "movies"
-        ? movies
-            .filter((s) => s.name.toLowerCase().includes(q))
-            .slice(0, 40)
-            .map((s) => ({
-              key: `vod-${s.stream_id}`,
-              href: `/movies/${s.stream_id}`,
-              title: s.name,
-              image: s.stream_icon || undefined,
-              kind: "Movie",
-              aspect: "poster" as const,
-            }))
-        : [];
+    if (filter === "movies") {
+      return movies
+        .filter((s) => s.name.toLowerCase().includes(q))
+        .slice(0, 60)
+        .map((s) => ({
+          key: `vod-${s.stream_id}`,
+          href: `/movies/${s.stream_id}`,
+          title: s.name,
+          image: s.stream_icon || undefined,
+          kind: "Movie",
+          aspect: "poster" as const,
+        }));
+    }
 
-    const seriesHits =
-      filter === "all" || filter === "series"
-        ? series
-            .filter((s) => s.name.toLowerCase().includes(q))
-            .slice(0, 40)
-            .map((s) => ({
-              key: `series-${s.series_id}`,
-              href: `/series/${s.series_id}`,
-              title: s.name,
-              image: s.cover || undefined,
-              kind: "Series",
-              aspect: "poster" as const,
-            }))
-        : [];
-
-    return [...liveHits, ...movieHits, ...seriesHits];
+    return series
+      .filter((s) => s.name.toLowerCase().includes(q))
+      .slice(0, 60)
+      .map((s) => ({
+        key: `series-${s.series_id}`,
+        href: `/series/${s.series_id}`,
+        title: s.name,
+        image: s.cover || undefined,
+        kind: "Series",
+        aspect: "poster" as const,
+      }));
   }, [query, filter, live, movies, series]);
 
   const chips: { id: Filter; label: string }[] = [
-    { id: "all", label: "All" },
-    { id: "live", label: "Live" },
     { id: "movies", label: "Movies" },
     { id: "series", label: "Series" },
+    { id: "live", label: "Live" },
   ];
 
   return (
@@ -119,7 +136,7 @@ export default function SearchPage() {
           Search
         </h1>
         <p className="text-sm text-[var(--xp-muted)]">
-          Mixed results across Live, Movies, and Series
+          Type at least 2 characters. Catalogs load per type to keep the app stable.
         </p>
       </div>
       <input
@@ -153,12 +170,12 @@ export default function SearchPage() {
         <p className="text-sm text-[var(--xp-muted)]">Loading catalog…</p>
       ) : null}
 
-      {!query.trim() ? (
+      {query.trim().length < 2 ? (
         <p className="text-sm text-[var(--xp-muted)]">
           Type to search your catalog.
         </p>
-      ) : results.length === 0 ? (
-        <p className="text-sm text-[var(--xp-muted)]">No matches.</p>
+      ) : results.length === 0 && !loading ? (
+        <p className="text-sm text-[var(--xp-muted)]">No matches in loaded categories.</p>
       ) : (
         <div className="xp-fade-in grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
           {results.map((item) => (

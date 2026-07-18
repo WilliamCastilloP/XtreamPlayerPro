@@ -1,43 +1,48 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { BrowseRails, type BrowseKind } from "@/components/catalog/BrowseRails";
 import { HeroBanner } from "@/components/catalog/HeroBanner";
 import { MediaRow, type MediaRowItem } from "@/components/catalog/MediaRow";
 import { PosterSkeletonRow } from "@/components/catalog/Skeleton";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
-import { listContinue } from "@/lib/library/storage";
+import { listContinue, listFavorites } from "@/lib/library/storage";
 import {
-  getLiveCategories,
-  getLiveStreams,
-  getSeries,
-  getSeriesCategories,
-  getVodCategories,
-  getVodStreams,
-  watchPath,
-} from "@/lib/xtream/client";
+  loadAllLiveStreams,
+  loadAllSeries,
+  loadAllVodStreams,
+} from "@/lib/xtream/catalog-cache";
+import { watchPath } from "@/lib/xtream/client";
+
+type Section = BrowseKind;
+
+const FILTERS: { id: Section; label: string }[] = [
+  { id: "live", label: "LIVE" },
+  { id: "movies", label: "MOVIES" },
+  { id: "series", label: "SERIES" },
+];
 
 export default function HomePage() {
   const { credentials, activePlaylist } = usePlaylists();
+  const [section, setSection] = useState<Section>("live");
   const [continueItems, setContinueItems] = useState<MediaRowItem[]>([]);
-  const [live, setLive] = useState<MediaRowItem[]>([]);
-  const [movies, setMovies] = useState<MediaRowItem[]>([]);
-  const [series, setSeries] = useState<MediaRowItem[]>([]);
-  const [moreMovieRails, setMoreMovieRails] = useState<
-    { id: string; name: string; items: MediaRowItem[] }[]
-  >([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [favLive, setFavLive] = useState<MediaRowItem[]>([]);
+  const [favMovies, setFavMovies] = useState<MediaRowItem[]>([]);
+  const [favSeries, setFavSeries] = useState<MediaRowItem[]>([]);
+  const [featuredLive, setFeaturedLive] = useState<MediaRowItem[]>([]);
+  const [featuredMovies, setFeaturedMovies] = useState<MediaRowItem[]>([]);
+  const [featuredSeries, setFeaturedSeries] = useState<MediaRowItem[]>([]);
+  const [loadingHighlights, setLoadingHighlights] = useState(true);
 
   useEffect(() => {
     if (!credentials || !activePlaylist) return;
     let cancelled = false;
 
-    async function load() {
-      setLoading(true);
-      setError(null);
+    async function loadHighlights() {
+      setLoadingHighlights(true);
       try {
         const cont = listContinue(activePlaylist!.id)
-          .slice(0, 12)
+          .slice(0, 16)
           .map((item) => ({
             key: item.id,
             href:
@@ -52,136 +57,226 @@ export default function HomePage() {
               item.kind === "live" ? ("live" as const) : ("poster" as const),
           }));
 
-        const [liveCats, vodCats, seriesCats] = await Promise.all([
-          getLiveCategories(credentials!),
-          getVodCategories(credentials!),
-          getSeriesCategories(credentials!),
-        ]);
+        const favorites = listFavorites(activePlaylist!.id);
+        const liveFavs = favorites
+          .filter((f) => f.kind === "live")
+          .slice(0, 24)
+          .map((f) => ({
+            key: f.id,
+            href: watchPath("live", f.streamId, { title: f.title }),
+            title: f.title,
+            image: f.image,
+            aspect: "live" as const,
+          }));
+        const movieFavs = favorites
+          .filter((f) => f.kind === "movie")
+          .slice(0, 24)
+          .map((f) => ({
+            key: f.id,
+            href: `/movies/${f.streamId}`,
+            title: f.title,
+            image: f.image,
+          }));
+        const seriesFavs = favorites
+          .filter((f) => f.kind === "series")
+          .slice(0, 24)
+          .map((f) => ({
+            key: f.id,
+            href: `/series/${f.streamId}`,
+            title: f.title,
+            image: f.image,
+          }));
 
-        const movieCatSlice = vodCats.slice(0, 4);
-
-        const [liveStreams, seriesItems, ...movieChunks] = await Promise.all([
-          liveCats[0]
-            ? getLiveStreams(credentials!, liveCats[0].category_id)
-            : Promise.resolve([]),
-          seriesCats[0]
-            ? getSeries(credentials!, seriesCats[0].category_id)
-            : Promise.resolve([]),
-          ...movieCatSlice.map((cat) =>
-            getVodStreams(credentials!, cat.category_id).catch(() => []),
-          ),
+        const [liveAll, vodAll, seriesAll] = await Promise.all([
+          loadAllLiveStreams(credentials!),
+          loadAllVodStreams(credentials!),
+          loadAllSeries(credentials!),
         ]);
 
         if (cancelled) return;
 
-        const movieRails = movieCatSlice.map((cat, index) => ({
-          id: cat.category_id,
-          name: cat.category_name,
-          items: (movieChunks[index] || []).slice(0, 18).map((s) => ({
-            key: `vod-${cat.category_id}-${s.stream_id}`,
-            href: `/movies/${s.stream_id}`,
-            title: s.name,
-            image: s.stream_icon || undefined,
-            subtitle: s.rating ? `★ ${s.rating}` : undefined,
-          })),
-        }));
-
         setContinueItems(cont);
-        setLive(
-          liveStreams.slice(0, 18).map((s) => ({
-            key: `live-${s.stream_id}`,
+        setFavLive(liveFavs);
+        setFavMovies(movieFavs);
+        setFavSeries(seriesFavs);
+        setFeaturedLive(
+          liveAll.slice(0, 24).map((s) => ({
+            key: `feat-live-${s.stream_id}`,
             href: watchPath("live", s.stream_id, { title: s.name }),
             title: s.name,
             image: s.stream_icon || undefined,
             aspect: "live" as const,
           })),
         );
-        setMovies(movieRails[0]?.items || []);
-        setMoreMovieRails(movieRails.slice(1).filter((r) => r.items.length));
-        setSeries(
-          seriesItems.slice(0, 18).map((s) => ({
-            key: `series-${s.series_id}`,
+        setFeaturedMovies(
+          vodAll.slice(0, 24).map((s) => ({
+            key: `feat-vod-${s.stream_id}`,
+            href: `/movies/${s.stream_id}`,
+            title: s.name,
+            image: s.stream_icon || undefined,
+            subtitle: s.rating ? `★ ${s.rating}` : undefined,
+          })),
+        );
+        setFeaturedSeries(
+          seriesAll.slice(0, 24).map((s) => ({
+            key: `feat-series-${s.series_id}`,
             href: `/series/${s.series_id}`,
             title: s.name,
             image: s.cover || undefined,
             subtitle: s.rating ? `★ ${s.rating}` : undefined,
           })),
         );
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load home");
-        }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setLoadingHighlights(false);
       }
     }
 
-    void load();
+    void loadHighlights();
     return () => {
       cancelled = true;
     };
   }, [credentials, activePlaylist]);
 
+  const sectionFavorites = useMemo(() => {
+    if (section === "live") return favLive;
+    if (section === "movies") return favMovies;
+    return favSeries;
+  }, [section, favLive, favMovies, favSeries]);
+
+  const sectionFeatured = useMemo(() => {
+    if (section === "live") return featuredLive;
+    if (section === "movies") return featuredMovies;
+    return featuredSeries;
+  }, [section, featuredLive, featuredMovies, featuredSeries]);
+
   const hero =
-    continueItems[0] || movies[0] || series[0] || live[0] || null;
+    sectionFavorites[0] ||
+    continueItems.find((c) =>
+      section === "live"
+        ? c.aspect === "live"
+        : section === "movies"
+          ? c.href.startsWith("/movies")
+          : c.href.startsWith("/series"),
+    ) ||
+    sectionFeatured[0] ||
+    null;
 
   return (
-    <div className="space-y-6 pb-8 pt-3 md:space-y-8 md:pt-5">
-      <div className="px-4 md:px-6">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--xp-accent)]">
-          XtreamPlayerPro
-        </p>
-        <h1 className="font-[family-name:var(--xp-font-display)] text-2xl font-bold md:text-3xl">
-          {activePlaylist?.name}
-        </h1>
+    <div className="pb-8">
+      <div className="sticky top-[52px] z-20 space-y-3 bg-gradient-to-b from-[rgba(11,15,20,0.96)] via-[rgba(11,15,20,0.88)] to-transparent px-4 pb-3 pt-2 md:static md:from-transparent md:px-6 md:pt-5">
+        <div>
+          <p className="font-[family-name:var(--xp-font-display)] text-xs font-bold tracking-[0.2em] text-[var(--xp-accent)]">
+            XTREAM
+          </p>
+          <h1 className="font-[family-name:var(--xp-font-display)] text-2xl font-bold md:text-3xl">
+            {activePlaylist?.name}
+          </h1>
+        </div>
+        <div className="flex gap-2 overflow-x-auto scrollbar-none">
+          {FILTERS.map((filter) => (
+            <button
+              key={filter.id}
+              type="button"
+              onClick={() => setSection(filter.id)}
+              className={`shrink-0 rounded-full px-4 py-2 text-xs font-bold tracking-wide transition ${
+                section === filter.id
+                  ? "bg-[var(--xp-accent)] text-[var(--xp-ink)]"
+                  : "bg-[var(--xp-surface)] text-[var(--xp-muted)]"
+              }`}
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {error ? (
-        <p className="px-4 text-sm text-[var(--xp-danger)] md:px-6">{error}</p>
-      ) : null}
-
-      {loading ? (
-        <div className="space-y-8">
-          <div className="xp-shimmer mx-4 h-48 rounded-2xl md:mx-6 md:h-64" />
-          <PosterSkeletonRow />
+      {loadingHighlights ? (
+        <div className="space-y-8 pt-4">
+          <div className="xp-shimmer mx-4 h-48 rounded-2xl md:mx-6" />
           <PosterSkeletonRow />
         </div>
       ) : (
-        <>
+        <div className="space-y-6 pt-2 md:space-y-8">
           {hero ? (
             <HeroBanner
-              eyebrow="For you"
+              eyebrow={
+                section === "live"
+                  ? "Live"
+                  : section === "movies"
+                    ? "Movies"
+                    : "Series"
+              }
               title={hero.title}
-              subtitle="Play now — rotate your phone for a cinema view"
+              subtitle={
+                section === "live"
+                  ? "Play now — rotate for fullscreen"
+                  : "Open details to play"
+              }
               image={hero.image}
-              playHref={hero.href}
+              playHref={
+                section === "live"
+                  ? hero.href
+                  : section === "movies" && hero.href.startsWith("/movies/")
+                    ? watchPath("movie", hero.href.split("/").pop() || "", {
+                        title: hero.title,
+                        image: hero.image || "",
+                      })
+                    : hero.href
+              }
               infoHref={
-                hero.href.startsWith("/watch") ? undefined : hero.href
+                section === "live" || hero.href.startsWith("/watch")
+                  ? undefined
+                  : hero.href
               }
             />
           ) : null}
 
           <MediaRow
             title="Continue watching"
-            items={continueItems}
-            emptyLabel="Start watching to build your list."
+            items={continueItems.filter((item) => {
+              if (section === "live") return item.aspect === "live";
+              if (section === "movies") return item.href.startsWith("/movies");
+              return item.href.startsWith("/series");
+            })}
+            emptyLabel="Nothing here yet — start watching."
           />
-          <MediaRow title="Live TV" href="/live" items={live} />
+
           <MediaRow
-            title={moreMovieRails.length ? "Movies" : "Movies"}
-            href="/movies"
-            items={movies}
+            title={
+              section === "live"
+                ? "Favorite channels"
+                : section === "movies"
+                  ? "Favorite movies"
+                  : "Favorite series"
+            }
+            items={sectionFavorites}
+            emptyLabel="Heart titles to pin them here."
           />
-          {moreMovieRails.map((rail) => (
-            <MediaRow
-              key={rail.id}
-              title={rail.name}
-              href="/movies"
-              items={rail.items}
-            />
-          ))}
-          <MediaRow title="Series" href="/series" items={series} />
-        </>
+
+          <MediaRow
+            title={
+              section === "live"
+                ? "Live highlights"
+                : section === "movies"
+                  ? "Movie highlights"
+                  : "Series highlights"
+            }
+            items={sectionFeatured}
+          />
+
+          <BrowseRails
+            kind={section}
+            title={
+              section === "live"
+                ? "Live TV"
+                : section === "movies"
+                  ? "Movies"
+                  : "Series"
+            }
+            subtitle="Full catalog by category"
+            embedded
+          />
+        </div>
       )}
     </div>
   );

@@ -1,14 +1,17 @@
 "use client";
 
-import { BrowseRails } from "@/components/catalog/BrowseRails";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
-export default function SeriesPage() {
+/** Deep-link compatibility: Series catalog is on Home → SERIES filter. */
+export default function SeriesRedirectPage() {
+  const router = useRouter();
+  useEffect(() => {
+    router.replace("/");
+  }, [router]);
   return (
-    <BrowseRails
-      kind="series"
-      title="Series"
-      subtitle="Row-by-row browsing — open a show to pick season and episode."
-      maxRails={10}
-    />
+    <div className="flex min-h-[40vh] items-center justify-center text-[var(--xp-muted)]">
+      Opening Series…
+    </div>
   );
 }

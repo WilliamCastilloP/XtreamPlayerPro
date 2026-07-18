@@ -16,14 +16,13 @@ const figtree = Figtree({
 });
 
 export const metadata: Metadata = {
-  title: "XtreamPlayerPro",
-  description:
-    "Modern Xtream Codes PWA — Live TV, Movies, Series with a cinematic player.",
-  applicationName: "XtreamPlayerPro",
+  title: "XTREAM",
+  description: "XTREAM — Live TV, Movies and Series.",
+  applicationName: "XTREAM",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "XtreamPlayerPro",
+    title: "XTREAM",
   },
   formatDetection: {
     telephone: false,

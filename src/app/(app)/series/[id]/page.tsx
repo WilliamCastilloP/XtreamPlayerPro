@@ -88,8 +88,8 @@ export default function SeriesDetailPage() {
   return (
     <div className="xp-fade-in pb-28 sm:pb-8">
       <TitleHero
-        backHref="/series"
-        backLabel="Series"
+        backHref="/"
+        backLabel="Home"
         title={title}
         meta={[info?.info?.genre, info?.info?.releaseDate, info?.info?.rating]
           .filter(Boolean)

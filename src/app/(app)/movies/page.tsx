@@ -1,14 +1,17 @@
 "use client";
 
-import { BrowseRails } from "@/components/catalog/BrowseRails";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
-export default function MoviesPage() {
+/** Deep-link compatibility: Movies catalog is on Home → MOVIES filter. */
+export default function MoviesRedirectPage() {
+  const router = useRouter();
+  useEffect(() => {
+    router.replace("/");
+  }, [router]);
   return (
-    <BrowseRails
-      kind="movies"
-      title="Movies"
-      subtitle="Browse by category — tap a poster for details or play from the hero."
-      maxRails={10}
-    />
+    <div className="flex min-h-[40vh] items-center justify-center text-[var(--xp-muted)]">
+      Opening Movies…
+    </div>
   );
 }

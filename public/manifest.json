@@ -1,7 +1,7 @@
 {
-  "name": "XtreamPlayerPro",
-  "short_name": "XtreamPlayer",
-  "description": "Modern Xtream Codes player — Live, Movies, Series.",
+  "name": "XTREAM",
+  "short_name": "XTREAM",
+  "description": "XTREAM — Live TV, Movies and Series.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0B0F14",

@@ -79,8 +79,8 @@ export default function MovieDetailPage() {
   return (
     <div className="xp-fade-in pb-8">
       <TitleHero
-        backHref="/movies"
-        backLabel="Movies"
+        backHref="/"
+        backLabel="Home"
         title={title}
         meta={meta}
         plot={info?.info?.plot || "No synopsis available."}

@@ -38,7 +38,7 @@ export async function fetchXtreamJson(
     cache: "no-store",
     headers: {
       Accept: "application/json",
-      "User-Agent": "XtreamPlayerPro/1.0",
+      "User-Agent": "XTREAM/1.0",
     },
   });
 

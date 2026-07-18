@@ -29,14 +29,16 @@ export function BrandMark({ href = "/", size = "md", className = "" }: Props) {
   );
 }
 
-/** Green circled X used when artwork is missing */
+/** Green ring + bold white X when artwork is missing */
 export function PosterPlaceholder({ className = "" }: { className?: string }) {
   return (
     <div
       className={`flex h-full w-full items-center justify-center bg-gradient-to-br from-[var(--xp-surface)] to-[var(--xp-ink)] ${className}`}
     >
-      <span className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-[var(--xp-accent)] text-xl font-bold text-[var(--xp-accent)]">
-        X
+      <span className="flex h-14 w-14 items-center justify-center rounded-full border-[3.5px] border-[var(--xp-accent)]">
+        <span className="font-[family-name:var(--xp-font-display)] text-[1.65rem] font-extrabold leading-none text-white">
+          X
+        </span>
       </span>
     </div>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { BrowseRails, type BrowseKind } from "@/components/catalog/BrowseRails";
 import { HeroBanner } from "@/components/catalog/HeroBanner";
 import { MediaRow, type MediaRowItem } from "@/components/catalog/MediaRow";
@@ -8,9 +8,12 @@ import { PosterSkeletonRow } from "@/components/catalog/Skeleton";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import { listContinue, listFavorites } from "@/lib/library/storage";
 import {
-  loadAllLiveStreams,
-  loadAllSeries,
-  loadAllVodStreams,
+  loadLiveByCategory,
+  loadLiveCategories,
+  loadSeriesByCategory,
+  loadSeriesCategories,
+  loadVodByCategory,
+  loadVodCategories,
 } from "@/lib/xtream/catalog-cache";
 import { watchPath } from "@/lib/xtream/client";
 
@@ -24,7 +27,8 @@ const FILTERS: { id: Section; label: string }[] = [
 
 export default function HomePage() {
   const { credentials, activePlaylist } = usePlaylists();
-  const [section, setSection] = useState<Section>("live");
+  /** null = overview (a bit of everything). No filter pre-selected. */
+  const [section, setSection] = useState<Section | null>(null);
   const [continueItems, setContinueItems] = useState<MediaRowItem[]>([]);
   const [favLive, setFavLive] = useState<MediaRowItem[]>([]);
   const [favMovies, setFavMovies] = useState<MediaRowItem[]>([]);
@@ -33,6 +37,7 @@ export default function HomePage() {
   const [featuredMovies, setFeaturedMovies] = useState<MediaRowItem[]>([]);
   const [featuredSeries, setFeaturedSeries] = useState<MediaRowItem[]>([]);
   const [loadingHighlights, setLoadingHighlights] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!credentials || !activePlaylist) return;
@@ -40,6 +45,7 @@ export default function HomePage() {
 
     async function loadHighlights() {
       setLoadingHighlights(true);
+      setError(null);
       try {
         const cont = listContinue(activePlaylist!.id)
           .slice(0, 16)
@@ -60,7 +66,7 @@ export default function HomePage() {
         const favorites = listFavorites(activePlaylist!.id);
         const liveFavs = favorites
           .filter((f) => f.kind === "live")
-          .slice(0, 24)
+          .slice(0, 18)
           .map((f) => ({
             key: f.id,
             href: watchPath("live", f.streamId, { title: f.title }),
@@ -70,7 +76,7 @@ export default function HomePage() {
           }));
         const movieFavs = favorites
           .filter((f) => f.kind === "movie")
-          .slice(0, 24)
+          .slice(0, 18)
           .map((f) => ({
             key: f.id,
             href: `/movies/${f.streamId}`,
@@ -79,7 +85,7 @@ export default function HomePage() {
           }));
         const seriesFavs = favorites
           .filter((f) => f.kind === "series")
-          .slice(0, 24)
+          .slice(0, 18)
           .map((f) => ({
             key: f.id,
             href: `/series/${f.streamId}`,
@@ -87,10 +93,23 @@ export default function HomePage() {
             image: f.image,
           }));
 
-        const [liveAll, vodAll, seriesAll] = await Promise.all([
-          loadAllLiveStreams(credentials!),
-          loadAllVodStreams(credentials!),
-          loadAllSeries(credentials!),
+        // Lightweight: only the FIRST category of each type for highlights
+        const [liveCats, vodCats, seriesCats] = await Promise.all([
+          loadLiveCategories(credentials!),
+          loadVodCategories(credentials!),
+          loadSeriesCategories(credentials!),
+        ]);
+
+        const [liveSlice, vodSlice, seriesSlice] = await Promise.all([
+          liveCats[0]
+            ? loadLiveByCategory(credentials!, liveCats[0].category_id)
+            : Promise.resolve([]),
+          vodCats[0]
+            ? loadVodByCategory(credentials!, vodCats[0].category_id)
+            : Promise.resolve([]),
+          seriesCats[0]
+            ? loadSeriesByCategory(credentials!, seriesCats[0].category_id)
+            : Promise.resolve([]),
         ]);
 
         if (cancelled) return;
@@ -100,7 +119,7 @@ export default function HomePage() {
         setFavMovies(movieFavs);
         setFavSeries(seriesFavs);
         setFeaturedLive(
-          liveAll.slice(0, 24).map((s) => ({
+          liveSlice.slice(0, 16).map((s) => ({
             key: `feat-live-${s.stream_id}`,
             href: watchPath("live", s.stream_id, { title: s.name }),
             title: s.name,
@@ -109,7 +128,7 @@ export default function HomePage() {
           })),
         );
         setFeaturedMovies(
-          vodAll.slice(0, 24).map((s) => ({
+          vodSlice.slice(0, 16).map((s) => ({
             key: `feat-vod-${s.stream_id}`,
             href: `/movies/${s.stream_id}`,
             title: s.name,
@@ -118,7 +137,7 @@ export default function HomePage() {
           })),
         );
         setFeaturedSeries(
-          seriesAll.slice(0, 24).map((s) => ({
+          seriesSlice.slice(0, 16).map((s) => ({
             key: `feat-series-${s.series_id}`,
             href: `/series/${s.series_id}`,
             title: s.name,
@@ -126,6 +145,10 @@ export default function HomePage() {
             subtitle: s.rating ? `★ ${s.rating}` : undefined,
           })),
         );
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load home");
+        }
       } finally {
         if (!cancelled) setLoadingHighlights(false);
       }
@@ -137,47 +160,29 @@ export default function HomePage() {
     };
   }, [credentials, activePlaylist]);
 
-  const sectionFavorites = useMemo(() => {
-    if (section === "live") return favLive;
-    if (section === "movies") return favMovies;
-    return favSeries;
-  }, [section, favLive, favMovies, favSeries]);
-
-  const sectionFeatured = useMemo(() => {
-    if (section === "live") return featuredLive;
-    if (section === "movies") return featuredMovies;
-    return featuredSeries;
-  }, [section, featuredLive, featuredMovies, featuredSeries]);
-
   const hero =
-    sectionFavorites[0] ||
-    continueItems.find((c) =>
-      section === "live"
-        ? c.aspect === "live"
-        : section === "movies"
-          ? c.href.startsWith("/movies")
-          : c.href.startsWith("/series"),
-    ) ||
-    sectionFeatured[0] ||
+    continueItems[0] ||
+    favMovies[0] ||
+    favSeries[0] ||
+    favLive[0] ||
+    featuredMovies[0] ||
+    featuredSeries[0] ||
+    featuredLive[0] ||
     null;
 
   return (
     <div className="pb-8">
-      <div className="sticky top-[52px] z-20 space-y-3 bg-gradient-to-b from-[rgba(11,15,20,0.96)] via-[rgba(11,15,20,0.88)] to-transparent px-4 pb-3 pt-2 md:static md:from-transparent md:px-6 md:pt-5">
-        <div>
-          <p className="font-[family-name:var(--xp-font-display)] text-xs font-bold tracking-[0.2em] text-[var(--xp-accent)]">
-            XTREAM
-          </p>
-          <h1 className="font-[family-name:var(--xp-font-display)] text-2xl font-bold md:text-3xl">
-            {activePlaylist?.name}
-          </h1>
-        </div>
+      <div className="sticky top-[52px] z-20 space-y-3 bg-gradient-to-b from-[rgba(11,15,20,0.96)] via-[rgba(11,15,20,0.88)] to-transparent px-4 pb-3 pt-2 md:static md:bg-transparent md:px-6 md:pt-5">
         <div className="flex gap-2 overflow-x-auto scrollbar-none">
           {FILTERS.map((filter) => (
             <button
               key={filter.id}
               type="button"
-              onClick={() => setSection(filter.id)}
+              onClick={() =>
+                setSection((current) =>
+                  current === filter.id ? null : filter.id,
+                )
+              }
               className={`shrink-0 rounded-full px-4 py-2 text-xs font-bold tracking-wide transition ${
                 section === filter.id
                   ? "bg-[var(--xp-accent)] text-[var(--xp-ink)]"
@@ -190,7 +195,26 @@ export default function HomePage() {
         </div>
       </div>
 
-      {loadingHighlights ? (
+      {error ? (
+        <p className="px-4 text-sm text-[var(--xp-danger)] md:px-6">{error}</p>
+      ) : null}
+
+      {/* Filtered catalog — only mounts when user picks LIVE/MOVIES/SERIES */}
+      {section ? (
+        <BrowseRails
+          kind={section}
+          title={
+            section === "live"
+              ? "Live TV"
+              : section === "movies"
+                ? "Movies"
+                : "Series"
+          }
+          subtitle="Browse by category"
+          embedded
+          maxRails={16}
+        />
+      ) : loadingHighlights ? (
         <div className="space-y-8 pt-4">
           <div className="xp-shimmer mx-4 h-48 rounded-2xl md:mx-6" />
           <PosterSkeletonRow />
@@ -199,83 +223,50 @@ export default function HomePage() {
         <div className="space-y-6 pt-2 md:space-y-8">
           {hero ? (
             <HeroBanner
-              eyebrow={
-                section === "live"
-                  ? "Live"
-                  : section === "movies"
-                    ? "Movies"
-                    : "Series"
-              }
+              eyebrow="For you"
               title={hero.title}
-              subtitle={
-                section === "live"
-                  ? "Play now — rotate for fullscreen"
-                  : "Open details to play"
-              }
+              subtitle="A mix of favorites and highlights — pick LIVE, MOVIES or SERIES to browse all"
               image={hero.image}
               playHref={
-                section === "live"
-                  ? hero.href
-                  : section === "movies" && hero.href.startsWith("/movies/")
-                    ? watchPath("movie", hero.href.split("/").pop() || "", {
-                        title: hero.title,
-                        image: hero.image || "",
-                      })
-                    : hero.href
+                hero.href.startsWith("/movies/")
+                  ? watchPath("movie", hero.href.split("/").pop() || "", {
+                      title: hero.title,
+                      image: hero.image || "",
+                    })
+                  : hero.href
               }
               infoHref={
-                section === "live" || hero.href.startsWith("/watch")
-                  ? undefined
-                  : hero.href
+                hero.href.startsWith("/watch") ? undefined : hero.href
               }
             />
           ) : null}
 
           <MediaRow
             title="Continue watching"
-            items={continueItems.filter((item) => {
-              if (section === "live") return item.aspect === "live";
-              if (section === "movies") return item.href.startsWith("/movies");
-              return item.href.startsWith("/series");
-            })}
-            emptyLabel="Nothing here yet — start watching."
+            items={continueItems}
+            emptyLabel="Start watching to build this list."
           />
 
           <MediaRow
-            title={
-              section === "live"
-                ? "Favorite channels"
-                : section === "movies"
-                  ? "Favorite movies"
-                  : "Favorite series"
-            }
-            items={sectionFavorites}
-            emptyLabel="Heart titles to pin them here."
+            title="Favorite channels"
+            items={favLive}
+            emptyLabel="Heart live channels to pin them here."
           />
+          <MediaRow title="Live highlights" items={featuredLive} />
 
           <MediaRow
-            title={
-              section === "live"
-                ? "Live highlights"
-                : section === "movies"
-                  ? "Movie highlights"
-                  : "Series highlights"
-            }
-            items={sectionFeatured}
+            title="Favorite movies"
+            items={favMovies}
+            emptyLabel="Heart movies to pin them here."
           />
+          <MediaRow title="Movie highlights" items={featuredMovies} />
 
-          <BrowseRails
-            kind={section}
-            title={
-              section === "live"
-                ? "Live TV"
-                : section === "movies"
-                  ? "Movies"
-                  : "Series"
-            }
-            subtitle="Full catalog by category"
-            embedded
+          <MediaRow
+            title="Favorite series"
+            items={favSeries}
+            emptyLabel="Heart series to pin them here."
           />
+          <MediaRow title="Series highlights" items={featuredSeries} />
         </div>
       )}
     </div>

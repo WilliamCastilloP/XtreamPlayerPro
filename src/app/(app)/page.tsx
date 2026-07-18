@@ -6,8 +6,11 @@ import { PosterSkeletonRow } from "@/components/catalog/Skeleton";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import { listContinue } from "@/lib/library/storage";
 import {
+  getLiveCategories,
   getLiveStreams,
   getSeries,
+  getSeriesCategories,
+  getVodCategories,
   getVodStreams,
   watchPath,
 } from "@/lib/xtream/client";
@@ -42,10 +45,23 @@ export default function HomePage() {
           aspect: item.kind === "live" ? ("live" as const) : ("poster" as const),
         }));
 
+        // Only fetch the first category of each type — full catalogs are huge
+        const [liveCats, vodCats, seriesCats] = await Promise.all([
+          getLiveCategories(credentials!),
+          getVodCategories(credentials!),
+          getSeriesCategories(credentials!),
+        ]);
+
         const [liveStreams, vodStreams, seriesItems] = await Promise.all([
-          getLiveStreams(credentials!),
-          getVodStreams(credentials!),
-          getSeries(credentials!),
+          liveCats[0]
+            ? getLiveStreams(credentials!, liveCats[0].category_id)
+            : Promise.resolve([]),
+          vodCats[0]
+            ? getVodStreams(credentials!, vodCats[0].category_id)
+            : Promise.resolve([]),
+          seriesCats[0]
+            ? getSeries(credentials!, seriesCats[0].category_id)
+            : Promise.resolve([]),
         ]);
 
         if (cancelled) return;

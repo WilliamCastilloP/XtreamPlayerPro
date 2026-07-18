@@ -13,22 +13,45 @@ export default function MoviesPage() {
   const [categories, setCategories] = useState<XtreamCategory[]>([]);
   const [streams, setStreams] = useState<VodStream[]>([]);
   const [categoryId, setCategoryId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadingCats, setLoadingCats] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!credentials) return;
     let cancelled = false;
+    async function loadCats() {
+      setLoadingCats(true);
+      setError(null);
+      try {
+        const cats = await getVodCategories(credentials!);
+        if (cancelled) return;
+        setCategories(cats);
+        setCategoryId((prev) => prev ?? cats[0]?.category_id ?? null);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load movies");
+        }
+      } finally {
+        if (!cancelled) setLoadingCats(false);
+      }
+    }
+    void loadCats();
+    return () => {
+      cancelled = true;
+    };
+  }, [credentials]);
+
+  useEffect(() => {
+    if (!credentials || !categoryId) return;
+    const activeCategory = categoryId;
+    let cancelled = false;
     async function load() {
       setLoading(true);
       setError(null);
       try {
-        const [cats, vod] = await Promise.all([
-          getVodCategories(credentials!),
-          getVodStreams(credentials!, categoryId || undefined),
-        ]);
+        const vod = await getVodStreams(credentials!, activeCategory);
         if (cancelled) return;
-        setCategories(cats);
         setStreams(vod);
       } catch (err) {
         if (!cancelled) {
@@ -52,11 +75,18 @@ export default function MoviesPage() {
         </h1>
         <p className="text-sm text-[var(--xp-muted)]">Browse VOD by category</p>
       </div>
-      <CategoryChips
-        categories={categories}
-        activeId={categoryId}
-        onChange={setCategoryId}
-      />
+      {loadingCats ? (
+        <p className="px-4 text-sm text-[var(--xp-muted)] md:px-6">
+          Loading categories…
+        </p>
+      ) : (
+        <CategoryChips
+          categories={categories}
+          activeId={categoryId}
+          onChange={setCategoryId}
+          hideAll
+        />
+      )}
       {error ? (
         <p className="px-4 text-sm text-[var(--xp-danger)] md:px-6">{error}</p>
       ) : null}
@@ -75,7 +105,7 @@ export default function MoviesPage() {
           ))}
         </div>
       )}
-      {!loading && !streams.length ? (
+      {!loading && !loadingCats && !streams.length ? (
         <p className="px-4 text-sm text-[var(--xp-muted)] md:px-6">
           No movies found.
         </p>

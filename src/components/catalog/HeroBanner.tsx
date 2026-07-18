@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { Info, Play } from "lucide-react";
+import { PosterPlaceholder } from "@/components/brand/BrandMark";
+import { MarqueeText } from "@/components/catalog/MarqueeText";
 
 type Props = {
   title: string;
@@ -31,7 +33,7 @@ export function HeroBanner({
             className="absolute inset-0 h-full w-full object-cover"
           />
         ) : (
-          <div className="absolute inset-0 bg-gradient-to-br from-[var(--xp-surface-2)] to-[var(--xp-ink)]" />
+          <PosterPlaceholder className="absolute inset-0" />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-[var(--xp-ink)] via-[rgba(11,15,20,0.45)] to-transparent" />
         <div className="absolute inset-x-0 bottom-0 space-y-3 p-4 sm:p-6 md:max-w-xl">
@@ -39,7 +41,7 @@ export function HeroBanner({
             {eyebrow}
           </p>
           <h2 className="font-[family-name:var(--xp-font-display)] text-2xl font-bold leading-tight sm:text-3xl md:text-4xl">
-            {title}
+            <MarqueeText text={title} />
           </h2>
           {subtitle ? (
             <p className="line-clamp-2 text-sm text-white/75">{subtitle}</p>

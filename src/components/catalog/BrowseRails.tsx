@@ -6,22 +6,24 @@ import { MediaRow, type MediaRowItem } from "@/components/catalog/MediaRow";
 import { PosterSkeletonRow } from "@/components/catalog/Skeleton";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import {
-  getLiveCategories,
-  getLiveStreams,
-  getSeries,
-  getSeriesCategories,
-  getVodCategories,
-  getVodStreams,
-  watchPath,
-} from "@/lib/xtream/client";
+  groupByCategory,
+  loadAllLiveStreams,
+  loadAllSeries,
+  loadAllVodStreams,
+  loadLiveCategories,
+  loadSeriesCategories,
+  loadVodCategories,
+} from "@/lib/xtream/catalog-cache";
+import { watchPath } from "@/lib/xtream/client";
 
-type BrowseKind = "live" | "movies" | "series";
+export type BrowseKind = "live" | "movies" | "series";
 
 type Props = {
   kind: BrowseKind;
   title: string;
   subtitle: string;
-  maxRails?: number;
+  /** Hide page title block when embedded in Home */
+  embedded?: boolean;
 };
 
 type Rail = {
@@ -34,7 +36,7 @@ export function BrowseRails({
   kind,
   title,
   subtitle,
-  maxRails = 8,
+  embedded = false,
 }: Props) {
   const { credentials } = usePlaylists();
   const [rails, setRails] = useState<Rail[]>([]);
@@ -49,74 +51,66 @@ export function BrowseRails({
       setLoading(true);
       setError(null);
       try {
-        const cats =
-          kind === "live"
-            ? await getLiveCategories(credentials!)
-            : kind === "movies"
-              ? await getVodCategories(credentials!)
-              : await getSeriesCategories(credentials!);
-
-        const picked = cats.slice(0, maxRails);
-        const loaded = await Promise.all(
-          picked.map(async (cat) => {
-            try {
-              if (kind === "live") {
-                const streams = await getLiveStreams(
-                  credentials!,
-                  cat.category_id,
-                );
-                return {
-                  id: cat.category_id,
-                  name: cat.category_name,
-                  items: streams.slice(0, 24).map((s) => ({
-                    key: `live-${s.stream_id}`,
-                    href: watchPath("live", s.stream_id, { title: s.name }),
-                    title: s.name,
-                    image: s.stream_icon || undefined,
-                    aspect: "live" as const,
-                  })),
-                };
-              }
-              if (kind === "movies") {
-                const streams = await getVodStreams(
-                  credentials!,
-                  cat.category_id,
-                );
-                return {
-                  id: cat.category_id,
-                  name: cat.category_name,
-                  items: streams.slice(0, 24).map((s) => ({
-                    key: `vod-${s.stream_id}`,
-                    href: `/movies/${s.stream_id}`,
-                    title: s.name,
-                    image: s.stream_icon || undefined,
-                    subtitle: s.rating ? `★ ${s.rating}` : undefined,
-                  })),
-                };
-              }
-              const series = await getSeries(credentials!, cat.category_id);
-              return {
-                id: cat.category_id,
-                name: cat.category_name,
-                items: series.slice(0, 24).map((s) => ({
-                  key: `series-${s.series_id}`,
-                  href: `/series/${s.series_id}`,
-                  title: s.name,
-                  image: s.cover || undefined,
-                  subtitle: s.rating ? `★ ${s.rating}` : undefined,
-                })),
-              };
-            } catch {
-              return {
-                id: cat.category_id,
-                name: cat.category_name,
-                items: [] as MediaRowItem[],
-              };
-            }
-          }),
-        );
-        if (!cancelled) {
-          setRails(loaded.filter((rail) => rail.items.length > 0));
+        if (kind === "live") {
+          const [cats, streams] = await Promise.all([
+            loadLiveCategories(credentials!),
+            loadAllLiveStreams(credentials!),
+          ]);
+          if (cancelled) return;
+          const grouped = groupByCategory(cats, streams);
+          setRails(
+            grouped.map((rail) => ({
+              id: rail.category.category_id,
+              name: rail.category.category_name,
+              items: rail.items.map((s) => ({
+                key: `live-${s.stream_id}`,
+                href: watchPath("live", s.stream_id, { title: s.name }),
+                title: s.name,
+                image: s.stream_icon || undefined,
+                aspect: "live" as const,
+              })),
+            })),
+          );
+        } else if (kind === "movies") {
+          const [cats, streams] = await Promise.all([
+            loadVodCategories(credentials!),
+            loadAllVodStreams(credentials!),
+          ]);
+          if (cancelled) return;
+          const grouped = groupByCategory(cats, streams);
+          setRails(
+            grouped.map((rail) => ({
+              id: rail.category.category_id,
+              name: rail.category.category_name,
+              items: rail.items.map((s) => ({
+                key: `vod-${s.stream_id}`,
+                href: `/movies/${s.stream_id}`,
+                title: s.name,
+                image: s.stream_icon || undefined,
+                subtitle: s.rating ? `★ ${s.rating}` : undefined,
+              })),
+            })),
+          );
+        } else {
+          const [cats, series] = await Promise.all([
+            loadSeriesCategories(credentials!),
+            loadAllSeries(credentials!),
+          ]);
+          if (cancelled) return;
+          const grouped = groupByCategory(cats, series);
+          setRails(
+            grouped.map((rail) => ({
+              id: rail.category.category_id,
+              name: rail.category.category_name,
+              items: rail.items.map((s) => ({
+                key: `series-${s.series_id}`,
+                href: `/series/${s.series_id}`,
+                title: s.name,
+                image: s.cover || undefined,
+                subtitle: s.rating ? `★ ${s.rating}` : undefined,
+              })),
+            })),
+          );
         }
       } catch (err) {
         if (!cancelled) {
@@ -131,19 +125,22 @@ export function BrowseRails({
     return () => {
       cancelled = true;
     };
-  }, [credentials, kind, maxRails]);
+  }, [credentials, kind]);
 
   const hero = rails[0]?.items[0];
   const isLive = kind === "live";
+  const total = rails.reduce((sum, rail) => sum + rail.items.length, 0);
 
   return (
-    <div className="space-y-6 pb-8 pt-3 md:space-y-8 md:pt-5">
-      <div className="px-4 md:px-6">
-        <h1 className="font-[family-name:var(--xp-font-display)] text-2xl font-bold md:text-3xl">
-          {title}
-        </h1>
-        <p className="text-sm text-[var(--xp-muted)]">{subtitle}</p>
-      </div>
+    <div className={`space-y-6 pb-8 ${embedded ? "pt-2" : "pt-3 md:pt-5"} md:space-y-8`}>
+      {!embedded ? (
+        <div className="px-4 md:px-6">
+          <h1 className="font-[family-name:var(--xp-font-display)] text-2xl font-bold md:text-3xl">
+            {title}
+          </h1>
+          <p className="text-sm text-[var(--xp-muted)]">{subtitle}</p>
+        </div>
+      ) : null}
 
       {error ? (
         <p className="px-4 text-sm text-[var(--xp-danger)] md:px-6">{error}</p>
@@ -157,6 +154,12 @@ export function BrowseRails({
         </div>
       ) : (
         <>
+          {!loading && total > 0 ? (
+            <p className="px-4 text-xs text-[var(--xp-muted)] md:px-6">
+              {total.toLocaleString()} titles · {rails.length} categories
+            </p>
+          ) : null}
+
           {hero ? (
             <HeroBanner
               eyebrow={rails[0]?.name || title}
@@ -164,7 +167,7 @@ export function BrowseRails({
               subtitle={
                 isLive
                   ? "Tap Play — rotate your phone for fullscreen"
-                  : hero.subtitle || "Tap a poster or Play to start"
+                  : hero.subtitle || "Open details to play"
               }
               image={hero.image}
               playHref={
@@ -184,7 +187,7 @@ export function BrowseRails({
           {rails.map((rail) => (
             <MediaRow
               key={rail.id}
-              title={rail.name}
+              title={`${rail.name} (${rail.items.length})`}
               items={rail.items}
               posterWidth={
                 isLive

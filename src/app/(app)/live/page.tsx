@@ -1,14 +1,17 @@
 "use client";
 
-import { BrowseRails } from "@/components/catalog/BrowseRails";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
-export default function LivePage() {
+/** Deep-link compatibility: Live now lives on Home with the LIVE filter. */
+export default function LiveRedirectPage() {
+  const router = useRouter();
+  useEffect(() => {
+    router.replace("/");
+  }, [router]);
   return (
-    <BrowseRails
-      kind="live"
-      title="Live TV"
-      subtitle="Swipe rows, tap a channel to play. Rotate for fullscreen."
-      maxRails={10}
-    />
+    <div className="flex min-h-[40vh] items-center justify-center text-[var(--xp-muted)]">
+      Opening Live…
+    </div>
   );
 }

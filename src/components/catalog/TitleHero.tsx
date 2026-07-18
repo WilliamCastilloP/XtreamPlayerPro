@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { ArrowLeft, Heart, Play } from "lucide-react";
+import { PosterPlaceholder } from "@/components/brand/BrandMark";
 
 type Props = {
   backHref: string;
@@ -39,7 +40,9 @@ export function TitleHero({
               alt=""
               className="absolute inset-0 h-full w-full object-cover"
             />
-          ) : null}
+          ) : (
+            <PosterPlaceholder className="absolute inset-0" />
+          )}
           <div className="absolute inset-0 bg-gradient-to-t from-[var(--xp-ink)] via-[rgba(11,15,20,0.55)] to-black/20" />
           <Link
             href={backHref}

@@ -5,7 +5,7 @@ export default function OfflinePage() {
         You&apos;re offline
       </h1>
       <p className="mt-3 max-w-sm text-sm text-[var(--xp-muted)]">
-        XtreamPlayerPro needs a connection to reach your playlist server.
+        XTREAM needs a connection to reach your playlist server.
         Reconnect and try again.
       </p>
     </div>

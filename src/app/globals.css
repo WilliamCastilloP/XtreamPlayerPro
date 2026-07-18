@@ -156,3 +156,19 @@ select {
   background: var(--xp-surface);
   color: var(--xp-text);
 }
+
+.xp-marquee {
+  will-change: transform;
+  animation: xp-marquee-bounce 6.5s ease-in-out infinite alternate;
+}
+
+@keyframes xp-marquee-bounce {
+  0%,
+  18% {
+    transform: translateX(0);
+  }
+  82%,
+  100% {
+    transform: translateX(var(--xp-marquee-x, -40%));
+  }
+}

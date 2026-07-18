@@ -2,24 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  Clapperboard,
-  Heart,
-  Home,
-  Radio,
-  Search,
-  Tv2,
-  UserRound,
-} from "lucide-react";
+import { Home, Search, UserRound } from "lucide-react";
+import { BrandMark } from "@/components/brand/BrandMark";
 
 const items = [
   { href: "/", label: "Home", icon: Home },
-  { href: "/live", label: "Live", icon: Radio },
-  { href: "/movies", label: "Movies", icon: Clapperboard },
-  { href: "/series", label: "Series", icon: Tv2 },
-  { href: "/search", label: "Search", icon: Search },
-  { href: "/favorites", label: "Favorites", icon: Heart },
-  { href: "/account", label: "Account", icon: UserRound },
+  { href: "/search", label: "Búsqueda", icon: Search },
+  { href: "/account", label: "Cuenta", icon: UserRound },
 ];
 
 export function SideRail() {
@@ -27,16 +16,17 @@ export function SideRail() {
 
   return (
     <aside className="hidden w-56 shrink-0 border-r border-[var(--xp-border)] bg-[rgba(11,15,20,0.7)] px-3 py-6 md:flex md:flex-col">
-      <Link href="/" className="mb-8 px-3">
-        <p className="font-[family-name:var(--xp-font-display)] text-xl font-bold tracking-tight text-[var(--xp-text)]">
-          Xtream<span className="text-[var(--xp-accent)]">Player</span>Pro
-        </p>
-      </Link>
+      <div className="mb-8 px-3">
+        <BrandMark size="md" />
+      </div>
       <nav className="space-y-1">
         {items.map(({ href, label, icon: Icon }) => {
           const active =
             href === "/"
-              ? pathname === "/"
+              ? pathname === "/" ||
+                pathname.startsWith("/live") ||
+                pathname.startsWith("/movies") ||
+                pathname.startsWith("/series")
               : pathname === href || pathname.startsWith(`${href}/`);
           return (
             <Link

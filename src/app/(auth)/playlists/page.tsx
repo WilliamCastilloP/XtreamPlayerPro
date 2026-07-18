@@ -44,8 +44,8 @@ export default function PlaylistsPage() {
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-xl flex-col px-5 py-10 md:py-16">
       <div className="xp-fade-in mb-10 space-y-3 text-center md:text-left">
-        <p className="font-[family-name:var(--xp-font-display)] text-4xl font-extrabold tracking-tight md:text-5xl">
-          Xtream<span className="text-[var(--xp-accent)]">Player</span>Pro
+        <p className="font-[family-name:var(--xp-font-display)] text-4xl font-extrabold tracking-[0.14em] md:text-5xl">
+          XTREAM
         </p>
         <p className="text-[var(--xp-muted)]">
           Choose a playlist or add a new Xtream Codes account.

@@ -12,23 +12,30 @@ import {
   VolumeX,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { looksLikeHlsUrl } from "@/lib/xtream/urls";
 
 type Props = {
-  src: string;
+  sources: string[];
   title: string;
   poster?: string;
   onProgress?: (position: number, duration: number) => void;
 };
 
-export function VideoPlayer({ src, title, poster, onProgress }: Props) {
+export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const router = useRouter();
+  const [sourceIndex, setSourceIndex] = useState(0);
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showChrome, setShowChrome] = useState(true);
+  const [reloadToken, setReloadToken] = useState(0);
   const hideTimer = useRef<number | null>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const sourcesKey = sources.join("|");
+
+  const src = sources[sourceIndex] || "";
 
   const bumpChrome = () => {
     setShowChrome(true);
@@ -39,44 +46,36 @@ export function VideoPlayer({ src, title, poster, onProgress }: Props) {
   };
 
   useEffect(() => {
+    setSourceIndex(0);
+    setError(null);
+    setReady(false);
+  }, [sourcesKey]);
+
+  useEffect(() => {
     const video = videoRef.current;
     if (!video || !src) return;
 
+    let disposed = false;
     setError(null);
     setReady(false);
-    let hls: Hls | null = null;
 
-    const onError = () => setError("Could not play this stream.");
-
-    const isHls =
-      src.includes(".m3u8") || src.includes("mpegurl") || src.includes("/live/");
-
-    if (isHls && video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = src;
-      video.addEventListener("loadedmetadata", () => setReady(true));
-      video.addEventListener("error", onError);
-    } else if (isHls && Hls.isSupported()) {
-      hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: true,
-      });
-      hls.loadSource(src);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => setReady(true));
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          setError("Stream error. Tap retry to try again.");
-        }
-      });
-    } else if (!isHls) {
-      video.src = src;
-      video.addEventListener("loadedmetadata", () => setReady(true));
-      video.addEventListener("error", onError);
-    } else {
-      queueMicrotask(() =>
-        setError("HLS is not supported in this browser."),
-      );
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
     }
+    video.removeAttribute("src");
+    video.load();
+
+    const failOver = () => {
+      if (disposed) return;
+      setSourceIndex((current) => {
+        if (current + 1 < sources.length) return current + 1;
+        queueMicrotask(() =>
+          setError("Could not play this stream. The server rejected playback."),
+        );
+        return current;
+      });
+    };
 
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
@@ -85,29 +84,94 @@ export function VideoPlayer({ src, title, poster, onProgress }: Props) {
         onProgress(video.currentTime, video.duration);
       }
     };
+    const onNativeError = () => failOver();
+    const onLoaded = () => {
+      if (!disposed) setReady(true);
+    };
 
     video.addEventListener("play", onPlay);
     video.addEventListener("pause", onPause);
     video.addEventListener("timeupdate", onTime);
 
-    void video.play().catch(() => {
-      /* autoplay may be blocked */
-    });
+    const isHls = looksLikeHlsUrl(src);
+    const useHlsJs = isHls && Hls.isSupported();
+    const useNativeHls =
+      isHls &&
+      !useHlsJs &&
+      !!video.canPlayType("application/vnd.apple.mpegurl");
+
+    if (useHlsJs) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        maxBufferLength: 30,
+        xhrSetup: (xhr) => {
+          xhr.withCredentials = false;
+        },
+      });
+      hlsRef.current = hls;
+      hls.loadSource(src);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (!disposed) {
+          setReady(true);
+          void video.play().catch(() => undefined);
+        }
+      });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (disposed || !data.fatal) return;
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          try {
+            hls.startLoad();
+          } catch {
+            /* ignore */
+          }
+          window.setTimeout(() => {
+            if (!disposed && video.readyState < 2) {
+              hls.destroy();
+              hlsRef.current = null;
+              failOver();
+            }
+          }, 1200);
+          return;
+        }
+        hls.destroy();
+        hlsRef.current = null;
+        failOver();
+      });
+    } else if (useNativeHls || !isHls) {
+      video.src = src;
+      video.addEventListener("loadedmetadata", onLoaded);
+      video.addEventListener("error", onNativeError);
+      void video.play().catch(() => undefined);
+    } else {
+      queueMicrotask(() =>
+        setError("HLS is not supported in this browser."),
+      );
+    }
 
     return () => {
+      disposed = true;
       video.removeEventListener("play", onPlay);
       video.removeEventListener("pause", onPause);
       video.removeEventListener("timeupdate", onTime);
-      video.removeEventListener("error", onError);
-      if (hls) hls.destroy();
+      video.removeEventListener("loadedmetadata", onLoaded);
+      video.removeEventListener("error", onNativeError);
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
       video.removeAttribute("src");
       video.load();
     };
-  }, [src, onProgress]);
+  }, [src, onProgress, sources.length, reloadToken]);
 
-  useEffect(() => () => {
-    if (hideTimer.current) window.clearTimeout(hideTimer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    },
+    [],
+  );
 
   const togglePlay = () => {
     const video = videoRef.current;
@@ -132,8 +196,9 @@ export function VideoPlayer({ src, title, poster, onProgress }: Props) {
       if (video.requestFullscreen) await video.requestFullscreen();
       else if (
         "webkitEnterFullscreen" in video &&
-        typeof (video as HTMLVideoElement & { webkitEnterFullscreen: () => void })
-          .webkitEnterFullscreen === "function"
+        typeof (
+          video as HTMLVideoElement & { webkitEnterFullscreen: () => void }
+        ).webkitEnterFullscreen === "function"
       ) {
         (
           video as HTMLVideoElement & { webkitEnterFullscreen: () => void }
@@ -146,11 +211,10 @@ export function VideoPlayer({ src, title, poster, onProgress }: Props) {
   };
 
   const retry = () => {
-    const video = videoRef.current;
-    if (!video) return;
     setError(null);
-    video.load();
-    void video.play().catch(() => undefined);
+    setReady(false);
+    setSourceIndex(0);
+    setReloadToken((n) => n + 1);
   };
 
   return (
@@ -187,7 +251,12 @@ export function VideoPlayer({ src, title, poster, onProgress }: Props) {
               {title}
             </p>
             {!ready && !error ? (
-              <p className="text-xs text-white/60">Loading stream…</p>
+              <p className="text-xs text-white/60">
+                Loading stream
+                {sources.length > 1
+                  ? ` (${sourceIndex + 1}/${sources.length})…`
+                  : "…"}
+              </p>
             ) : null}
           </div>
         </div>

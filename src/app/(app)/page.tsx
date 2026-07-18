@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { BrowseRails, type BrowseKind } from "@/components/catalog/BrowseRails";
 import { HeroBanner } from "@/components/catalog/HeroBanner";
 import { MediaRow, type MediaRowItem } from "@/components/catalog/MediaRow";
@@ -25,10 +26,17 @@ const FILTERS: { id: Section; label: string }[] = [
   { id: "series", label: "SERIES" },
 ];
 
-export default function HomePage() {
+function parseSection(value: string | null): Section | null {
+  if (value === "live" || value === "movies" || value === "series") return value;
+  return null;
+}
+
+function HomeInner() {
   const { credentials, activePlaylist } = usePlaylists();
-  /** null = overview (a bit of everything). No filter pre-selected. */
-  const [section, setSection] = useState<Section | null>(null);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  /** null = overview (a bit of everything). Driven by ?section= */
+  const section = parseSection(searchParams.get("section"));
   const [continueItems, setContinueItems] = useState<MediaRowItem[]>([]);
   const [favLive, setFavLive] = useState<MediaRowItem[]>([]);
   const [favMovies, setFavMovies] = useState<MediaRowItem[]>([]);
@@ -178,11 +186,14 @@ export default function HomePage() {
             <button
               key={filter.id}
               type="button"
-              onClick={() =>
-                setSection((current) =>
-                  current === filter.id ? null : filter.id,
-                )
-              }
+              onClick={() => {
+                const next = section === filter.id ? null : filter.id;
+                if (next) {
+                  router.replace(`/?section=${next}`, { scroll: false });
+                } else {
+                  router.replace("/", { scroll: false });
+                }
+              }}
               className={`shrink-0 rounded-full px-4 py-2 text-xs font-bold tracking-wide transition ${
                 section === filter.id
                   ? "bg-[var(--xp-accent)] text-[var(--xp-ink)]"
@@ -212,7 +223,6 @@ export default function HomePage() {
           }
           subtitle="Browse by category"
           embedded
-          maxRails={16}
         />
       ) : loadingHighlights ? (
         <div className="space-y-8 pt-4">
@@ -270,5 +280,21 @@ export default function HomePage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="space-y-8 px-4 pb-8 pt-4 md:px-6">
+          <div className="xp-shimmer h-10 w-40 rounded" />
+          <div className="xp-shimmer h-48 rounded-2xl" />
+          <PosterSkeletonRow />
+        </div>
+      }
+    >
+      <HomeInner />
+    </Suspense>
   );
 }

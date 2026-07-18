@@ -15,6 +15,7 @@ export type MediaRowItem = {
 type Props = {
   title: string;
   href?: string;
+  seeAllLabel?: string;
   items: MediaRowItem[];
   emptyLabel?: string;
   posterWidth?: string;
@@ -23,6 +24,7 @@ type Props = {
 export function MediaRow({
   title,
   href,
+  seeAllLabel = "Ver todo",
   items,
   emptyLabel,
   posterWidth = "w-[30vw] max-w-[9.5rem] min-w-[6.5rem] sm:w-36 md:w-40",
@@ -42,16 +44,16 @@ export function MediaRow({
 
   return (
     <section className="xp-fade-in space-y-3">
-      <div className="flex items-end justify-between px-4 md:px-6">
-        <h2 className="font-[family-name:var(--xp-font-display)] text-lg font-semibold md:text-xl">
+      <div className="flex items-end justify-between gap-3 px-4 md:px-6">
+        <h2 className="min-w-0 font-[family-name:var(--xp-font-display)] text-lg font-semibold md:text-xl">
           {title}
         </h2>
         {href ? (
           <Link
             href={href}
-            className="text-sm text-[var(--xp-accent)] hover:underline"
+            className="shrink-0 text-sm font-medium text-[var(--xp-accent)] hover:underline"
           >
-            See all
+            {seeAllLabel}
           </Link>
         ) : null}
       </div>

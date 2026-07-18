@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { PosterPlaceholder } from "@/components/brand/BrandMark";
 import { MarqueeText } from "@/components/catalog/MarqueeText";
 
@@ -12,6 +13,22 @@ type Props = {
   aspect?: "poster" | "live";
 };
 
+function usableImageUrl(image?: string) {
+  const src = image?.trim();
+  if (!src) return undefined;
+  const lower = src.toLowerCase();
+  if (
+    lower === "null" ||
+    lower === "undefined" ||
+    lower === "n/a" ||
+    lower === "none" ||
+    lower === "-"
+  ) {
+    return undefined;
+  }
+  return src;
+}
+
 export function PosterCard({
   href,
   title,
@@ -19,6 +36,10 @@ export function PosterCard({
   subtitle,
   aspect = "poster",
 }: Props) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const src = usableImageUrl(image);
+  const showImage = Boolean(src) && !imgFailed;
+
   return (
     <Link href={href} className="group xp-press relative block w-full">
       <div
@@ -26,18 +47,21 @@ export function PosterCard({
           aspect === "live" ? "aspect-video" : "aspect-[2/3]"
         }`}
       >
-        {image ? (
+        {showImage ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={image}
+            src={src}
             alt=""
             className={`h-full w-full transition duration-300 group-hover:scale-105 group-active:scale-95 ${
-              aspect === "live" ? "object-contain bg-black/40 p-2" : "object-cover"
+              aspect === "live"
+                ? "object-contain bg-[var(--xp-surface)] p-2"
+                : "object-cover"
             }`}
             loading="lazy"
+            onError={() => setImgFailed(true)}
           />
         ) : (
-          <PosterPlaceholder />
+          <PosterPlaceholder className="absolute inset-0" />
         )}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/90 via-black/15 to-transparent" />
         <div className="absolute bottom-0 left-0 right-0 space-y-0.5 p-2">

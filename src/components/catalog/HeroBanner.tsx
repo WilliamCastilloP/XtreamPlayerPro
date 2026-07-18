@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { Info, Play } from "lucide-react";
 import { PosterPlaceholder } from "@/components/brand/BrandMark";
 import { MarqueeText } from "@/components/catalog/MarqueeText";
@@ -22,15 +23,20 @@ export function HeroBanner({
   infoHref,
   eyebrow = "Featured",
 }: Props) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const src = image?.trim();
+  const showImage = Boolean(src) && !imgFailed;
+
   return (
     <section className="xp-fade-in relative mx-4 overflow-hidden rounded-2xl md:mx-6">
       <div className="relative aspect-[16/10] w-full bg-[var(--xp-surface)] sm:aspect-[21/9]">
-        {image ? (
+        {showImage ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={image}
+            src={src}
             alt=""
             className="absolute inset-0 h-full w-full object-cover"
+            onError={() => setImgFailed(true)}
           />
         ) : (
           <PosterPlaceholder className="absolute inset-0" />

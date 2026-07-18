@@ -17,9 +17,16 @@ type Props = {
   href?: string;
   items: MediaRowItem[];
   emptyLabel?: string;
+  posterWidth?: string;
 };
 
-export function MediaRow({ title, href, items, emptyLabel }: Props) {
+export function MediaRow({
+  title,
+  href,
+  items,
+  emptyLabel,
+  posterWidth = "w-[30vw] max-w-[9.5rem] min-w-[6.5rem] sm:w-36 md:w-40",
+}: Props) {
   if (!items.length) {
     return emptyLabel ? (
       <section className="xp-fade-in space-y-3">
@@ -48,9 +55,9 @@ export function MediaRow({ title, href, items, emptyLabel }: Props) {
           </Link>
         ) : null}
       </div>
-      <div className="flex gap-3 overflow-x-auto px-4 pb-1 scrollbar-none md:px-6">
+      <div className="flex gap-2.5 overflow-x-auto px-4 pb-1 scrollbar-none md:gap-3 md:px-6">
         {items.map((item) => (
-          <div key={item.key} className="w-28 shrink-0 md:w-36">
+          <div key={item.key} className={`shrink-0 ${posterWidth}`}>
             <PosterCard
               href={item.href}
               title={item.title}

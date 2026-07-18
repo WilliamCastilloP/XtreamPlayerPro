@@ -94,11 +94,8 @@ async function proxy(request: NextRequest) {
     return Response.json({ error: "Unsupported protocol" }, { status: 400 });
   }
 
-  // Never buffer multi‑GB VOD through the Next server — send the client straight
-  // to the panel. Native <video> can play cross-origin progressive media.
-  if (isLargeProgressivePath(parsed.pathname)) {
-    return Response.redirect(parsed.toString(), 302);
-  }
+  // IMPORTANT: do NOT 302 to http:// panels — HTTPS PWAs block mixed content.
+  // Stream progressive media with Range instead (chunked, no full-file buffer).
 
   const forwardHeaders: Record<string, string> = {
     "User-Agent": UPSTREAM_UA,
@@ -108,6 +105,7 @@ async function proxy(request: NextRequest) {
 
   const range = request.headers.get("range");
   if (range) forwardHeaders.Range = range;
+
   forwardHeaders.Referer = `${parsed.origin}/`;
   forwardHeaders.Origin = parsed.origin;
 
@@ -132,12 +130,6 @@ async function proxy(request: NextRequest) {
     const contentType = upstream.headers.get("content-type") || "";
     const finalUrl = upstream.url || parsed.toString();
     const finalPath = new URL(finalUrl).pathname;
-
-    // If upstream redirected a "live m3u8" request to a giant progressive file,
-    // bounce the client there instead of piping bytes through us.
-    if (isLargeProgressivePath(finalPath)) {
-      return Response.redirect(finalUrl, 302);
-    }
 
     if (shouldBufferAsPlaylist(contentType, finalPath)) {
       const text = await upstream.text();
@@ -164,7 +156,14 @@ async function proxy(request: NextRequest) {
     });
     if (!headers.has("Content-Type")) {
       if (finalPath.endsWith(".ts")) headers.set("Content-Type", "video/mp2t");
-      else headers.set("Content-Type", contentType || "application/octet-stream");
+      else if (isLargeProgressivePath(finalPath)) {
+        headers.set("Content-Type", "video/mp4");
+      } else {
+        headers.set("Content-Type", contentType || "application/octet-stream");
+      }
+    }
+    if (!headers.has("Accept-Ranges")) {
+      headers.set("Accept-Ranges", "bytes");
     }
 
     return new Response(upstream.body, {

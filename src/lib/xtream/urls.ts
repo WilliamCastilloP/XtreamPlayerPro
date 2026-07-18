@@ -60,10 +60,18 @@ export type StreamCandidate = {
   label: string;
 };
 
+function pageIsHttps(): boolean {
+  return typeof window !== "undefined" && window.location.protocol === "https:";
+}
+
+function isHttpUrl(url: string): boolean {
+  return url.startsWith("http://");
+}
+
 /**
  * Build playback candidates.
- * - Live: proxied HLS first (needs rewrite for hls.js), then direct HLS/TS
- * - VOD: DIRECT progressive file first (avoids proxying multi‑GB mp4s), then proxied HLS
+ * On HTTPS apps, never use direct http:// panel URLs (mixed content blocks them).
+ * Prefer proxied HLS for VOD so large files are chunked, not redirected.
  */
 export function buildStreamCandidates(
   credentials: XtreamCredentials,
@@ -74,9 +82,18 @@ export function buildStreamCandidates(
   const preferred = preferredExt?.replace(/^\./, "").toLowerCase();
   const out: StreamCandidate[] = [];
   const seen = new Set<string>();
+  const httpsPage = pageIsHttps();
 
   const push = (candidate: StreamCandidate) => {
     if (seen.has(candidate.url)) return;
+    // Block mixed-content direct URLs when the PWA is served over HTTPS
+    if (
+      candidate.transport === "direct" &&
+      httpsPage &&
+      isHttpUrl(candidate.url)
+    ) {
+      return;
+    }
     seen.add(candidate.url);
     out.push(candidate);
   };
@@ -91,41 +108,57 @@ export function buildStreamCandidates(
       transport: "proxy",
       label: "HLS (proxy)",
     });
-    push({ url: m3u8, transport: "direct", label: "HLS (direct)" });
-    push({ url: ts, transport: "direct", label: "MPEG-TS (direct)" });
     push({
       url: buildProxiedStreamUrl(bare),
       transport: "proxy",
       label: "Live (proxy)",
     });
+    push({ url: m3u8, transport: "direct", label: "HLS (direct)" });
+    push({
+      url: buildProxiedStreamUrl(ts),
+      transport: "proxy",
+      label: "MPEG-TS (proxy)",
+    });
+    push({ url: ts, transport: "direct", label: "MPEG-TS (direct)" });
     return out;
   }
 
   const fileExt =
-    preferred && preferred !== "m3u8" ? preferred : "mp4";
-  const fileUrl = buildDirectStreamUrl(credentials, kind, streamId, fileExt);
+    preferred && !["m3u8", "mkv"].includes(preferred) ? preferred : "mp4";
+  // mkv rarely plays in browsers — prefer HLS/mp4
   const hlsUrl = buildDirectStreamUrl(credentials, kind, streamId, "m3u8");
+  const fileUrl = buildDirectStreamUrl(credentials, kind, streamId, fileExt);
+  const mp4Url = buildDirectStreamUrl(credentials, kind, streamId, "mp4");
 
-  // Progressive download straight from the panel — do NOT proxy (crashes/OOM)
-  push({
-    url: fileUrl,
-    transport: "direct",
-    label: `${fileExt.toUpperCase()} (direct)`,
-  });
-
-  if (preferred && preferred !== fileExt && preferred !== "m3u8") {
-    push({
-      url: buildDirectStreamUrl(credentials, kind, streamId, preferred),
-      transport: "direct",
-      label: `${preferred.toUpperCase()} (direct)`,
-    });
-  }
-
+  // 1) Proxied HLS — works on HTTPS and loads progressively
   push({
     url: buildProxiedStreamUrl(hlsUrl),
     transport: "proxy",
     label: "HLS (proxy)",
   });
+
+  // 2) Proxied progressive with Range — same-origin, no mixed content
+  push({
+    url: buildProxiedStreamUrl(fileUrl),
+    transport: "proxy",
+    label: `${fileExt.toUpperCase()} (proxy)`,
+  });
+
+  if (fileExt !== "mp4") {
+    push({
+      url: buildProxiedStreamUrl(mp4Url),
+      transport: "proxy",
+      label: "MP4 (proxy)",
+    });
+  }
+
+  // 3) Direct only when not mixed-content
+  push({
+    url: fileUrl,
+    transport: "direct",
+    label: `${fileExt.toUpperCase()} (direct)`,
+  });
+  push({ url: hlsUrl, transport: "direct", label: "HLS (direct)" });
 
   return out;
 }

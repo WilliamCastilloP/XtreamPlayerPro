@@ -36,11 +36,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-dvh">
       <SideRail />
       <div className="flex min-w-0 flex-1 flex-col pb-20 md:pb-0">
-        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-[var(--xp-border)] bg-[rgba(11,15,20,0.85)] px-4 py-3 backdrop-blur-xl md:hidden">
+        <header className="sticky top-0 z-30 flex items-center justify-between bg-gradient-to-b from-[rgba(11,15,20,0.95)] to-transparent px-4 py-3 md:hidden">
           <p className="font-[family-name:var(--xp-font-display)] text-lg font-bold">
             Xtream<span className="text-[var(--xp-accent)]">Player</span>Pro
           </p>
-          <span className="truncate text-xs text-[var(--xp-muted)]">
+          <span className="max-w-[40%] truncate rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-[var(--xp-muted)]">
             {activePlaylist.name}
           </span>
         </header>

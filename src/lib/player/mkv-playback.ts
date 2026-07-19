@@ -175,6 +175,8 @@ export async function startRemuxedPlayback(
   opts?: {
     onProgress?: (progress: number) => void;
     onLog?: (message: string) => void;
+    /** Called when the browser blocked autoplay and a user tap is required. */
+    onAutoplayBlocked?: () => void;
   },
 ): Promise<RemuxHandle> {
   const log = opts?.onLog || (() => undefined);
@@ -360,6 +362,31 @@ export async function startRemuxedPlayback(
     opts?.onProgress?.(progress);
   };
 
+  // Publish the real movie length so the timeline shows the true duration
+  // instead of only the small buffered window (~16s). Cheap metadata read.
+  void input
+    .getDurationFromMetadata()
+    .then((dur) => {
+      if (!dur || !Number.isFinite(dur) || dur <= 0 || closed) return;
+      const applyDuration = () => {
+        try {
+          if (mediaSource.readyState !== "open") return;
+          if (sourceBuffer && sourceBuffer.updating) {
+            sourceBuffer.addEventListener("updateend", applyDuration, {
+              once: true,
+            });
+            return;
+          }
+          mediaSource.duration = dur;
+          log(`remux · duration=${Math.round(dur)}s`);
+        } catch {
+          /* ignore — timeline just stays approximate */
+        }
+      };
+      applyDuration();
+    })
+    .catch(() => undefined);
+
   log(
     `remux · converting · tracks=${conversion.utilizedTracks.length} discarded=${conversion.discardedTracks.length}`,
   );
@@ -424,11 +451,23 @@ export async function startRemuxedPlayback(
       await video.play();
       log("remux · playing");
     } catch (err) {
+      const name = err instanceof Error ? err.name : "";
       log(`remux · play() · ${err instanceof Error ? err.message : String(err)}`);
+      // Autoplay-with-sound is blocked without a user gesture (typical on iOS
+      // after navigating from the detail page). Ask the UI to show a tap-to-play
+      // button so the user can start it (and we enter fullscreen on that tap).
+      if (name === "NotAllowedError") {
+        opts?.onAutoplayBlocked?.();
+      }
       video.addEventListener(
         "canplay",
         () => {
-          if (!closed) void video.play().catch(() => undefined);
+          if (closed) return;
+          void video.play().catch((e) => {
+            if (e instanceof Error && e.name === "NotAllowedError") {
+              opts?.onAutoplayBlocked?.();
+            }
+          });
         },
         { once: true },
       );

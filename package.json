@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "proxy": "node scripts/stream-proxy.mjs"
   },
   "dependencies": {
     "hls.js": "^1.6.16",

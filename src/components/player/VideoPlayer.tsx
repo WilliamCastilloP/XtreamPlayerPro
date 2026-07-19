@@ -82,7 +82,7 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
     setError(null);
     setPlaying(false);
     setLoadPercent(0);
-    setStatusText(`Connecting (${candidate.label})…`);
+    setStatusText("Connecting…");
 
     if (hlsRef.current) {
       hlsRef.current.destroy();
@@ -104,17 +104,24 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       });
     };
 
+    /** Single source of truth for the ring — never mirror % into statusText */
+    const setProgress = (pct: number) => {
+      if (disposed) return;
+      setLoadPercent(Math.max(0, Math.min(100, Math.round(pct))));
+    };
+
     const updateNativeBuffer = () => {
       if (disposed) return;
       const pct = bufferPercent(video);
       if (pct !== null) {
-        setLoadPercent(pct);
-        if (video.readyState < 3) setStatusText(`Loading ${pct}%`);
-      } else if (video.buffered.length) {
+        setProgress(pct);
+        return;
+      }
+      if (video.buffered.length) {
         try {
           const secs = Math.round(video.buffered.end(video.buffered.length - 1));
-          setStatusText(`Buffering ${secs}s…`);
-          setLoadPercent(Math.min(95, secs * 5));
+          // Live/unknown duration: coarse estimate for the ring only
+          setProgress(Math.min(95, 10 + secs * 4));
         } catch {
           /* ignore */
         }
@@ -131,8 +138,8 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
     const onNativeError = () => failOver();
     const onLoaded = () => {
       if (!disposed) {
-        setLoadPercent(100);
-        setStatusText("Ready");
+        setProgress(100);
+        setStatusText("Starting…");
       }
     };
     const onWaiting = () => {
@@ -140,7 +147,7 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
     };
     const onPlayingEvt = () => {
       if (!disposed) {
-        setLoadPercent((p) => Math.max(p, 100));
+        setProgress(100);
         setStatusText("Playing");
       }
     };
@@ -177,8 +184,8 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       hls.on(Hls.Events.MANIFEST_PARSED, (_ev, data) => {
         if (disposed) return;
         fragTotal = Math.max(1, data.levels?.[0]?.details?.fragments?.length || 8);
-        setStatusText("Manifest loaded…");
-        setLoadPercent(8);
+        setStatusText("Loading stream…");
+        setProgress(8);
         void video.play().catch(() => undefined);
       });
 
@@ -195,9 +202,8 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
           99,
           Math.round((fragLoaded / Math.max(fragTotal, fragLoaded + 2)) * 100),
         );
-        setLoadPercent(pct);
-        setStatusText(`Loading ${pct}%`);
-        updateNativeBuffer();
+        setProgress(pct);
+        setStatusText("Loading stream…");
       });
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -322,7 +328,7 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       />
 
       {showLoader ? (
-        <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black/55 px-6">
+        <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/55 px-6">
           <div className="relative h-20 w-20">
             <svg className="h-20 w-20 -rotate-90" viewBox="0 0 64 64">
               <circle
@@ -349,7 +355,7 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
               {Math.max(loadPercent, 1)}%
             </span>
           </div>
-          <p className="text-center text-sm text-white/90">{statusText}</p>
+          <p className="text-center text-sm text-white/85">{statusText}</p>
           <p className="text-center text-xs text-white/55">
             Rotate your phone for a wider view
           </p>

@@ -1,0 +1,172 @@
+export type Locale = "en" | "es";
+
+const en = {
+  navHome: "Home",
+  navSearch: "Search",
+  navAccount: "Account",
+
+  accountTitle: "Account",
+  accountSubtitle: "Switch playlists and manage this device",
+  activePlaylist: "Active playlist",
+  playlists: "Playlists",
+  add: "Add",
+  edit: "Edit",
+  delete: "Delete",
+  active: "Active",
+  status: "Status",
+  expires: "Expires",
+  connections: "Connections",
+  trial: "Trial",
+  yes: "Yes",
+  no: "No",
+  switchLock: "Switch playlist / lock",
+  deleteConfirm: "Delete “{name}”?",
+  accountCheckFailed: "Account check failed",
+  language: "Language",
+  languageSubtitle: "Choose the app language on this device",
+  langSpanish: "Español",
+  langEnglish: "English",
+
+  seeAll: "See all",
+  seeAllCount: "See all ({count})",
+  categoriesPreview: "{shown}{total} categories · {limit} per row",
+  loadingMore: " · showing more…",
+  loadingCatalog: "Loading {kind} catalog…",
+  noTitlesCatalog: "No titles in this catalog yet.",
+  browseByCategory: "Browse by category",
+  liveTv: "Live TV",
+  movies: "Movies",
+  series: "Series",
+  tapPlayRotate: "Tap Play — rotate your phone for fullscreen",
+  openDetails: "Open details to play",
+
+  homeForYou: "For you",
+  homeHeroSubtitle:
+    "A mix of favorites and highlights — pick LIVE, MOVIES or SERIES to browse all",
+  continueWatching: "Continue watching",
+  continueEmpty: "Start watching to build this list.",
+  favoriteChannels: "Favorite channels",
+  favoriteChannelsEmpty: "Heart live channels to pin them here.",
+  liveHighlights: "Live highlights",
+  favoriteMovies: "Favorite movies",
+  favoriteMoviesEmpty: "Heart movies to pin them here.",
+  movieHighlights: "Movie highlights",
+  favoriteSeries: "Favorite series",
+  favoriteSeriesEmpty: "Heart series to pin them here.",
+  seriesHighlights: "Series highlights",
+  pickFilterHint: "Pick a filter above to browse the full catalog.",
+
+  searchTitle: "Search",
+  searchPlaceholder: "Search live, movies, series…",
+
+  playerConnecting: "Connecting…",
+  playerLoadingStream: "Loading stream…",
+  playerBuffering: "Buffering…",
+  playerStarting: "Starting…",
+  playerPlaying: "Playing",
+  playerTryingNext: "Trying next source…",
+  playerRotate: "Rotate your phone for a wider view",
+  playerRetry: "Retry",
+  playerSource: "Source {current}/{total}",
+  playerHlsUnsupported: "HLS is not supported in this browser.",
+  playerPlaybackFailed:
+    "Couldn't play this title. Every stream format failed — the channel may be offline, your panel may be out of connections, or the server is blocking playback.",
+  playerPlaybackFailedDetail:
+    "Couldn't play this title ({detail}). The channel may be offline, over the connection limit, or blocked by the panel.",
+} as const;
+
+export type MessageKey = keyof typeof en;
+
+const es: Record<MessageKey, string> = {
+  navHome: "Inicio",
+  navSearch: "Búsqueda",
+  navAccount: "Cuenta",
+
+  accountTitle: "Cuenta",
+  accountSubtitle: "Cambia de lista y administra este dispositivo",
+  activePlaylist: "Lista activa",
+  playlists: "Listas",
+  add: "Añadir",
+  edit: "Editar",
+  delete: "Eliminar",
+  active: "Activa",
+  status: "Estado",
+  expires: "Expira",
+  connections: "Conexiones",
+  trial: "Prueba",
+  yes: "Sí",
+  no: "No",
+  switchLock: "Cambiar lista / bloquear",
+  deleteConfirm: "¿Eliminar “{name}”?",
+  accountCheckFailed: "No se pudo verificar la cuenta",
+  language: "Idioma",
+  languageSubtitle: "Elige el idioma de la app en este dispositivo",
+  langSpanish: "Español",
+  langEnglish: "English",
+
+  seeAll: "Ver todo",
+  seeAllCount: "Ver todo ({count})",
+  categoriesPreview: "{shown}{total} categorías · {limit} por fila",
+  loadingMore: " · mostrando más…",
+  loadingCatalog: "Cargando catálogo de {kind}…",
+  noTitlesCatalog: "Aún no hay títulos en este catálogo.",
+  browseByCategory: "Explorar por categoría",
+  liveTv: "TV en vivo",
+  movies: "Películas",
+  series: "Series",
+  tapPlayRotate: "Toca Play — gira el teléfono para pantalla completa",
+  openDetails: "Abre los detalles para reproducir",
+
+  homeForYou: "Para ti",
+  homeHeroSubtitle:
+    "Favoritos y destacados — elige LIVE, MOVIES o SERIES para ver todo",
+  continueWatching: "Seguir viendo",
+  continueEmpty: "Empieza a ver algo para llenar esta lista.",
+  favoriteChannels: "Canales favoritos",
+  favoriteChannelsEmpty: "Marca canales en vivo para fijarlos aquí.",
+  liveHighlights: "Destacados en vivo",
+  favoriteMovies: "Películas favoritas",
+  favoriteMoviesEmpty: "Marca películas para fijarlas aquí.",
+  movieHighlights: "Películas destacadas",
+  favoriteSeries: "Series favoritas",
+  favoriteSeriesEmpty: "Marca series para fijarlas aquí.",
+  seriesHighlights: "Series destacadas",
+  pickFilterHint: "Elige un filtro arriba para explorar el catálogo completo.",
+
+  searchTitle: "Búsqueda",
+  searchPlaceholder: "Buscar live, películas, series…",
+
+  playerConnecting: "Conectando…",
+  playerLoadingStream: "Cargando stream…",
+  playerBuffering: "Buffering…",
+  playerStarting: "Iniciando…",
+  playerPlaying: "Reproduciendo",
+  playerTryingNext: "Probando otra fuente…",
+  playerRotate: "Gira el teléfono para ver más ancho",
+  playerRetry: "Reintentar",
+  playerSource: "Fuente {current}/{total}",
+  playerHlsUnsupported: "HLS no es compatible con este navegador.",
+  playerPlaybackFailed:
+    "No se pudo reproducir. Fallaron todos los formatos — el canal puede estar caído, sin conexiones libres o bloqueado por el panel.",
+  playerPlaybackFailedDetail:
+    "No se pudo reproducir ({detail}). El canal puede estar caído, sin conexiones libres o bloqueado por el panel.",
+};
+
+export const dictionaries: Record<Locale, Record<MessageKey, string>> = {
+  en: en as Record<MessageKey, string>,
+  es,
+};
+
+export function translate(
+  locale: Locale,
+  key: MessageKey,
+  vars?: Record<string, string | number>,
+): string {
+  let text = dictionaries[locale][key] ?? dictionaries.en[key] ?? key;
+  if (vars) {
+    for (const [name, value] of Object.entries(vars)) {
+      text = text.replaceAll(`{${name}}`, String(value));
+    }
+  }
+  return text;
+}

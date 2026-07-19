@@ -6,6 +6,7 @@ import { BrowseRails, type BrowseKind } from "@/components/catalog/BrowseRails";
 import { HeroBanner } from "@/components/catalog/HeroBanner";
 import { MediaRow, type MediaRowItem } from "@/components/catalog/MediaRow";
 import { PosterSkeletonRow } from "@/components/catalog/Skeleton";
+import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import { listContinue, listFavorites } from "@/lib/library/storage";
 import {
@@ -33,6 +34,7 @@ function parseSection(value: string | null): Section | null {
 
 function HomeInner() {
   const { credentials, activePlaylist } = usePlaylists();
+  const { t } = useLocale();
   const searchParams = useSearchParams();
   const router = useRouter();
   /** null = overview (a bit of everything). Driven by ?section= */
@@ -216,12 +218,12 @@ function HomeInner() {
           kind={section}
           title={
             section === "live"
-              ? "Live TV"
+              ? t("liveTv")
               : section === "movies"
-                ? "Movies"
-                : "Series"
+                ? t("movies")
+                : t("series")
           }
-          subtitle="Browse by category"
+          subtitle={t("browseByCategory")}
           embedded
         />
       ) : loadingHighlights ? (
@@ -233,9 +235,9 @@ function HomeInner() {
         <div className="space-y-6 pt-2 md:space-y-8">
           {hero ? (
             <HeroBanner
-              eyebrow="For you"
+              eyebrow={t("homeForYou")}
               title={hero.title}
-              subtitle="A mix of favorites and highlights — pick LIVE, MOVIES or SERIES to browse all"
+              subtitle={t("homeHeroSubtitle")}
               image={hero.image}
               playHref={
                 hero.href.startsWith("/movies/")
@@ -252,31 +254,31 @@ function HomeInner() {
           ) : null}
 
           <MediaRow
-            title="Continue watching"
+            title={t("continueWatching")}
             items={continueItems}
-            emptyLabel="Start watching to build this list."
+            emptyLabel={t("continueEmpty")}
           />
 
           <MediaRow
-            title="Favorite channels"
+            title={t("favoriteChannels")}
             items={favLive}
-            emptyLabel="Heart live channels to pin them here."
+            emptyLabel={t("favoriteChannelsEmpty")}
           />
-          <MediaRow title="Live highlights" items={featuredLive} />
+          <MediaRow title={t("liveHighlights")} items={featuredLive} />
 
           <MediaRow
-            title="Favorite movies"
+            title={t("favoriteMovies")}
             items={favMovies}
-            emptyLabel="Heart movies to pin them here."
+            emptyLabel={t("favoriteMoviesEmpty")}
           />
-          <MediaRow title="Movie highlights" items={featuredMovies} />
+          <MediaRow title={t("movieHighlights")} items={featuredMovies} />
 
           <MediaRow
-            title="Favorite series"
+            title={t("favoriteSeries")}
             items={favSeries}
-            emptyLabel="Heart series to pin them here."
+            emptyLabel={t("favoriteSeriesEmpty")}
           />
-          <MediaRow title="Series highlights" items={featuredSeries} />
+          <MediaRow title={t("seriesHighlights")} items={featuredSeries} />
         </div>
       )}
     </div>

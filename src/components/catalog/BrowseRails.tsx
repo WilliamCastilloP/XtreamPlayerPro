@@ -2,16 +2,25 @@
 
 import { useEffect, useState } from "react";
 import { HeroBanner } from "@/components/catalog/HeroBanner";
-import { MediaRow, type MediaRowItem } from "@/components/catalog/MediaRow";
+import {
+  MediaRow,
+  STANDARD_POSTER_WIDTH,
+  type MediaRowItem,
+} from "@/components/catalog/MediaRow";
 import { PosterSkeletonRow } from "@/components/catalog/Skeleton";
+import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import {
-  loadLiveByCategory,
+  groupByCategory,
+  loadAllLiveStreams,
+  loadAllSeries,
+  loadAllVodStreams,
   loadLiveCategories,
-  loadSeriesByCategory,
   loadSeriesCategories,
-  loadVodByCategory,
   loadVodCategories,
+  type LiveStream,
+  type SeriesItem,
+  type VodStream,
 } from "@/lib/xtream/catalog-cache";
 import { watchPath } from "@/lib/xtream/client";
 
@@ -32,13 +41,42 @@ type Rail = {
   href: string;
 };
 
-const BATCH = 3;
-/** Preview items per category rail — full list is on the category page */
 const PREVIEW_LIMIT = 6;
+const PAINT_BATCH = 8;
 
 function categoryHref(kind: BrowseKind, categoryId: string, name: string) {
   const params = new URLSearchParams({ name });
   return `/browse/${kind}/${encodeURIComponent(categoryId)}?${params.toString()}`;
+}
+
+function mapLiveItems(streams: LiveStream[]): MediaRowItem[] {
+  return streams.map((s) => ({
+    key: `live-${s.stream_id}`,
+    href: watchPath("live", s.stream_id, { title: s.name }),
+    title: s.name,
+    image: s.stream_icon || undefined,
+    aspect: "live" as const,
+  }));
+}
+
+function mapVodItems(streams: VodStream[]): MediaRowItem[] {
+  return streams.map((s) => ({
+    key: `vod-${s.stream_id}`,
+    href: `/movies/${s.stream_id}`,
+    title: s.name,
+    image: s.stream_icon || undefined,
+    subtitle: s.rating ? `★ ${s.rating}` : undefined,
+  }));
+}
+
+function mapSeriesItems(series: SeriesItem[]): MediaRowItem[] {
+  return series.map((s) => ({
+    key: `series-${s.series_id}`,
+    href: `/series/${s.series_id}`,
+    title: s.name,
+    image: s.cover || undefined,
+    subtitle: s.rating ? `★ ${s.rating}` : undefined,
+  }));
 }
 
 export function BrowseRails({
@@ -48,6 +86,7 @@ export function BrowseRails({
   embedded = false,
 }: Props) {
   const { credentials } = usePlaylists();
+  const { t } = useLocale();
   const [rails, setRails] = useState<Rail[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -62,97 +101,67 @@ export function BrowseRails({
       setLoading(true);
       setError(null);
       setRails([]);
+      setLoadingMore(false);
       try {
-        const cats =
+        const [cats, streams] = await Promise.all(
           kind === "live"
-            ? await loadLiveCategories(credentials!)
+            ? [
+                loadLiveCategories(credentials!),
+                loadAllLiveStreams(credentials!),
+              ]
             : kind === "movies"
-              ? await loadVodCategories(credentials!)
-              : await loadSeriesCategories(credentials!);
+              ? [
+                  loadVodCategories(credentials!),
+                  loadAllVodStreams(credentials!),
+                ]
+              : [
+                  loadSeriesCategories(credentials!),
+                  loadAllSeries(credentials!),
+                ],
+        );
 
         if (cancelled) return;
-        setTotalCategories(cats.length);
 
-        // Progressive batches — preview only; full category on "Ver todo"
+        const grouped =
+          kind === "live"
+            ? groupByCategory(cats, streams as LiveStream[])
+            : kind === "movies"
+              ? groupByCategory(cats, streams as VodStream[])
+              : groupByCategory(cats, streams as SeriesItem[]);
+
+        const built: Rail[] = grouped.map((rail) => {
+          const previewSource = rail.items.slice(0, PREVIEW_LIMIT);
+          const items =
+            kind === "live"
+              ? mapLiveItems(previewSource as LiveStream[])
+              : kind === "movies"
+                ? mapVodItems(previewSource as VodStream[])
+                : mapSeriesItems(previewSource as SeriesItem[]);
+
+          return {
+            id: rail.category.category_id,
+            name: rail.category.category_name,
+            totalCount: rail.items.length,
+            href: categoryHref(
+              kind,
+              rail.category.category_id,
+              rail.category.category_name,
+            ),
+            items,
+          };
+        });
+
+        setTotalCategories(built.length);
+
         const collected: Rail[] = [];
-        for (let i = 0; i < cats.length; i += BATCH) {
+        for (let i = 0; i < built.length; i += PAINT_BATCH) {
           if (cancelled) return;
           if (i > 0) setLoadingMore(true);
-          const chunk = cats.slice(i, i + BATCH);
-          const batchRails = await Promise.all(
-            chunk.map(async (cat) => {
-              const href = categoryHref(kind, cat.category_id, cat.category_name);
-              try {
-                if (kind === "live") {
-                  const streams = await loadLiveByCategory(
-                    credentials!,
-                    cat.category_id,
-                  );
-                  return {
-                    id: cat.category_id,
-                    name: cat.category_name,
-                    totalCount: streams.length,
-                    href,
-                    items: streams.slice(0, PREVIEW_LIMIT).map((s) => ({
-                      key: `live-${s.stream_id}`,
-                      href: watchPath("live", s.stream_id, { title: s.name }),
-                      title: s.name,
-                      image: s.stream_icon || undefined,
-                      aspect: "live" as const,
-                    })),
-                  };
-                }
-                if (kind === "movies") {
-                  const streams = await loadVodByCategory(
-                    credentials!,
-                    cat.category_id,
-                  );
-                  return {
-                    id: cat.category_id,
-                    name: cat.category_name,
-                    totalCount: streams.length,
-                    href,
-                    items: streams.slice(0, PREVIEW_LIMIT).map((s) => ({
-                      key: `vod-${s.stream_id}`,
-                      href: `/movies/${s.stream_id}`,
-                      title: s.name,
-                      image: s.stream_icon || undefined,
-                      subtitle: s.rating ? `★ ${s.rating}` : undefined,
-                    })),
-                  };
-                }
-                const series = await loadSeriesByCategory(
-                  credentials!,
-                  cat.category_id,
-                );
-                return {
-                  id: cat.category_id,
-                  name: cat.category_name,
-                  totalCount: series.length,
-                  href,
-                  items: series.slice(0, PREVIEW_LIMIT).map((s) => ({
-                    key: `series-${s.series_id}`,
-                    href: `/series/${s.series_id}`,
-                    title: s.name,
-                    image: s.cover || undefined,
-                    subtitle: s.rating ? `★ ${s.rating}` : undefined,
-                  })),
-                };
-              } catch {
-                return {
-                  id: cat.category_id,
-                  name: cat.category_name,
-                  totalCount: 0,
-                  href,
-                  items: [] as MediaRowItem[],
-                };
-              }
-            }),
-          );
-          collected.push(...batchRails.filter((r) => r.items.length > 0));
-          if (!cancelled) {
-            setRails([...collected]);
-            setLoading(false);
+          collected.push(...built.slice(i, i + PAINT_BATCH));
+          setRails([...collected]);
+          setLoading(false);
+          if (i + PAINT_BATCH < built.length) {
+            await new Promise((resolve) => window.setTimeout(resolve, 0));
           }
         }
       } catch (err) {
@@ -175,7 +184,8 @@ export function BrowseRails({
 
   const hero = rails[0]?.items[0];
   const isLive = kind === "live";
-  const previewTotal = rails.reduce((sum, rail) => sum + rail.items.length, 0);
+  const kindLabel =
+    kind === "movies" ? t("movies") : kind === "series" ? t("series") : t("liveTv");
 
   return (
     <div
@@ -197,17 +207,25 @@ export function BrowseRails({
       {loading && !rails.length ? (
         <div className="space-y-8">
           <div className="xp-shimmer mx-4 h-48 rounded-2xl md:mx-6 md:h-64" />
+          <p className="px-4 text-sm text-[var(--xp-muted)] md:px-6">
+            {t("loadingCatalog", { kind: kindLabel.toLowerCase() })}
+          </p>
           <PosterSkeletonRow />
           <PosterSkeletonRow />
         </div>
       ) : (
         <>
-          {previewTotal > 0 ? (
+          {rails.length > 0 ? (
             <p className="px-4 text-xs text-[var(--xp-muted)] md:px-6">
-              {rails.length}
-              {totalCategories > rails.length ? ` / ${totalCategories}` : ""}{" "}
-              categories · preview of {PREVIEW_LIMIT} per row
-              {loadingMore ? " · loading more…" : ""}
+              {t("categoriesPreview", {
+                shown: String(rails.length),
+                total:
+                  totalCategories > rails.length
+                    ? ` / ${totalCategories}`
+                    : "",
+                limit: PREVIEW_LIMIT,
+              })}
+              {loadingMore ? t("loadingMore") : ""}
             </p>
           ) : null}
 
@@ -216,9 +234,7 @@ export function BrowseRails({
               eyebrow={rails[0]?.name || title}
               title={hero.title}
               subtitle={
-                isLive
-                  ? "Tap Play — rotate your phone for fullscreen"
-                  : hero.subtitle || "Open details to play"
+                isLive ? t("tapPlayRotate") : hero.subtitle || t("openDetails")
               }
               image={hero.image}
               playHref={
@@ -242,21 +258,17 @@ export function BrowseRails({
               href={rail.href}
               seeAllLabel={
                 rail.totalCount > PREVIEW_LIMIT
-                  ? `Ver todo (${rail.totalCount})`
-                  : "Ver todo"
+                  ? t("seeAllCount", { count: rail.totalCount })
+                  : t("seeAll")
               }
               items={rail.items}
-              posterWidth={
-                isLive
-                  ? "w-[42vw] max-w-[14rem] min-w-[9rem] sm:w-48"
-                  : "w-[30vw] max-w-[9.5rem] min-w-[6.5rem] sm:w-36 md:w-40"
-              }
+              posterWidth={STANDARD_POSTER_WIDTH}
             />
           ))}
 
           {!rails.length && !loading ? (
             <p className="px-4 text-sm text-[var(--xp-muted)] md:px-6">
-              No titles in this catalog yet.
+              {t("noTitlesCatalog")}
             </p>
           ) : null}
         </>

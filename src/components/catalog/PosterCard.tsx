@@ -10,6 +10,7 @@ type Props = {
   title: string;
   image?: string;
   subtitle?: string;
+  /** live = channel logo (contain); same card size as movies/series */
   aspect?: "poster" | "live";
 };
 
@@ -42,11 +43,7 @@ export function PosterCard({
 
   return (
     <Link href={href} className="group xp-press relative block w-full">
-      <div
-        className={`relative overflow-hidden rounded-lg bg-[var(--xp-surface)] ring-1 ring-white/5 transition group-hover:ring-[var(--xp-accent)]/40 ${
-          aspect === "live" ? "aspect-video" : "aspect-[2/3]"
-        }`}
-      >
+      <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-[var(--xp-surface)] ring-1 ring-white/5 transition group-hover:ring-[var(--xp-accent)]/40">
         {showImage ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -54,7 +51,7 @@ export function PosterCard({
             alt=""
             className={`h-full w-full transition duration-300 group-hover:scale-105 group-active:scale-95 ${
               aspect === "live"
-                ? "object-contain bg-[var(--xp-surface)] p-2"
+                ? "object-contain bg-[var(--xp-surface)] p-3"
                 : "object-cover"
             }`}
             loading="lazy"

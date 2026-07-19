@@ -3,15 +3,17 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Home, Search, UserRound } from "lucide-react";
-
-const items = [
-  { href: "/", label: "Home", icon: Home },
-  { href: "/search", label: "Búsqueda", icon: Search },
-  { href: "/account", label: "Cuenta", icon: UserRound },
-];
+import { useLocale } from "@/components/providers/LocaleProvider";
 
 export function BottomNav() {
   const pathname = usePathname();
+  const { t } = useLocale();
+
+  const items = [
+    { href: "/", label: t("navHome"), icon: Home },
+    { href: "/search", label: t("navSearch"), icon: Search },
+    { href: "/account", label: t("navAccount"), icon: UserRound },
+  ];
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--xp-border)] bg-[rgba(11,15,20,0.94)] backdrop-blur-xl md:hidden">
@@ -23,7 +25,8 @@ export function BottomNav() {
                 pathname.startsWith("/live") ||
                 pathname.startsWith("/movies") ||
                 pathname.startsWith("/series") ||
-                pathname.startsWith("/favorites")
+                pathname.startsWith("/favorites") ||
+                pathname.startsWith("/browse")
               : pathname === href || pathname.startsWith(`${href}/`);
           return (
             <li key={href} className="flex-1">

@@ -26,6 +26,15 @@ function key(credentials: XtreamCredentials, part: string) {
   return `${credentials.serverUrl}|${credentials.username}|${part}`;
 }
 
+function peek<T>(
+  credentials: XtreamCredentials,
+  part: string,
+): T | undefined {
+  const hit = memory.get(key(credentials, part)) as CacheBucket<T> | undefined;
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.data;
+  return undefined;
+}
+
 async function cached<T>(
   credentials: XtreamCredentials,
   part: string,
@@ -70,10 +79,26 @@ export async function loadAllSeries(credentials: XtreamCredentials) {
   return cached(credentials, "series-all", () => getSeries(credentials));
 }
 
+function filterByCategoryId<T extends { category_id?: string }>(
+  items: T[],
+  categoryId: string,
+) {
+  if (categoryId === "uncategorized") {
+    return items.filter((item) => !item.category_id);
+  }
+  return items.filter((item) => item.category_id === categoryId);
+}
+
+/**
+ * Prefer slicing from the full-catalog cache when available so category pages
+ * stay instant after BrowseRails has already loaded the panel once.
+ */
 export async function loadLiveByCategory(
   credentials: XtreamCredentials,
   categoryId: string,
 ) {
+  const all = peek<LiveStream[]>(credentials, "live-all");
+  if (all) return filterByCategoryId(all, categoryId);
   return cached(credentials, `live-cat-${categoryId}`, () =>
     getLiveStreams(credentials, categoryId),
   );
@@ -83,6 +108,8 @@ export async function loadVodByCategory(
   credentials: XtreamCredentials,
   categoryId: string,
 ) {
+  const all = peek<VodStream[]>(credentials, "vod-all");
+  if (all) return filterByCategoryId(all, categoryId);
   return cached(credentials, `vod-cat-${categoryId}`, () =>
     getVodStreams(credentials, categoryId),
   );
@@ -92,6 +119,8 @@ export async function loadSeriesByCategory(
   credentials: XtreamCredentials,
   categoryId: string,
 ) {
+  const all = peek<SeriesItem[]>(credentials, "series-all");
+  if (all) return filterByCategoryId(all, categoryId);
   return cached(credentials, `series-cat-${categoryId}`, () =>
     getSeries(credentials, categoryId),
   );

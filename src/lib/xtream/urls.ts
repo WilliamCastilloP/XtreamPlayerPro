@@ -49,13 +49,41 @@ export function buildDirectStreamUrl(
   return `${base}/${pathKind}/${user}/${pass}/${streamId}.${ext}`;
 }
 
+/**
+ * Optional absolute origin for the stream proxy (no trailing slash), e.g.
+ * `https://proxy.example.com`. When unset, the app uses same-origin
+ * `/api/stream` (Vercel). Set `NEXT_PUBLIC_STREAM_PROXY_BASE` to move heavy
+ * video traffic off Vercel onto a VPS / Cloudflare Tunnel / etc.
+ */
+export function getStreamProxyBase(): string {
+  const raw = (process.env.NEXT_PUBLIC_STREAM_PROXY_BASE || "").trim();
+  if (!raw) return "";
+  return raw.replace(/\/+$/, "");
+}
+
 export function buildProxiedStreamUrl(directUrl: string): string {
-  return `/api/stream?url=${encodeURIComponent(directUrl)}`;
+  const path = `/api/stream?url=${encodeURIComponent(directUrl)}`;
+  const base = getStreamProxyBase();
+  return base ? `${base}${path}` : path;
+}
+
+/** True for same-origin or absolute `/api/stream?...` URLs. */
+export function isProxiedStreamUrl(url: string): boolean {
+  if (url.startsWith("/api/stream")) return true;
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.pathname === "/api/stream" ||
+      parsed.pathname.endsWith("/api/stream")
+    );
+  } catch {
+    return false;
+  }
 }
 
 export type StreamCandidate = {
   url: string;
-  /** direct = <video src> to panel; proxy = same-origin HLS/segment proxy */
+  /** direct = <video src> to panel; proxy = /api/stream (same-origin or STREAM_PROXY_BASE) */
   transport: "direct" | "proxy";
   label: string;
   /**
@@ -83,7 +111,11 @@ export function redactStreamUrl(url: string): string {
     const parsed = new URL(url, "http://local");
     const nested = parsed.searchParams.get("url");
     if (nested) {
-      return `/api/stream?url=${redactDirectUrl(nested)}`;
+      const prefix =
+        url.startsWith("http://") || url.startsWith("https://")
+          ? `${parsed.origin}/api/stream?url=`
+          : `/api/stream?url=`;
+      return `${prefix}${redactDirectUrl(nested)}`;
     }
     return redactDirectUrl(url);
   } catch {

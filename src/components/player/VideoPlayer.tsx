@@ -16,6 +16,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useLocale } from "@/components/providers/LocaleProvider";
 import {
+  isProxiedStreamUrl,
   looksLikeHlsUrl,
   redactStreamUrl,
   type StreamCandidate,
@@ -56,7 +57,7 @@ function bufferPercent(video: HTMLVideoElement): number | null {
 }
 
 async function diagnoseSource(url: string): Promise<string | null> {
-  if (!url.startsWith("/api/stream")) return null;
+  if (!isProxiedStreamUrl(url)) return null;
   try {
     const res = await fetch(url, {
       method: "GET",

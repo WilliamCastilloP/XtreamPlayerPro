@@ -135,6 +135,7 @@ export function VideoPlayer({
   const lastFailDetail = useRef<string | null>(null);
   const debugRef = useRef<DebugLine[]>([]);
   const [externalUrl, setExternalUrl] = useState<string | null>(null);
+  const [awaitingTap, setAwaitingTap] = useState(false);
   const sourcesKey = sources.map((s) => s.url).join("|");
   const [seenSourcesKey, setSeenSourcesKey] = useState(sourcesKey);
 
@@ -216,6 +217,7 @@ export function VideoPlayer({
 
     setError(null);
     setPlaying(false);
+    setAwaitingTap(false);
     setLoadPercent(0);
     setStatusText(t("playerConnecting"));
     lastFailDetail.current = null;
@@ -294,7 +296,10 @@ export function VideoPlayer({
       }
     };
 
-    const onPlay = () => setPlaying(true);
+    const onPlay = () => {
+      setPlaying(true);
+      setAwaitingTap(false);
+    };
     const onPause = () => setPlaying(false);
     const onTime = () => {
       if (video.duration && onProgress) {
@@ -352,6 +357,9 @@ export function VideoPlayer({
         },
         onLog: (message) => {
           if (!disposed) pushDebug(message);
+        },
+        onAutoplayBlocked: () => {
+          if (!disposed) setAwaitingTap(true);
         },
       })
         .then((handle) => {
@@ -431,6 +439,9 @@ export function VideoPlayer({
         pushDebug(`manifest ok · levels=${data.levels?.length || 0}`);
         void video.play().catch((err) => {
           pushDebug(`play() rejected · ${err instanceof Error ? err.message : String(err)}`);
+          if (err instanceof Error && err.name === "NotAllowedError") {
+            setAwaitingTap(true);
+          }
         });
       });
 
@@ -495,6 +506,9 @@ export function VideoPlayer({
           pushDebug(
             `play() rejected · ${err instanceof Error ? err.message : String(err)}`,
           );
+          if (err instanceof Error && err.name === "NotAllowedError") {
+            setAwaitingTap(true);
+          }
         });
       };
       if (video.readyState >= 2) tryPlay();
@@ -582,9 +596,24 @@ export function VideoPlayer({
     bumpChrome();
   };
 
+  const startFromTap = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    setAwaitingTap(false);
+    // Enter fullscreen first, within the user gesture — on iPhone this rotates
+    // to landscape. Then start playback with sound.
+    void goFullscreen();
+    void video.play().catch((err) => {
+      if (err instanceof Error && err.name === "NotAllowedError") {
+        setAwaitingTap(true);
+      }
+    });
+  };
+
   const retry = () => {
     setError(null);
     setExternalUrl(null);
+    setAwaitingTap(false);
     setLoadPercent(0);
     setSourceIndex(0);
     lastFailDetail.current = null;
@@ -592,7 +621,7 @@ export function VideoPlayer({
     setReloadToken((n) => n + 1);
   };
 
-  const showLoader = !error && !playing;
+  const showLoader = !error && !playing && !awaitingTap;
 
   return (
     <div
@@ -650,6 +679,25 @@ export function VideoPlayer({
             </p>
           ) : null}
         </div>
+      ) : null}
+
+      {awaitingTap && !error ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            startFromTap();
+          }}
+          className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-black/60 px-6 text-center"
+        >
+          <span className="flex h-20 w-20 items-center justify-center rounded-full bg-[var(--xp-accent)] text-[var(--xp-ink)] shadow-xl">
+            <Play className="h-9 w-9 fill-current" />
+          </span>
+          <span className="text-base font-semibold text-white">
+            {t("playerTapToPlay")}
+          </span>
+          <span className="text-xs text-white/60">{t("playerRotate")}</span>
+        </button>
       ) : null}
 
       {/* Back + title — always above error/retry overlay */}

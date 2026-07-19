@@ -56,6 +56,18 @@ function bufferPercent(video: HTMLVideoElement): number | null {
   }
 }
 
+function formatClock(totalSeconds: number): string {
+  if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return "0:00";
+  const s = Math.floor(totalSeconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  }
+  return `${m}:${String(sec).padStart(2, "0")}`;
+}
+
 async function diagnoseSource(url: string): Promise<string | null> {
   if (!isProxiedStreamUrl(url)) return null;
   try {
@@ -136,6 +148,12 @@ export function VideoPlayer({
   const debugRef = useRef<DebugLine[]>([]);
   const [externalUrl, setExternalUrl] = useState<string | null>(null);
   const [awaitingTap, setAwaitingTap] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [scrubbing, setScrubbing] = useState(false);
+  const [scrubValue, setScrubValue] = useState(0);
+  const [seekingUi, setSeekingUi] = useState(false);
+  const scrubbingRef = useRef(false);
   const sourcesKey = sources.map((s) => s.url).join("|");
   const [seenSourcesKey, setSeenSourcesKey] = useState(sourcesKey);
 
@@ -144,6 +162,8 @@ export function VideoPlayer({
     setSourceIndex(0);
     setError(null);
     setLoadPercent(0);
+    setCurrentTime(0);
+    setDuration(0);
   }
 
   const candidate = sources[sourceIndex];
@@ -302,8 +322,11 @@ export function VideoPlayer({
     };
     const onPause = () => setPlaying(false);
     const onTime = () => {
-      if (video.duration && onProgress) {
-        onProgress(video.currentTime, video.duration);
+      if (!scrubbingRef.current) setCurrentTime(video.currentTime || 0);
+      const dur = video.duration;
+      if (Number.isFinite(dur) && dur > 0) setDuration(dur);
+      if (dur && onProgress) {
+        onProgress(video.currentTime, dur);
       }
     };
     const onNativeError = () => {
@@ -360,6 +383,9 @@ export function VideoPlayer({
         },
         onAutoplayBlocked: () => {
           if (!disposed) setAwaitingTap(true);
+        },
+        onDuration: (seconds) => {
+          if (!disposed && seconds > 0) setDuration(seconds);
         },
       })
         .then((handle) => {
@@ -610,6 +636,33 @@ export function VideoPlayer({
     });
   };
 
+  const seekTo = async (seconds: number) => {
+    const video = videoRef.current;
+    if (!video || !Number.isFinite(seconds)) return;
+    const target = Math.max(0, duration > 0 ? Math.min(seconds, duration) : seconds);
+    setSeekingUi(true);
+    setCurrentTime(target);
+    setStatusText(t("playerSeeking"));
+    pushDebug(`seek · ${target.toFixed(1)}s · remux=${!!remuxRef.current}`);
+    bumpChrome();
+    try {
+      if (remuxRef.current) {
+        // MKV: restart remux from the new point (lightweight — Range requests).
+        await remuxRef.current.seek(target);
+      } else {
+        video.currentTime = target;
+        void video.play().catch(() => undefined);
+      }
+    } catch (err) {
+      pushDebug(
+        `seek failed · ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setSeekingUi(false);
+      setStatusText(t("playerPlaying"));
+    }
+  };
+
   const retry = () => {
     setError(null);
     setExternalUrl(null);
@@ -621,7 +674,9 @@ export function VideoPlayer({
     setReloadToken((n) => n + 1);
   };
 
-  const showLoader = !error && !playing && !awaitingTap;
+  const showLoader = (!error && !playing && !awaitingTap) || seekingUi;
+  const timelineValue = scrubbing ? scrubValue : currentTime;
+  const timelineMax = duration > 0 ? duration : Math.max(currentTime, 1);
 
   return (
     <div
@@ -774,40 +829,85 @@ export function VideoPlayer({
         }`}
       >
         {!error ? (
-          <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between gap-3 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-            <button
-              type="button"
-              onClick={togglePlay}
-              className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--xp-accent)] text-[var(--xp-ink)]"
-              aria-label={playing ? "Pause" : "Play"}
-            >
-              {playing ? (
-                <Pause className="h-5 w-5 fill-current" />
-              ) : (
-                <Play className="h-5 w-5 fill-current" />
-              )}
-            </button>
-            <div className="flex items-center gap-2">
+          <div className="absolute bottom-0 left-0 right-0 flex flex-col gap-3 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+            <div className="flex items-center gap-3">
+              <span className="w-12 shrink-0 text-right font-mono text-[11px] text-white/70">
+                {formatClock(timelineValue)}
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={timelineMax}
+                step={0.1}
+                value={Math.min(timelineValue, timelineMax)}
+                aria-label="Seek"
+                disabled={timelineMax <= 1 && duration <= 0}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  scrubbingRef.current = true;
+                  setScrubbing(true);
+                  setScrubValue(videoRef.current?.currentTime || 0);
+                }}
+                onChange={(e) => {
+                  const next = Number(e.target.value);
+                  setScrubValue(next);
+                  setCurrentTime(next);
+                }}
+                onPointerUp={(e) => {
+                  e.stopPropagation();
+                  const next = Number((e.target as HTMLInputElement).value);
+                  scrubbingRef.current = false;
+                  setScrubbing(false);
+                  void seekTo(next);
+                }}
+                onTouchEnd={(e) => {
+                  e.stopPropagation();
+                  const next = Number((e.target as HTMLInputElement).value);
+                  scrubbingRef.current = false;
+                  setScrubbing(false);
+                  void seekTo(next);
+                }}
+                className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/25 accent-[var(--xp-accent)] disabled:opacity-40"
+              />
+              <span className="w-12 shrink-0 font-mono text-[11px] text-white/70">
+                {formatClock(duration)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
               <button
                 type="button"
-                onClick={toggleMute}
-                className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white"
-                aria-label={muted ? "Unmute" : "Mute"}
+                onClick={togglePlay}
+                className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--xp-accent)] text-[var(--xp-ink)]"
+                aria-label={playing ? "Pause" : "Play"}
               >
-                {muted ? (
-                  <VolumeX className="h-5 w-5" />
+                {playing ? (
+                  <Pause className="h-5 w-5 fill-current" />
                 ) : (
-                  <Volume2 className="h-5 w-5" />
+                  <Play className="h-5 w-5 fill-current" />
                 )}
               </button>
-              <button
-                type="button"
-                onClick={goFullscreen}
-                className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white"
-                aria-label="Fullscreen"
-              >
-                <Maximize className="h-5 w-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={toggleMute}
+                  className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white"
+                  aria-label={muted ? "Unmute" : "Mute"}
+                >
+                  {muted ? (
+                    <VolumeX className="h-5 w-5" />
+                  ) : (
+                    <Volume2 className="h-5 w-5" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={goFullscreen}
+                  className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white"
+                  aria-label="Fullscreen"
+                >
+                  <Maximize className="h-5 w-5" />
+                </button>
+              </div>
             </div>
           </div>
         ) : null}

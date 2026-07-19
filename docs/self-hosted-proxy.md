@@ -1,7 +1,10 @@
 # Plan: mover el proxy de streaming fuera de Vercel
 
-> Estado: **EN STAND‑BY** hasta que haya acceso a una computadora para el setup.
-> Este documento existe para no perder el plan. Cuando estés listo, sígelo paso a paso.
+> Estado: **código listo** · setup del servidor **en stand‑by** hasta que
+> haya acceso a una computadora.
+>
+> Este documento existe para no perder el plan. Cuando estés listo, sígelo
+> paso a paso.
 
 ## El problema
 
@@ -9,8 +12,8 @@ La app está en Vercel. El plan gratuito (Hobby) incluye solo **10 GB/mes de
 "Fast Origin Transfer"** y se **reinicia cada mes**. Cuando se agota, Vercel
 **pausa el proyecto** hasta el mes siguiente.
 
-Todo el video se transmite a través de la ruta `src/app/api/stream/route.ts`
-(`/api/stream`), que corre en Vercel. Eso incluye:
+Todo el video se transmite a través de `/api/stream`, que por defecto corre
+en Vercel. Eso incluye:
 
 - **TV en vivo** (segmentos HLS): ~1.5–2 GB por hora.
 - **Remux de MKV** (películas/series): el archivo **completo** (p. ej. 2.4 GB
@@ -30,20 +33,23 @@ Separar los dos tipos de tráfico:
 - La **app** (interfaz, ligera) se queda en **Vercel** (gratis, sin problema).
 - El **proxy de video** (pesado) se muda a un host con mucho ancho de banda.
 
-### Cambio de código necesario (pendiente de implementar)
+## Qué ya está implementado en el código
 
-Hacer el origen del proxy **configurable** con una variable de entorno, por
-ejemplo `NEXT_PUBLIC_STREAM_PROXY_BASE`:
+1. **Variable de entorno** `NEXT_PUBLIC_STREAM_PROXY_BASE`
+   - Si **no** se define → todo sigue igual (proxy en Vercel). Nada se rompe.
+   - Si se define (ej. `https://mi-proxy.midominio.com`) → la app pide el
+     **video** a ese servidor; solo la **interfaz** sigue en Vercel.
+   - Se usa en `buildProxiedStreamUrl()` (`src/lib/xtream/urls.ts`).
 
-- Si **no** se define → todo sigue igual (proxy en Vercel). Nada se rompe.
-- Si se define (ej. `https://mi-proxy.midominio.com`) → la app pide el **video**
-  a ese servidor; solo la **interfaz** sigue en Vercel.
+2. **Proxy standalone** listo para correr en un VPS / PC:
+   ```bash
+   npm run proxy
+   # o: STREAM_PROXY_PORT=8080 node scripts/stream-proxy.mjs
+   ```
+   Expone `GET /api/stream?url=...` (misma lógica que la ruta de Next) y
+   `GET /health`.
 
-En el código, `buildProxiedStreamUrl()` (en `src/lib/xtream/urls.ts`) generaría
-`${NEXT_PUBLIC_STREAM_PROXY_BASE}/api/stream?url=...` en vez de la ruta relativa
-`/api/stream?url=...`. El mismo `route.ts` se despliega en el servidor externo
-(es un handler estándar de Node; se puede correr como app Next mínima o portarlo
-a un pequeño servidor Node/Express con la misma lógica).
+3. **`.env.example`** documenta la variable.
 
 ## Opción recomendada (gratis): Oracle Cloud "Always Free"
 
@@ -54,45 +60,67 @@ a un pequeño servidor Node/Express con la misma lógica).
 - **Caveats:** piden una **tarjeta** para verificar (no cobran en Always Free);
   el registro/configuración es algo quisquilloso.
 
-### Pasos (resumen)
+### Pasos
 
 1. Crear cuenta en Oracle Cloud (https://www.oracle.com/cloud/free/).
 2. Crear una instancia **Always Free** (Ampere ARM, Ubuntu). Guardar la llave
    SSH.
 3. Abrir el puerto del proxy en la Security List / firewall (ej. 443 o 8080).
-4. Instalar Node.js en la instancia.
-5. Copiar el proxy (la lógica de `src/app/api/stream/route.ts`) y correrlo con
-   `pm2` o `systemd` para que quede siempre activo.
-6. Poner un dominio + HTTPS (Cloudflare gratis o Caddy con Let's Encrypt).
-7. En Vercel → Project Settings → Environment Variables, añadir
-   `NEXT_PUBLIC_STREAM_PROXY_BASE=https://<tu-proxy>` y redeploy.
+4. Instalar Node.js en la instancia (Node 20+).
+5. Clonar este repo (o copiar solo `scripts/stream-proxy.mjs`) y correr:
+   ```bash
+   npm run proxy
+   # déjalo always-on con pm2:
+   npx pm2 start scripts/stream-proxy.mjs --name xtream-proxy
+   npx pm2 save
+   npx pm2 startup
+   ```
+6. Poner HTTPS delante (Cloudflare gratis, Caddy con Let's Encrypt, o
+   Cloudflare Tunnel).
+7. En Vercel → Project Settings → Environment Variables, añadir:
+   ```
+   NEXT_PUBLIC_STREAM_PROXY_BASE=https://<tu-proxy>
+   ```
+   y **Redeploy** (la variable es `NEXT_PUBLIC_*`, se incrusta en el build).
+8. Probar: abrir la app, reproducir TV en vivo, y confirmar en el debug del
+   player que las URLs de proxy empiezan con tu host (no con el de Vercel).
+   En el panel de Vercel, "Fast Origin Transfer" debería dejar de crecer con
+   el video.
 
 ## Alternativas
 
 ### Hetzner (de pago, "simplemente funciona")
 
 - ~4 €/mes, ~20 TB de tráfico, muy confiable y fácil de configurar.
-- Mismos pasos 3–7 de arriba.
+- Mismos pasos 3–8 de arriba.
 
 ### Cloudflare Tunnel + PC en casa (gratis, sin nube)
 
 - Requiere una computadora **siempre encendida** en casa.
-- Instalas `cloudflared`, corres el proxy local y expones un túnel HTTPS gratis.
+- Corres `npm run proxy` localmente y expones un túnel HTTPS gratis con
+  `cloudflared`.
 - El ancho de banda lo pone tu internet de casa. Costo 0.
+- Luego pones la URL del túnel en `NEXT_PUBLIC_STREAM_PROXY_BASE`.
 
-## Mientras tanto
+## Mientras tanto (probar sin Vercel)
 
-Para **probar** en el iPhone sin tocar Vercel: en una computadora corre
-`npm run dev` y exponla por HTTPS con `npx cloudflared tunnel --url
-http://localhost:3000`; abre esa URL en Safari del iPhone. El tráfico pasa por
-tu computadora, no por Vercel.
+En una computadora:
+
+```bash
+npm run dev
+npx cloudflared tunnel --url http://localhost:3000
+```
+
+Abre la URL `https://…` en Safari del iPhone. El tráfico pasa por tu
+computadora, no por Vercel.
 
 ## Checklist para retomar
 
+- [x] Implementar `NEXT_PUBLIC_STREAM_PROXY_BASE` en el código.
+- [x] Proxy standalone (`npm run proxy` / `scripts/stream-proxy.mjs`).
 - [ ] Conseguir acceso a una computadora.
 - [ ] Elegir host (Oracle gratis / Hetzner / Cloudflare Tunnel).
-- [ ] Implementar `NEXT_PUBLIC_STREAM_PROXY_BASE` en el código.
 - [ ] Desplegar el proxy en el host elegido (con HTTPS + always‑on).
 - [ ] Configurar la variable en Vercel y redeploy.
-- [ ] Verificar que TV en vivo y remux ya no consumen "Fast Origin Transfer" en
-      Vercel.
+- [ ] Verificar que TV en vivo y remux ya no consumen "Fast Origin Transfer"
+      en Vercel.

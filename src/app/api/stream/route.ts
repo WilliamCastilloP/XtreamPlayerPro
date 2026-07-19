@@ -17,7 +17,7 @@ const HOP_BY_HOP = new Set([
 ]);
 
 const UPSTREAM_UA =
-  "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36";
+  "VLC/3.0.20 LibVLC/3.0.20";
 
 function rewritePlaylist(body: string, playlistUrl: string): string {
   const base = new URL(playlistUrl);

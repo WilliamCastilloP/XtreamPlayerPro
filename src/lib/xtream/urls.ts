@@ -58,6 +58,11 @@ export type StreamCandidate = {
   /** direct = <video src> to panel; proxy = same-origin HLS/segment proxy */
   transport: "direct" | "proxy";
   label: string;
+  /**
+   * Browser cannot play this container natively (e.g. MKV).
+   * Play via client remux (Mediabunny → fMP4) using the proxy URL for Range.
+   */
+  remux?: boolean;
 };
 
 function pageIsHttps(): boolean {
@@ -66,6 +71,10 @@ function pageIsHttps(): boolean {
 
 function isHttpUrl(url: string): boolean {
   return url.startsWith("http://");
+}
+
+function isHttpsUrl(url: string): boolean {
+  return url.startsWith("https:");
 }
 
 /** Hide credentials in debug logs shown on-device */
@@ -89,10 +98,24 @@ function redactDirectUrl(url: string): string {
   );
 }
 
+function needsRemuxExt(ext: string): boolean {
+  return ["mkv", "avi", "mov", "ts"].includes(ext);
+}
+
+function isNativeProgressiveExt(ext: string): boolean {
+  return ["mp4", "m4v", "webm"].includes(ext);
+}
+
 /**
  * Build playback candidates.
- * On HTTPS apps, never use direct http:// panel URLs (mixed content blocks them).
- * For VOD, try the panel's preferred file extension first (many panels have no HLS).
+ *
+ * Live: keep HLS proxy-first (small segments work through our API).
+ *
+ * VOD/series:
+ * - Prefer the panel's real extension only (don't spray .avi/.ts 404s).
+ * - HTTPS panels: try DIRECT first for browser-native formats (phone→panel
+ *   like Smarters). Hosting proxies often 502 on huge progressive files.
+ * - MKV/AVI: mark remux + use proxy URL (Range chunks) for Mediabunny.
  */
 export function buildStreamCandidates(
   credentials: XtreamCredentials,
@@ -100,7 +123,10 @@ export function buildStreamCandidates(
   streamId: string | number,
   preferredExt?: string,
 ): StreamCandidate[] {
-  const preferred = preferredExt?.replace(/^\./, "").toLowerCase();
+  const preferred = (
+    preferredExt?.replace(/^\./, "").toLowerCase() ||
+    (kind === "live" ? "m3u8" : "mp4")
+  );
   const out: StreamCandidate[] = [];
   const seen = new Set<string>();
   const httpsPage = pageIsHttps();
@@ -143,28 +169,67 @@ export function buildStreamCandidates(
     return out;
   }
 
-  // VOD / series: prefer progressive file formats — many panels have no .m3u8 for movies
-  const extOrder: string[] = [];
-  if (preferred) extOrder.push(preferred);
-  for (const ext of ["mp4", "mkv", "avi", "m3u8", "ts"]) {
-    if (!extOrder.includes(ext)) extOrder.push(ext);
-  }
+  const directPreferred = buildDirectStreamUrl(
+    credentials,
+    kind,
+    streamId,
+    preferred,
+  );
+  const proxyPreferred = buildProxiedStreamUrl(directPreferred);
+  const remux = needsRemuxExt(preferred);
 
-  for (const ext of extOrder) {
-    const direct = buildDirectStreamUrl(credentials, kind, streamId, ext);
+  // 1) Native progressive on HTTPS → direct like Smarters (avoids proxy 502)
+  if (isNativeProgressiveExt(preferred) && isHttpsUrl(directPreferred)) {
     push({
-      url: buildProxiedStreamUrl(direct),
-      transport: "proxy",
-      label: `${ext.toUpperCase()} (proxy)`,
+      url: directPreferred,
+      transport: "direct",
+      label: `${preferred.toUpperCase()} (direct)`,
     });
   }
 
-  for (const ext of extOrder) {
-    const direct = buildDirectStreamUrl(credentials, kind, streamId, ext);
+  // 2) Preferred via proxy — required for remux (CORS-safe Range) and HTTP panels
+  push({
+    url: proxyPreferred,
+    transport: "proxy",
+    label: remux
+      ? `${preferred.toUpperCase()} (remux)`
+      : `${preferred.toUpperCase()} (proxy)`,
+    remux,
+  });
+
+  // 3) If remux container on HTTPS, also keep direct as last-resort / external
+  if (remux && isHttpsUrl(directPreferred)) {
     push({
-      url: direct,
+      url: directPreferred,
       transport: "direct",
-      label: `${ext.toUpperCase()} (direct)`,
+      label: `${preferred.toUpperCase()} (direct)`,
+      remux: true,
+    });
+  }
+
+  // 4) HLS alternate (some panels generate it)
+  if (preferred !== "m3u8") {
+    const hls = buildDirectStreamUrl(credentials, kind, streamId, "m3u8");
+    if (isHttpsUrl(hls)) {
+      push({ url: hls, transport: "direct", label: "M3U8 (direct)" });
+    }
+    push({
+      url: buildProxiedStreamUrl(hls),
+      transport: "proxy",
+      label: "M3U8 (proxy)",
+    });
+  }
+
+  // 5) MP4 fallback when preferred wasn't mp4 (some panels remux on the fly)
+  if (preferred !== "mp4") {
+    const mp4 = buildDirectStreamUrl(credentials, kind, streamId, "mp4");
+    if (isHttpsUrl(mp4)) {
+      push({ url: mp4, transport: "direct", label: "MP4 (direct)" });
+    }
+    push({
+      url: buildProxiedStreamUrl(mp4),
+      transport: "proxy",
+      label: "MP4 (proxy)",
     });
   }
 

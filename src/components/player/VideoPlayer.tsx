@@ -20,6 +20,11 @@ import {
   redactStreamUrl,
   type StreamCandidate,
 } from "@/lib/xtream/urls";
+import {
+  needsContainerRemux,
+  startRemuxedPlayback,
+  type RemuxHandle,
+} from "@/lib/player/mkv-playback";
 
 type Props = {
   sources: StreamCandidate[];
@@ -125,8 +130,10 @@ export function VideoPlayer({
   const [probing, setProbing] = useState(false);
   const hideTimer = useRef<number | null>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const remuxRef = useRef<RemuxHandle | null>(null);
   const lastFailDetail = useRef<string | null>(null);
   const debugRef = useRef<DebugLine[]>([]);
+  const [externalUrl, setExternalUrl] = useState<string | null>(null);
   const sourcesKey = sources.map((s) => s.url).join("|");
   const [seenSourcesKey, setSeenSourcesKey] = useState(sourcesKey);
 
@@ -219,6 +226,10 @@ export function VideoPlayer({
       hlsRef.current.destroy();
       hlsRef.current = null;
     }
+    if (remuxRef.current) {
+      remuxRef.current.stop();
+      remuxRef.current = null;
+    }
     video.removeAttribute("src");
     video.load();
 
@@ -236,6 +247,11 @@ export function VideoPlayer({
       }
       if (disposed) return;
       pushDebug(`all sources failed · last=${detail || "unknown"}`);
+      // Prefer a direct HTTPS URL for "open externally" (Smarters-style)
+      const direct = sources.find(
+        (s) => s.transport === "direct" && s.url.startsWith("https:"),
+      );
+      setExternalUrl(direct?.url || null);
       setError(
         detail
           ? t("playerPlaybackFailedDetail", { detail })
@@ -316,6 +332,72 @@ export function VideoPlayer({
     video.addEventListener("progress", updateNativeBuffer);
     video.addEventListener("waiting", onWaiting);
     video.addEventListener("playing", onPlayingEvt);
+
+    const wantsRemux =
+      candidate.remux ||
+      needsContainerRemux(extension, src);
+
+    // MKV/AVI: remux via Mediabunny → fMP4 (browsers can't play Matroska; Smarters can)
+    if (wantsRemux && candidate.transport === "proxy") {
+      queueMicrotask(() => {
+        if (disposed) return;
+        setStatusText(t("playerRemuxing"));
+        setProgress(5);
+      });
+      pushDebug(`engine=mediabunny-remux · ${candidate.label}`);
+      void startRemuxedPlayback(video, src, {
+        onProgress: (p) => {
+          if (!disposed) setProgress(Math.max(5, Math.round(p * 95)));
+        },
+        onLog: (message) => {
+          if (!disposed) pushDebug(message);
+        },
+      })
+        .then((handle) => {
+          if (disposed) {
+            handle.stop();
+            return;
+          }
+          remuxRef.current = handle;
+          setStatusText(t("playerPlaying"));
+          setProgress(100);
+        })
+        .catch((err) => {
+          if (disposed) return;
+          failOver(err instanceof Error ? err.message : String(err));
+        });
+
+      return () => {
+        disposed = true;
+        video.removeEventListener("play", onPlay);
+        video.removeEventListener("pause", onPause);
+        video.removeEventListener("timeupdate", onTime);
+        video.removeEventListener("progress", updateNativeBuffer);
+        video.removeEventListener("waiting", onWaiting);
+        video.removeEventListener("playing", onPlayingEvt);
+        if (remuxRef.current) {
+          remuxRef.current.stop();
+          remuxRef.current = null;
+        }
+        video.removeAttribute("src");
+        video.load();
+      };
+    }
+
+    // Direct MKV without remux path — skip immediately (browser can't demux)
+    if (wantsRemux && candidate.transport === "direct") {
+      pushDebug(`skip direct remux-container · use proxy remux instead`);
+      queueMicrotask(() => failOver("browser cannot play this container natively"));
+      return () => {
+        disposed = true;
+        video.removeEventListener("play", onPlay);
+        video.removeEventListener("pause", onPause);
+        video.removeEventListener("timeupdate", onTime);
+        video.removeEventListener("progress", updateNativeBuffer);
+        video.removeEventListener("waiting", onWaiting);
+        video.removeEventListener("playing", onPlayingEvt);
+      };
+    }
 
     const isHls = looksLikeHlsUrl(src);
     const useHlsJs = isHls && Hls.isSupported();
@@ -407,9 +489,15 @@ export function VideoPlayer({
       video.src = src;
       video.addEventListener("loadedmetadata", onLoaded);
       video.addEventListener("error", onNativeError);
-      void video.play().catch((err) => {
-        pushDebug(`play() rejected · ${err instanceof Error ? err.message : String(err)}`);
-      });
+      const tryPlay = () => {
+        void video.play().catch((err) => {
+          pushDebug(
+            `play() rejected · ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      };
+      if (video.readyState >= 2) tryPlay();
+      else video.addEventListener("canplay", tryPlay, { once: true });
     } else {
       queueMicrotask(() => setError(t("playerHlsUnsupported")));
     }
@@ -428,6 +516,10 @@ export function VideoPlayer({
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
+      if (remuxRef.current) {
+        remuxRef.current.stop();
+        remuxRef.current = null;
+      }
       video.removeAttribute("src");
       video.load();
     };
@@ -435,12 +527,14 @@ export function VideoPlayer({
     src,
     candidate,
     onProgress,
+    sources,
     sources.length,
     reloadToken,
     t,
     sourceIndex,
     pushDebug,
     runProbes,
+    extension,
   ]);
 
   useEffect(
@@ -489,6 +583,7 @@ export function VideoPlayer({
 
   const retry = () => {
     setError(null);
+    setExternalUrl(null);
     setLoadPercent(0);
     setSourceIndex(0);
     lastFailDetail.current = null;
@@ -599,6 +694,16 @@ export function VideoPlayer({
             <RotateCcw className="h-4 w-4" />
             {t("playerRetry")}
           </button>
+          {externalUrl ? (
+            <a
+              href={externalUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 rounded-full bg-white/15 px-5 py-3 text-sm font-semibold text-white"
+            >
+              {t("playerOpenExternal")}
+            </a>
+          ) : null}
           <button
             type="button"
             onClick={() => {

@@ -93,13 +93,14 @@ function waitForUpdateEnd(sourceBuffer: SourceBuffer): Promise<void> {
 async function evictBehind(
   sourceBuffer: SourceBuffer,
   video: HTMLVideoElement,
+  keepBehind = 10,
 ): Promise<void> {
   try {
     const buffered = sourceBuffer.buffered;
     if (!buffered.length) return;
     const start = buffered.start(0);
-    const keepFrom = Math.max(start, video.currentTime - 15);
-    if (keepFrom - start < 10) return;
+    const keepFrom = Math.max(start, (video.currentTime || 0) - keepBehind);
+    if (keepFrom - start < 3) return;
     await waitForUpdateEnd(sourceBuffer);
     sourceBuffer.remove(start, keepFrom);
     await waitForUpdateEnd(sourceBuffer);
@@ -139,10 +140,11 @@ function appendChunk(
         sourceBuffer.removeEventListener("error", onError);
         const isQuota =
           err instanceof DOMException && err.name === "QuotaExceededError";
-        if (isQuota && quotaRetries < 6) {
+        if (isQuota && quotaRetries < 8) {
           quotaRetries += 1;
-          void evictBehind(sourceBuffer, video).then(() => {
-            window.setTimeout(run, 250);
+          // Free as much played buffer as possible, then retry the same append.
+          void evictBehind(sourceBuffer, video, 4).then(() => {
+            window.setTimeout(run, 300);
           });
           return;
         }
@@ -237,19 +239,41 @@ export async function startRemuxedPlayback(
   let appendError: Error | null = null;
   let sawData = false;
 
-  // Backpressure: keep the append queue bounded so Mediabunny doesn't read the
-  // whole (multi-GB) file into memory faster than MSE can drain it.
-  const HIGH_WATER = 24;
-  const LOW_WATER = 8;
+  // Only keep a small window buffered ahead of the playhead. iOS MSE quotas are
+  // tiny, so appending a whole multi-GB movie instantly throws QuotaExceeded.
+  // We append ~MAX_AHEAD seconds, then wait for playback to advance (which lets
+  // us evict what has already played and pull more from the remuxer).
+  const MAX_AHEAD = 16;
+  const EVICT_BEHIND = 6;
+
+  // Bound the in-memory queue so Mediabunny doesn't race ahead of MSE.
+  const HIGH_WATER = 12;
+  const LOW_WATER = 4;
   let drainResolve: (() => void) | null = null;
+  const releaseDrain = () => {
+    if (drainResolve) {
+      const r = drainResolve;
+      drainResolve = null;
+      r();
+    }
+  };
   const waitForDrain = () =>
     new Promise<void>((resolve) => {
       drainResolve = resolve;
     });
 
-  // ManagedMediaSource asks us to (dis)continue feeding via these events. Start
-  // feeding immediately (so we buffer enough to begin playback) and only pause
-  // when the platform tells us it has enough via `endstreaming`.
+  const bufferedAhead = (): number => {
+    if (!sourceBuffer) return 0;
+    try {
+      const b = sourceBuffer.buffered;
+      if (!b.length) return 0;
+      return Math.max(0, b.end(b.length - 1) - (video.currentTime || 0));
+    } catch {
+      return 0;
+    }
+  };
+
+  // ManagedMediaSource tells us when to (dis)continue feeding via these events.
   let streaming = true;
   if (managed) {
     const ms = mediaSource as unknown as EventTarget;
@@ -263,31 +287,33 @@ export async function startRemuxedPlayback(
   }
 
   const pump = async () => {
-    if (pumping || closed) return;
+    if (pumping || closed || appendError) return;
     pumping = true;
     try {
-      while (queue.length && !closed && sourceBuffer && streaming) {
+      while (
+        queue.length &&
+        !closed &&
+        !appendError &&
+        sourceBuffer &&
+        streaming &&
+        bufferedAhead() < MAX_AHEAD
+      ) {
         const chunk = queue.shift();
         if (!chunk) continue;
         await appendChunk(sourceBuffer, chunk, video);
         sawData = true;
-        if (queue.length <= LOW_WATER && drainResolve) {
-          const r = drainResolve;
-          drainResolve = null;
-          r();
-        }
+        if (queue.length <= LOW_WATER) releaseDrain();
       }
     } catch (err) {
       appendError = err instanceof Error ? err : new Error(String(err));
       log(`remux · append failed · ${appendError.message}`);
-      if (drainResolve) {
-        const r = drainResolve;
-        drainResolve = null;
-        r();
-      }
+      releaseDrain();
     } finally {
       pumping = false;
     }
+    // If we paused because the window is full, keep the queue bounded — the
+    // timeupdate/interval drivers resume us as playback drains the buffer.
+    if (!closed && queue.length <= LOW_WATER) releaseDrain();
   };
 
   const writable = new WritableStream<Uint8Array>({
@@ -295,7 +321,7 @@ export async function startRemuxedPlayback(
       if (closed) return;
       queue.push(chunk);
       void pump();
-      if (queue.length >= HIGH_WATER && !closed) {
+      if (queue.length >= HIGH_WATER && !closed && !appendError) {
         await waitForDrain();
       }
     },
@@ -344,13 +370,23 @@ export async function startRemuxedPlayback(
     log(`remux · conversion error · ${conversionError.message}`);
   });
 
+  // As playback advances: drop already-played buffer and pull more data. This
+  // keeps the SourceBuffer inside its quota for the whole movie.
+  const onTimeUpdate = () => {
+    if (closed || !sourceBuffer) return;
+    void evictBehind(sourceBuffer, video, EVICT_BEHIND);
+    void pump();
+  };
+  video.addEventListener("timeupdate", onTimeUpdate);
+  const pumpTimer = window.setInterval(() => {
+    if (!closed) void pump();
+  }, 1000);
+
   const stop = () => {
     closed = true;
-    if (drainResolve) {
-      const r = drainResolve;
-      drainResolve = null;
-      r();
-    }
+    releaseDrain();
+    window.clearInterval(pumpTimer);
+    video.removeEventListener("timeupdate", onTimeUpdate);
     void conversion.cancel().catch(() => undefined);
     void Promise.resolve(input.dispose()).catch(() => undefined);
     try {
@@ -380,24 +416,40 @@ export async function startRemuxedPlayback(
     throw appendError || conversionError || new Error("Remux failed");
   }
 
-  try {
-    await video.play();
-    log("remux · playing");
-  } catch (err) {
-    log(`remux · play() · ${err instanceof Error ? err.message : String(err)}`);
-  }
+  // Start playback so currentTime advances (required for the sliding window to
+  // drain and evict). Retry once media is actually ready if the first call is
+  // rejected/aborted.
+  const attemptPlay = async () => {
+    try {
+      await video.play();
+      log("remux · playing");
+    } catch (err) {
+      log(`remux · play() · ${err instanceof Error ? err.message : String(err)}`);
+      video.addEventListener(
+        "canplay",
+        () => {
+          if (!closed) void video.play().catch(() => undefined);
+        },
+        { once: true },
+      );
+    }
+  };
+  await attemptPlay();
 
   void conversionPromise.finally(async () => {
+    // Drain whatever is left once the remux finishes, respecting the window.
     try {
       while (queue.length && !appendError && !closed) {
         await pump();
-        await new Promise((r) => window.setTimeout(r, 40));
+        await new Promise((r) => window.setTimeout(r, 60));
       }
       if (
         !closed &&
+        !appendError &&
         mediaSource.readyState === "open" &&
         sourceBuffer &&
-        !sourceBuffer.updating
+        !sourceBuffer.updating &&
+        !queue.length
       ) {
         mediaSource.endOfStream();
         log("remux · endOfStream");

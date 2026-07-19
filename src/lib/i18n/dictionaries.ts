@@ -73,6 +73,13 @@ const en = {
     "Couldn't play this title. Every stream format failed — the channel may be offline, your panel may be out of connections, or the server is blocking playback.",
   playerPlaybackFailedDetail:
     "Couldn't play this title ({detail}). The channel may be offline, over the connection limit, or blocked by the panel.",
+  playerDebug: "Debug",
+  playerDebugHide: "Hide debug",
+  playerDebugProbing: "Probing sources…",
+  playerDebugEmpty: "No probe results yet.",
+  favorite: "Favorite",
+  play: "Play",
+  back: "Back",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -150,6 +157,13 @@ const es: Record<MessageKey, string> = {
     "No se pudo reproducir. Fallaron todos los formatos — el canal puede estar caído, sin conexiones libres o bloqueado por el panel.",
   playerPlaybackFailedDetail:
     "No se pudo reproducir ({detail}). El canal puede estar caído, sin conexiones libres o bloqueado por el panel.",
+  playerDebug: "Debug",
+  playerDebugHide: "Ocultar debug",
+  playerDebugProbing: "Probando fuentes…",
+  playerDebugEmpty: "Aún no hay resultados.",
+  favorite: "Favorito",
+  play: "Play",
+  back: "Atrás",
 };
 
 export const dictionaries: Record<Locale, Record<MessageKey, string>> = {

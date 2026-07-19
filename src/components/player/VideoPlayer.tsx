@@ -1,20 +1,23 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import {
   ArrowLeft,
+  Bug,
   Maximize,
   Pause,
   Play,
   RotateCcw,
   Volume2,
   VolumeX,
+  X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useLocale } from "@/components/providers/LocaleProvider";
 import {
   looksLikeHlsUrl,
+  redactStreamUrl,
   type StreamCandidate,
 } from "@/lib/xtream/urls";
 
@@ -22,7 +25,16 @@ type Props = {
   sources: StreamCandidate[];
   title: string;
   poster?: string;
+  kind?: string;
+  streamId?: string;
+  extension?: string;
   onProgress?: (position: number, duration: number) => void;
+};
+
+type DebugLine = {
+  id: string;
+  at: string;
+  text: string;
 };
 
 function bufferPercent(video: HTMLVideoElement): number | null {
@@ -49,15 +61,54 @@ async function diagnoseSource(url: string): Promise<string | null> {
     if (res.ok || res.status === 206) return null;
     const data = (await res.json().catch(() => null)) as {
       error?: string;
+      detail?: string;
     } | null;
-    if (data?.error) return data.error;
+    if (data?.error) {
+      return data.detail ? `${data.error}: ${data.detail}` : data.error;
+    }
     return `HTTP ${res.status}`;
   } catch {
     return null;
   }
 }
 
-export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
+async function probeSource(candidate: StreamCandidate): Promise<string> {
+  const label = candidate.label;
+  const safe = redactStreamUrl(candidate.url);
+  try {
+    const res = await fetch(candidate.url, {
+      method: "GET",
+      headers: { Range: "bytes=0-1023" },
+      cache: "no-store",
+    });
+    const ct = res.headers.get("content-type") || "?";
+    const cl = res.headers.get("content-length") || res.headers.get("content-range") || "?";
+    let sample = "";
+    if (
+      ct.includes("json") ||
+      ct.includes("text") ||
+      ct.includes("mpegurl") ||
+      ct.includes("m3u8")
+    ) {
+      sample = (await res.text()).slice(0, 140).replace(/\s+/g, " ");
+    } else {
+      sample = `[binary · ${cl}]`;
+    }
+    return `${label} → ${res.status} · ${ct} · ${safe} · ${sample}`;
+  } catch (err) {
+    return `${label} → FAIL · ${safe} · ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+export function VideoPlayer({
+  sources,
+  title,
+  poster,
+  kind,
+  streamId,
+  extension,
+  onProgress,
+}: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const router = useRouter();
   const { t } = useLocale();
@@ -69,9 +120,13 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
   const [reloadToken, setReloadToken] = useState(0);
   const [loadPercent, setLoadPercent] = useState(0);
   const [statusText, setStatusText] = useState(t("playerConnecting"));
+  const [showDebug, setShowDebug] = useState(false);
+  const [debugLines, setDebugLines] = useState<DebugLine[]>([]);
+  const [probing, setProbing] = useState(false);
   const hideTimer = useRef<number | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const lastFailDetail = useRef<string | null>(null);
+  const debugRef = useRef<DebugLine[]>([]);
   const sourcesKey = sources.map((s) => s.url).join("|");
   const [seenSourcesKey, setSeenSourcesKey] = useState(sourcesKey);
 
@@ -85,17 +140,63 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
   const candidate = sources[sourceIndex];
   const src = candidate?.url || "";
 
+  const pushDebug = useCallback((text: string) => {
+    const at = new Date().toLocaleTimeString();
+    const next = [
+      ...debugRef.current.slice(-80),
+      { id: `${Date.now()}-${Math.random()}`, at, text },
+    ];
+    debugRef.current = next;
+    queueMicrotask(() => setDebugLines(next));
+  }, []);
+
+  const resetDebug = useCallback((seed?: string) => {
+    debugRef.current = [];
+    queueMicrotask(() => {
+      setDebugLines([]);
+      if (seed) {
+        const at = new Date().toLocaleTimeString();
+        const line = { id: `${Date.now()}-seed`, at, text: seed };
+        debugRef.current = [line];
+        setDebugLines([line]);
+      }
+    });
+  }, []);
+
+  const goBack = useCallback(() => {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      router.back();
+      return;
+    }
+    router.replace("/");
+  }, [router]);
+
   const bumpChrome = () => {
     setShowChrome(true);
     if (hideTimer.current) window.clearTimeout(hideTimer.current);
     hideTimer.current = window.setTimeout(() => {
-      if (playing) setShowChrome(false);
+      if (playing && !error && !showDebug) setShowChrome(false);
     }, 2800);
   };
 
+  const runProbes = useCallback(async () => {
+    setProbing(true);
+    pushDebug(
+      `meta · kind=${kind || "?"} id=${streamId || "?"} ext=${extension || "(none)"} https=${typeof window !== "undefined" && window.location.protocol === "https:"} candidates=${sources.length}`,
+    );
+    for (let i = 0; i < sources.length; i += 1) {
+      const line = await probeSource(sources[i]!);
+      pushDebug(`[${i + 1}/${sources.length}] ${line}`);
+    }
+    setProbing(false);
+  }, [sources, kind, streamId, extension, pushDebug]);
+
   useEffect(() => {
     lastFailDetail.current = null;
-  }, [sourcesKey]);
+    resetDebug(
+      `start · ${kind || "stream"} · ${sources.length} sources · page ${typeof window !== "undefined" ? window.location.protocol : "?"}`,
+    );
+  }, [sourcesKey, kind, sources.length, resetDebug]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -110,6 +211,9 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
     setLoadPercent(0);
     setStatusText(t("playerConnecting"));
     lastFailDetail.current = null;
+    pushDebug(
+      `try ${sourceIndex + 1}/${sources.length} · ${candidate.label} · ${redactStreamUrl(src)} · hls?=${looksLikeHlsUrl(src)}`,
+    );
 
     if (hlsRef.current) {
       hlsRef.current.destroy();
@@ -131,16 +235,20 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
         if (detail) lastFailDetail.current = detail;
       }
       if (disposed) return;
+      pushDebug(`all sources failed · last=${detail || "unknown"}`);
       setError(
         detail
           ? t("playerPlaybackFailedDetail", { detail })
           : t("playerPlaybackFailed"),
       );
+      setShowDebug(true);
+      void runProbes();
     };
 
     const failOver = (reason?: string) => {
       if (disposed) return;
       if (reason) lastFailDetail.current = reason;
+      pushDebug(`fail · ${candidate.label} · ${reason || "no detail"}`);
       setStatusText(t("playerTryingNext"));
       setLoadPercent(0);
       setSourceIndex((current) => {
@@ -179,13 +287,16 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
     const onNativeError = () => {
       void (async () => {
         const detail = await diagnoseSource(src);
-        failOver(detail || undefined);
+        const mediaErr = video.error;
+        const code = mediaErr ? `mediaError=${mediaErr.code}` : undefined;
+        failOver(detail || code || undefined);
       })();
     };
     const onLoaded = () => {
       if (!disposed) {
         setProgress(100);
         setStatusText(t("playerStarting"));
+        pushDebug(`loadedmetadata · ${candidate.label}`);
       }
     };
     const onWaiting = () => {
@@ -195,6 +306,7 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       if (!disposed) {
         setProgress(100);
         setStatusText(t("playerPlaying"));
+        pushDebug(`playing · ${candidate.label}`);
       }
     };
 
@@ -213,6 +325,7 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       !!video.canPlayType("application/vnd.apple.mpegurl");
 
     if (useHlsJs) {
+      pushDebug(`engine=hls.js · ${candidate.label}`);
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
@@ -232,7 +345,10 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
         fragTotal = Math.max(1, data.levels?.[0]?.details?.fragments?.length || 8);
         setStatusText(t("playerLoadingStream"));
         setProgress(8);
-        void video.play().catch(() => undefined);
+        pushDebug(`manifest ok · levels=${data.levels?.length || 0}`);
+        void video.play().catch((err) => {
+          pushDebug(`play() rejected · ${err instanceof Error ? err.message : String(err)}`);
+        });
       });
 
       hls.on(Hls.Events.LEVEL_LOADED, (_ev, data) => {
@@ -254,6 +370,9 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (disposed || !data.fatal) return;
+        pushDebug(
+          `hls fatal · type=${data.type} · ${String(data.details || "")}`,
+        );
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
           try {
             hls.startLoad();
@@ -282,10 +401,15 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
         );
       });
     } else if (useNativeHls || !isHls) {
+      pushDebug(
+        `engine=native · hls=${isHls} · canPlay=${video.canPlayType("application/vnd.apple.mpegurl") || "n/a"}`,
+      );
       video.src = src;
       video.addEventListener("loadedmetadata", onLoaded);
       video.addEventListener("error", onNativeError);
-      void video.play().catch(() => undefined);
+      void video.play().catch((err) => {
+        pushDebug(`play() rejected · ${err instanceof Error ? err.message : String(err)}`);
+      });
     } else {
       queueMicrotask(() => setError(t("playerHlsUnsupported")));
     }
@@ -307,7 +431,17 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       video.removeAttribute("src");
       video.load();
     };
-  }, [src, candidate, onProgress, sources.length, reloadToken, t]);
+  }, [
+    src,
+    candidate,
+    onProgress,
+    sources.length,
+    reloadToken,
+    t,
+    sourceIndex,
+    pushDebug,
+    runProbes,
+  ]);
 
   useEffect(
     () => () => {
@@ -358,6 +492,7 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
     setLoadPercent(0);
     setSourceIndex(0);
     lastFailDetail.current = null;
+    resetDebug();
     setReloadToken((n) => n + 1);
   };
 
@@ -421,40 +556,70 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
         </div>
       ) : null}
 
-      <div
-        className={`xp-player-chrome absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/50 transition-opacity duration-300 ${
-          showChrome || error ? "opacity-100" : "pointer-events-none opacity-0"
-        }`}
-      >
-        <div className="absolute left-0 right-0 top-0 flex items-center gap-3 p-4">
+      {/* Back + title — always above error/retry overlay */}
+      <div className="pointer-events-none absolute left-0 right-0 top-0 z-50 flex items-center gap-3 p-4 pt-[max(1rem,env(safe-area-inset-top))]">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            goBack();
+          }}
+          className="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur"
+          aria-label={t("back")}
+        >
+          <ArrowLeft className="h-5 w-5" />
+        </button>
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-[family-name:var(--xp-font-display)] text-lg font-semibold text-white drop-shadow">
+            {title}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowDebug((v) => !v);
+            setShowChrome(true);
+          }}
+          className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-2 text-xs font-medium text-white backdrop-blur"
+        >
+          <Bug className="h-3.5 w-3.5" />
+          {showDebug ? t("playerDebugHide") : t("playerDebug")}
+        </button>
+      </div>
+
+      {error ? (
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-black/70 px-6 pb-8 pt-20 text-center">
+          <p className="max-w-md text-sm text-white/90">{error}</p>
           <button
             type="button"
-            onClick={() => router.back()}
-            className="flex h-11 w-11 items-center justify-center rounded-full bg-black/40 text-white"
-            aria-label="Back"
+            onClick={retry}
+            className="inline-flex items-center gap-2 rounded-full bg-[var(--xp-accent)] px-5 py-3 text-sm font-semibold text-[var(--xp-ink)]"
           >
-            <ArrowLeft className="h-5 w-5" />
+            <RotateCcw className="h-4 w-4" />
+            {t("playerRetry")}
           </button>
-          <div className="min-w-0">
-            <p className="truncate font-[family-name:var(--xp-font-display)] text-lg font-semibold text-white">
-              {title}
-            </p>
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setShowDebug(true);
+              void runProbes();
+            }}
+            className="text-xs text-white/60 underline"
+          >
+            {t("playerDebug")}
+          </button>
         </div>
+      ) : null}
 
-        {error ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
-            <p className="max-w-md text-sm text-white/90">{error}</p>
-            <button
-              type="button"
-              onClick={retry}
-              className="inline-flex items-center gap-2 rounded-full bg-[var(--xp-accent)] px-5 py-3 text-sm font-semibold text-[var(--xp-ink)]"
-            >
-              <RotateCcw className="h-4 w-4" />
-              {t("playerRetry")}
-            </button>
-          </div>
-        ) : (
+      <div
+        className={`xp-player-chrome absolute inset-0 z-20 bg-gradient-to-t from-black/80 via-transparent to-transparent transition-opacity duration-300 ${
+          showChrome && !error
+            ? "opacity-100"
+            : "pointer-events-none opacity-0"
+        }`}
+      >
+        {!error ? (
           <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between gap-3 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
             <button
               type="button"
@@ -491,8 +656,47 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
               </button>
             </div>
           </div>
-        )}
+        ) : null}
       </div>
+
+      {showDebug ? (
+        <div className="absolute inset-x-3 bottom-3 z-[60] max-h-[45dvh] overflow-hidden rounded-2xl border border-white/15 bg-black/90 shadow-2xl backdrop-blur-md sm:inset-x-6">
+          <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--xp-accent)]">
+              {t("playerDebug")}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={probing}
+                onClick={() => void runProbes()}
+                className="rounded-full bg-white/10 px-2.5 py-1 text-[11px] text-white disabled:opacity-50"
+              >
+                {probing ? t("playerDebugProbing") : "Probe"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowDebug(false)}
+                className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white"
+                aria-label={t("playerDebugHide")}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+          <div className="max-h-[calc(45dvh-2.5rem)] overflow-y-auto px-3 py-2 font-mono text-[10px] leading-relaxed text-white/80">
+            {debugLines.length ? (
+              debugLines.map((line) => (
+                <p key={line.id} className="break-all border-b border-white/5 py-1.5">
+                  <span className="text-white/40">{line.at}</span> {line.text}
+                </p>
+              ))
+            ) : (
+              <p className="py-2 text-white/50">{t("playerDebugEmpty")}</p>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

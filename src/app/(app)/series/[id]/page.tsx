@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Play } from "lucide-react";
 import { TitleHero } from "@/components/catalog/TitleHero";
 import { Shimmer } from "@/components/catalog/Skeleton";
+import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import { isFavorite, toggleFavorite } from "@/lib/library/storage";
 import { getSeriesInfo, watchPath } from "@/lib/xtream/client";
@@ -14,6 +15,7 @@ import type { SeriesEpisode, SeriesInfo } from "@/lib/xtream/types";
 export default function SeriesDetailPage() {
   const params = useParams<{ id: string }>();
   const { credentials, activePlaylist } = usePlaylists();
+  const { t } = useLocale();
   const [info, setInfo] = useState<SeriesInfo | null>(null);
   const [season, setSeason] = useState<string>("1");
   const [loading, setLoading] = useState(true);
@@ -74,9 +76,8 @@ export default function SeriesDetailPage() {
 
   if (loading) {
     return (
-      <div className="space-y-4">
-        <Shimmer className="aspect-[16/11] w-full sm:aspect-[21/9]" />
-        <Shimmer className="mx-4 h-24 rounded-lg" />
+      <div className="min-h-dvh">
+        <Shimmer className="min-h-dvh w-full rounded-none" />
       </div>
     );
   }
@@ -86,36 +87,34 @@ export default function SeriesDetailPage() {
   }
 
   return (
-    <div className="xp-fade-in pb-28 sm:pb-8">
-      <TitleHero
-        backHref="/"
-        backLabel="Home"
-        title={title}
-        meta={[info?.info?.genre, info?.info?.releaseDate, info?.info?.rating]
-          .filter(Boolean)
-          .join(" · ")}
-        plot={info?.info?.plot || "No synopsis available."}
-        image={image}
-        playHref={playHref}
-        playLabel={
-          firstEpisode
-            ? `Play S${season} E${firstEpisode.episode_num ?? 1}`
-            : "Play"
-        }
-        favorited={fav}
-        onToggleFavorite={() => {
-          if (!activePlaylist) return;
-          toggleFavorite(activePlaylist.id, {
-            kind: "series",
-            title,
-            image,
-            streamId: params.id,
-          });
-          setFavTick((n) => n + 1);
-        }}
-      />
-
-      <div className="space-y-4 px-4 pt-5 md:px-8">
+    <TitleHero
+      backHref="/?section=series"
+      backLabel={t("navHome")}
+      title={title}
+      meta={[info?.info?.genre, info?.info?.releaseDate, info?.info?.rating]
+        .filter(Boolean)
+        .join(" · ")}
+      plot={info?.info?.plot || undefined}
+      image={image}
+      playHref={playHref}
+      playLabel={
+        firstEpisode
+          ? `${t("play")} S${season} E${firstEpisode.episode_num ?? 1}`
+          : t("play")
+      }
+      favorited={fav}
+      onToggleFavorite={() => {
+        if (!activePlaylist) return;
+        toggleFavorite(activePlaylist.id, {
+          kind: "series",
+          title,
+          image,
+          streamId: params.id,
+        });
+        setFavTick((n) => n + 1);
+      }}
+    >
+      <div className="space-y-4 px-4 py-5 md:px-8">
         <div className="flex gap-2 overflow-x-auto scrollbar-none">
           {seasonKeys.map((key) => (
             <button
@@ -133,7 +132,7 @@ export default function SeriesDetailPage() {
           ))}
         </div>
 
-        <ul className="space-y-2">
+        <ul className="space-y-2 pb-8">
           {episodes.map((ep) => {
             const epTitle = ep.title || `Episode ${ep.episode_num ?? ep.id}`;
             const ext = ep.container_extension || "mp4";
@@ -170,6 +169,6 @@ export default function SeriesDetailPage() {
           ) : null}
         </ul>
       </div>
-    </div>
+    </TitleHero>
   );
 }

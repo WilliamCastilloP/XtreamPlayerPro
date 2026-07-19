@@ -102,6 +102,9 @@ function WatchInner() {
       sources={sources}
       title={title}
       poster={image}
+      kind={kind}
+      streamId={params.id}
+      extension={ext}
       onProgress={onProgress}
     />
   );

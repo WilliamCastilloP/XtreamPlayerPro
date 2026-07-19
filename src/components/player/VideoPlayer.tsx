@@ -333,9 +333,9 @@ export function VideoPlayer({
     video.addEventListener("waiting", onWaiting);
     video.addEventListener("playing", onPlayingEvt);
 
-    const wantsRemux =
-      candidate.remux ||
-      needsContainerRemux(extension, src);
+    // Decide remux from THIS candidate's own URL (not the title's extension),
+    // otherwise HLS/MP4 fallbacks get wrongly routed through the remuxer.
+    const wantsRemux = candidate.remux || needsContainerRemux(undefined, src);
 
     // MKV/AVI: remux via Mediabunny → fMP4 (browsers can't play Matroska; Smarters can)
     if (wantsRemux && candidate.transport === "proxy") {

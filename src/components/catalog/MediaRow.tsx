@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useLocale } from "@/components/providers/LocaleProvider";
 import { PosterCard } from "./PosterCard";
 
 export type MediaRowItem = {
@@ -11,6 +12,10 @@ export type MediaRowItem = {
   subtitle?: string;
   aspect?: "poster" | "live";
 };
+
+/** Shared card width for live / movies / series */
+export const STANDARD_POSTER_WIDTH =
+  "w-[30vw] max-w-[9.5rem] min-w-[6.5rem] sm:w-36 md:w-40";
 
 type Props = {
   title: string;
@@ -24,11 +29,14 @@ type Props = {
 export function MediaRow({
   title,
   href,
-  seeAllLabel = "Ver todo",
+  seeAllLabel,
   items,
   emptyLabel,
-  posterWidth = "w-[30vw] max-w-[9.5rem] min-w-[6.5rem] sm:w-36 md:w-40",
+  posterWidth = STANDARD_POSTER_WIDTH,
 }: Props) {
+  const { t } = useLocale();
+  const label = seeAllLabel ?? t("seeAll");
+
   if (!items.length) {
     return emptyLabel ? (
       <section className="xp-fade-in space-y-3">
@@ -53,7 +61,7 @@ export function MediaRow({
             href={href}
             className="shrink-0 text-sm font-medium text-[var(--xp-accent)] hover:underline"
           >
-            {seeAllLabel}
+            {label}
           </Link>
         ) : null}
       </div>

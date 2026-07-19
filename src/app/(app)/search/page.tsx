@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { PosterCard } from "@/components/catalog/PosterCard";
+import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import {
   loadAllLiveStreams,
@@ -15,6 +16,7 @@ type Filter = "live" | "movies" | "series";
 
 export default function SearchPage() {
   const { credentials } = usePlaylists();
+  const { t } = useLocale();
   const [query, setQuery] = useState("");
   /** null = no chip selected → show all types */
   const [filter, setFilter] = useState<Filter | null>(null);
@@ -112,26 +114,26 @@ export default function SearchPage() {
   }, [query, filter, live, movies, series]);
 
   const chips: { id: Filter; label: string }[] = [
-    { id: "live", label: "Live" },
-    { id: "movies", label: "Movies" },
-    { id: "series", label: "Series" },
+    { id: "live", label: t("liveTv") },
+    { id: "movies", label: t("movies") },
+    { id: "series", label: t("series") },
   ];
 
   return (
     <div className="space-y-4 px-4 py-5 md:px-6">
       <div>
         <h1 className="font-[family-name:var(--xp-font-display)] text-2xl font-bold">
-          Búsqueda
+          {t("searchTitle")}
         </h1>
         <p className="text-sm text-[var(--xp-muted)]">
-          Type at least 2 characters to search the full catalog.
+          {t("searchPlaceholder")}
         </p>
       </div>
       <input
         className="xp-field"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search titles and channels…"
+        placeholder={t("searchPlaceholder")}
         autoFocus
       />
       <div className="flex gap-2 overflow-x-auto scrollbar-none">

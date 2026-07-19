@@ -12,6 +12,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useLocale } from "@/components/providers/LocaleProvider";
 import {
   looksLikeHlsUrl,
   type StreamCandidate,
@@ -37,9 +38,29 @@ function bufferPercent(video: HTMLVideoElement): number | null {
   }
 }
 
+async function diagnoseSource(url: string): Promise<string | null> {
+  if (!url.startsWith("/api/stream")) return null;
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Range: "bytes=0-0" },
+      cache: "no-store",
+    });
+    if (res.ok || res.status === 206) return null;
+    const data = (await res.json().catch(() => null)) as {
+      error?: string;
+    } | null;
+    if (data?.error) return data.error;
+    return `HTTP ${res.status}`;
+  } catch {
+    return null;
+  }
+}
+
 export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const router = useRouter();
+  const { t } = useLocale();
   const [sourceIndex, setSourceIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -47,9 +68,10 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
   const [showChrome, setShowChrome] = useState(true);
   const [reloadToken, setReloadToken] = useState(0);
   const [loadPercent, setLoadPercent] = useState(0);
-  const [statusText, setStatusText] = useState("Connecting…");
+  const [statusText, setStatusText] = useState(t("playerConnecting"));
   const hideTimer = useRef<number | null>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const lastFailDetail = useRef<string | null>(null);
   const sourcesKey = sources.map((s) => s.url).join("|");
   const [seenSourcesKey, setSeenSourcesKey] = useState(sourcesKey);
 
@@ -72,6 +94,10 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
   };
 
   useEffect(() => {
+    lastFailDetail.current = null;
+  }, [sourcesKey]);
+
+  useEffect(() => {
     const video = videoRef.current;
     if (!video || !src || !candidate) return;
 
@@ -82,7 +108,8 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
     setError(null);
     setPlaying(false);
     setLoadPercent(0);
-    setStatusText("Connecting…");
+    setStatusText(t("playerConnecting"));
+    lastFailDetail.current = null;
 
     if (hlsRef.current) {
       hlsRef.current.destroy();
@@ -91,23 +118,38 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
     video.removeAttribute("src");
     video.load();
 
-    const failOver = () => {
-      if (disposed) return;
-      setStatusText("Trying next source…");
-      setLoadPercent(0);
-      setSourceIndex((current) => {
-        if (current + 1 < sources.length) return current + 1;
-        queueMicrotask(() =>
-          setError("Could not play this stream. The server rejected playback."),
-        );
-        return current;
-      });
-    };
-
-    /** Single source of truth for the ring — never mirror % into statusText */
     const setProgress = (pct: number) => {
       if (disposed) return;
       setLoadPercent(Math.max(0, Math.min(100, Math.round(pct))));
+    };
+
+    const finishFailed = async () => {
+      if (disposed) return;
+      let detail = lastFailDetail.current;
+      if (!detail) {
+        detail = await diagnoseSource(src);
+        if (detail) lastFailDetail.current = detail;
+      }
+      if (disposed) return;
+      setError(
+        detail
+          ? t("playerPlaybackFailedDetail", { detail })
+          : t("playerPlaybackFailed"),
+      );
+    };
+
+    const failOver = (reason?: string) => {
+      if (disposed) return;
+      if (reason) lastFailDetail.current = reason;
+      setStatusText(t("playerTryingNext"));
+      setLoadPercent(0);
+      setSourceIndex((current) => {
+        if (current + 1 < sources.length) return current + 1;
+        queueMicrotask(() => {
+          void finishFailed();
+        });
+        return current;
+      });
     };
 
     const updateNativeBuffer = () => {
@@ -120,7 +162,6 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       if (video.buffered.length) {
         try {
           const secs = Math.round(video.buffered.end(video.buffered.length - 1));
-          // Live/unknown duration: coarse estimate for the ring only
           setProgress(Math.min(95, 10 + secs * 4));
         } catch {
           /* ignore */
@@ -135,20 +176,25 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
         onProgress(video.currentTime, video.duration);
       }
     };
-    const onNativeError = () => failOver();
+    const onNativeError = () => {
+      void (async () => {
+        const detail = await diagnoseSource(src);
+        failOver(detail || undefined);
+      })();
+    };
     const onLoaded = () => {
       if (!disposed) {
         setProgress(100);
-        setStatusText("Starting…");
+        setStatusText(t("playerStarting"));
       }
     };
     const onWaiting = () => {
-      if (!disposed) setStatusText("Buffering…");
+      if (!disposed) setStatusText(t("playerBuffering"));
     };
     const onPlayingEvt = () => {
       if (!disposed) {
         setProgress(100);
-        setStatusText("Playing");
+        setStatusText(t("playerPlaying"));
       }
     };
 
@@ -184,7 +230,7 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       hls.on(Hls.Events.MANIFEST_PARSED, (_ev, data) => {
         if (disposed) return;
         fragTotal = Math.max(1, data.levels?.[0]?.details?.fragments?.length || 8);
-        setStatusText("Loading stream…");
+        setStatusText(t("playerLoadingStream"));
         setProgress(8);
         void video.play().catch(() => undefined);
       });
@@ -203,7 +249,7 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
           Math.round((fragLoaded / Math.max(fragTotal, fragLoaded + 2)) * 100),
         );
         setProgress(pct);
-        setStatusText("Loading stream…");
+        setStatusText(t("playerLoadingStream"));
       });
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -218,14 +264,22 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
             if (!disposed && video.readyState < 2) {
               hls.destroy();
               hlsRef.current = null;
-              failOver();
+              void (async () => {
+                const detail = await diagnoseSource(src);
+                failOver(
+                  detail ||
+                    (typeof data.details === "string" ? data.details : undefined),
+                );
+              })();
             }
-          }, 1200);
+          }, 1800);
           return;
         }
         hls.destroy();
         hlsRef.current = null;
-        failOver();
+        failOver(
+          typeof data.details === "string" ? data.details : "media error",
+        );
       });
     } else if (useNativeHls || !isHls) {
       video.src = src;
@@ -233,9 +287,7 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       video.addEventListener("error", onNativeError);
       void video.play().catch(() => undefined);
     } else {
-      queueMicrotask(() =>
-        setError("HLS is not supported in this browser."),
-      );
+      queueMicrotask(() => setError(t("playerHlsUnsupported")));
     }
 
     return () => {
@@ -255,7 +307,7 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
       video.removeAttribute("src");
       video.load();
     };
-  }, [src, candidate, onProgress, sources.length, reloadToken]);
+  }, [src, candidate, onProgress, sources.length, reloadToken, t]);
 
   useEffect(
     () => () => {
@@ -305,10 +357,10 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
     setError(null);
     setLoadPercent(0);
     setSourceIndex(0);
+    lastFailDetail.current = null;
     setReloadToken((n) => n + 1);
   };
 
-  // Keep loader visible until media is actually playing (not just "metadata ready")
   const showLoader = !error && !playing;
 
   return (
@@ -356,12 +408,13 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
             </span>
           </div>
           <p className="text-center text-sm text-white/85">{statusText}</p>
-          <p className="text-center text-xs text-white/55">
-            Rotate your phone for a wider view
-          </p>
+          <p className="text-center text-xs text-white/55">{t("playerRotate")}</p>
           {sources.length > 1 ? (
             <p className="text-xs text-white/50">
-              Source {sourceIndex + 1}/{sources.length}
+              {t("playerSource", {
+                current: sourceIndex + 1,
+                total: sources.length,
+              })}
               {candidate ? ` · ${candidate.label}` : ""}
             </p>
           ) : null}
@@ -391,14 +444,14 @@ export function VideoPlayer({ sources, title, poster, onProgress }: Props) {
 
         {error ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
-            <p className="max-w-sm text-sm text-white/90">{error}</p>
+            <p className="max-w-md text-sm text-white/90">{error}</p>
             <button
               type="button"
               onClick={retry}
               className="inline-flex items-center gap-2 rounded-full bg-[var(--xp-accent)] px-5 py-3 text-sm font-semibold text-[var(--xp-ink)]"
             >
               <RotateCcw className="h-4 w-4" />
-              Retry
+              {t("playerRetry")}
             </button>
           </div>
         ) : (

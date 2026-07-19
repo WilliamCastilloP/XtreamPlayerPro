@@ -2,8 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { HeroBanner } from "@/components/catalog/HeroBanner";
-import { MediaRow, type MediaRowItem } from "@/components/catalog/MediaRow";
+import {
+  MediaRow,
+  STANDARD_POSTER_WIDTH,
+  type MediaRowItem,
+} from "@/components/catalog/MediaRow";
 import { PosterSkeletonRow } from "@/components/catalog/Skeleton";
+import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import {
   groupByCategory,
@@ -36,9 +41,7 @@ type Rail = {
   href: string;
 };
 
-/** Preview items per category rail — full list is on the category page */
 const PREVIEW_LIMIT = 6;
-/** Paint rails in chunks so the UI stays responsive after one catalog fetch */
 const PAINT_BATCH = 8;
 
 function categoryHref(kind: BrowseKind, categoryId: string, name: string) {
@@ -83,6 +86,7 @@ export function BrowseRails({
   embedded = false,
 }: Props) {
   const { credentials } = usePlaylists();
+  const { t } = useLocale();
   const [rails, setRails] = useState<Rail[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -99,13 +103,6 @@ export function BrowseRails({
       setRails([]);
       setLoadingMore(false);
       try {
-        /*
-         * One catalog fetch + client-side grouping.
-         * Per-category fetches for Movies/Series were extremely heavy: each
-         * category can be thousands of titles, and panels often have dozens
-         * of categories — that never finishes. Full-catalog once is what
-         * IPTV apps typically do, then we only render 6 posters per rail.
-         */
         const [cats, streams] = await Promise.all(
           kind === "live"
             ? [
@@ -156,7 +153,6 @@ export function BrowseRails({
 
         setTotalCategories(built.length);
 
-        // Progressive paint from memory (no more network) for snappy first paint
         const collected: Rail[] = [];
         for (let i = 0; i < built.length; i += PAINT_BATCH) {
           if (cancelled) return;
@@ -188,6 +184,8 @@ export function BrowseRails({
 
   const hero = rails[0]?.items[0];
   const isLive = kind === "live";
+  const kindLabel =
+    kind === "movies" ? t("movies") : kind === "series" ? t("series") : t("liveTv");
 
   return (
     <div
@@ -210,7 +208,7 @@ export function BrowseRails({
         <div className="space-y-8">
           <div className="xp-shimmer mx-4 h-48 rounded-2xl md:mx-6 md:h-64" />
           <p className="px-4 text-sm text-[var(--xp-muted)] md:px-6">
-            Loading {kind === "movies" ? "movies" : kind} catalog…
+            {t("loadingCatalog", { kind: kindLabel.toLowerCase() })}
           </p>
           <PosterSkeletonRow />
           <PosterSkeletonRow />
@@ -219,10 +217,15 @@ export function BrowseRails({
         <>
           {rails.length > 0 ? (
             <p className="px-4 text-xs text-[var(--xp-muted)] md:px-6">
-              {rails.length}
-              {totalCategories > rails.length ? ` / ${totalCategories}` : ""}{" "}
-              categories · {PREVIEW_LIMIT} per row
-              {loadingMore ? " · showing more…" : ""}
+              {t("categoriesPreview", {
+                shown: String(rails.length),
+                total:
+                  totalCategories > rails.length
+                    ? ` / ${totalCategories}`
+                    : "",
+                limit: PREVIEW_LIMIT,
+              })}
+              {loadingMore ? t("loadingMore") : ""}
             </p>
           ) : null}
 
@@ -231,9 +234,7 @@ export function BrowseRails({
               eyebrow={rails[0]?.name || title}
               title={hero.title}
               subtitle={
-                isLive
-                  ? "Tap Play — rotate your phone for fullscreen"
-                  : hero.subtitle || "Open details to play"
+                isLive ? t("tapPlayRotate") : hero.subtitle || t("openDetails")
               }
               image={hero.image}
               playHref={
@@ -257,21 +258,17 @@ export function BrowseRails({
               href={rail.href}
               seeAllLabel={
                 rail.totalCount > PREVIEW_LIMIT
-                  ? `Ver todo (${rail.totalCount})`
-                  : "Ver todo"
+                  ? t("seeAllCount", { count: rail.totalCount })
+                  : t("seeAll")
               }
               items={rail.items}
-              posterWidth={
-                isLive
-                  ? "w-[42vw] max-w-[14rem] min-w-[9rem] sm:w-48"
-                  : "w-[30vw] max-w-[9.5rem] min-w-[6.5rem] sm:w-36 md:w-40"
-              }
+              posterWidth={STANDARD_POSTER_WIDTH}
             />
           ))}
 
           {!rails.length && !loading ? (
             <p className="px-4 text-sm text-[var(--xp-muted)] md:px-6">
-              No titles in this catalog yet.
+              {t("noTitlesCatalog")}
             </p>
           ) : null}
         </>

@@ -157,13 +157,7 @@ function CategoryBrowseInner() {
           <PosterSkeletonRow />
         </div>
       ) : items.length ? (
-        <div
-          className={`grid gap-2.5 px-4 md:gap-3 md:px-6 ${
-            isLive
-              ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"
-              : "grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6"
-          }`}
-        >
+        <div className="grid grid-cols-3 gap-2.5 px-4 sm:grid-cols-4 md:grid-cols-5 md:gap-3 md:px-6 lg:grid-cols-6">
           {items.map((item) => (
             <PosterCard
               key={item.key}

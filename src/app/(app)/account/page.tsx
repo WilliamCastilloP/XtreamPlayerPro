@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
+import type { Locale } from "@/lib/i18n/dictionaries";
 import { authenticate } from "@/lib/xtream/client";
 import type { XtreamAuthResponse } from "@/lib/xtream/types";
 
@@ -16,6 +18,7 @@ export default function AccountPage() {
     removePlaylist,
     credentials,
   } = usePlaylists();
+  const { locale, setLocale, t } = useLocale();
   const router = useRouter();
   const [info, setInfo] = useState<XtreamAuthResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -29,30 +32,61 @@ export default function AccountPage() {
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Account check failed");
+          setError(
+            err instanceof Error ? err.message : t("accountCheckFailed"),
+          );
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [credentials]);
+  }, [credentials, t]);
 
   const user = info?.user_info;
+
+  const languages: { id: Locale; label: string }[] = [
+    { id: "es", label: t("langSpanish") },
+    { id: "en", label: t("langEnglish") },
+  ];
 
   return (
     <div className="mx-auto max-w-2xl space-y-8 px-4 py-5 md:px-6 md:py-8">
       <div>
         <h1 className="font-[family-name:var(--xp-font-display)] text-2xl font-bold">
-          Account
+          {t("accountTitle")}
         </h1>
-        <p className="text-sm text-[var(--xp-muted)]">
-          Switch playlists and manage this device
-        </p>
+        <p className="text-sm text-[var(--xp-muted)]">{t("accountSubtitle")}</p>
       </div>
 
       <section className="xp-fade-in space-y-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--xp-muted)]">
-          Active playlist
+          {t("language")}
+        </h2>
+        <p className="text-sm text-[var(--xp-muted)]">{t("languageSubtitle")}</p>
+        <div className="flex gap-2">
+          {languages.map((lang) => {
+            const active = locale === lang.id;
+            return (
+              <button
+                key={lang.id}
+                type="button"
+                onClick={() => setLocale(lang.id)}
+                className={`min-w-[7.5rem] rounded-xl px-4 py-3 text-sm font-semibold transition ${
+                  active
+                    ? "bg-[var(--xp-accent)] text-[var(--xp-ink)]"
+                    : "border border-[var(--xp-border)] bg-[rgba(18,24,32,0.7)] text-[var(--xp-muted)]"
+                }`}
+              >
+                {lang.label}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="xp-fade-in space-y-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--xp-muted)]">
+          {t("activePlaylist")}
         </h2>
         <div className="rounded-2xl border border-[var(--xp-border)] bg-[rgba(18,24,32,0.7)] p-4">
           <p className="text-lg font-semibold">{activePlaylist?.name}</p>
@@ -65,11 +99,11 @@ export default function AccountPage() {
           {user ? (
             <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <div>
-                <dt className="text-[var(--xp-muted)]">Status</dt>
+                <dt className="text-[var(--xp-muted)]">{t("status")}</dt>
                 <dd>{user.status || "—"}</dd>
               </div>
               <div>
-                <dt className="text-[var(--xp-muted)]">Expires</dt>
+                <dt className="text-[var(--xp-muted)]">{t("expires")}</dt>
                 <dd>
                   {user.exp_date
                     ? new Date(Number(user.exp_date) * 1000).toLocaleDateString()
@@ -77,14 +111,14 @@ export default function AccountPage() {
                 </dd>
               </div>
               <div>
-                <dt className="text-[var(--xp-muted)]">Connections</dt>
+                <dt className="text-[var(--xp-muted)]">{t("connections")}</dt>
                 <dd>
                   {user.active_cons || "0"} / {user.max_connections || "—"}
                 </dd>
               </div>
               <div>
-                <dt className="text-[var(--xp-muted)]">Trial</dt>
-                <dd>{user.is_trial === "1" ? "Yes" : "No"}</dd>
+                <dt className="text-[var(--xp-muted)]">{t("trial")}</dt>
+                <dd>{user.is_trial === "1" ? t("yes") : t("no")}</dd>
               </div>
             </dl>
           ) : null}
@@ -97,10 +131,10 @@ export default function AccountPage() {
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--xp-muted)]">
-            Playlists
+            {t("playlists")}
           </h2>
           <Link href="/playlists/new" className="text-sm text-[var(--xp-accent)]">
-            Add
+            {t("add")}
           </Link>
         </div>
         <ul className="space-y-2">
@@ -123,7 +157,7 @@ export default function AccountPage() {
                     {playlist.name}
                     {active ? (
                       <span className="ml-2 text-xs text-[var(--xp-accent)]">
-                        Active
+                        {t("active")}
                       </span>
                     ) : null}
                   </p>
@@ -135,18 +169,20 @@ export default function AccountPage() {
                   href={`/playlists/${playlist.id}/edit`}
                   className="text-xs text-[var(--xp-muted)] hover:text-[var(--xp-text)]"
                 >
-                  Edit
+                  {t("edit")}
                 </Link>
                 <button
                   type="button"
                   className="text-xs text-[var(--xp-danger)]"
                   onClick={() => {
-                    if (confirm(`Delete “${playlist.name}”?`)) {
+                    if (
+                      confirm(t("deleteConfirm", { name: playlist.name }))
+                    ) {
                       removePlaylist(playlist.id);
                     }
                   }}
                 >
-                  Delete
+                  {t("delete")}
                 </button>
               </li>
             );
@@ -162,7 +198,7 @@ export default function AccountPage() {
           router.replace("/playlists");
         }}
       >
-        Switch playlist / lock
+        {t("switchLock")}
       </button>
     </div>
   );

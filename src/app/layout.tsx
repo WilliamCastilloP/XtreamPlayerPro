@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Figtree, Syne } from "next/font/google";
+import { LocaleProvider } from "@/components/providers/LocaleProvider";
 import { PlaylistProvider } from "@/components/providers/PlaylistProvider";
 import "./globals.css";
 
@@ -51,9 +52,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${syne.variable} ${figtree.variable} h-full`}>
+    <html lang="es" className={`${syne.variable} ${figtree.variable} h-full`}>
       <body className="min-h-dvh antialiased">
-        <PlaylistProvider>{children}</PlaylistProvider>
+        <LocaleProvider>
+          <PlaylistProvider>{children}</PlaylistProvider>
+        </LocaleProvider>
       </body>
     </html>
   );

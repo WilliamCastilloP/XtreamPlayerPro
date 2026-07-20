@@ -234,9 +234,12 @@ export async function startRemuxedPlayback(
   let input: Input | null = null;
   let drainResolve: (() => void) | null = null;
 
-  const MAX_AHEAD = 30;
+  const MAX_AHEAD_PLAYING = 45;
+  /** While paused, keep remuxing toward ~10% of the title (capped). */
+  const MAX_AHEAD_PAUSED_FLOOR = 60;
+  const MAX_AHEAD_PAUSED_CAP = 180;
   /** Seconds of buffer required before we start/resume playback. */
-  const START_BUFFER = 6;
+  const START_BUFFER = 3;
   /** Pause playback when ahead falls below this (refill without killing session). */
   const REFILL_PAUSE = 2.5;
   /** Resume after a refill pause once ahead reaches this. */
@@ -244,11 +247,12 @@ export async function startRemuxedPlayback(
   /** Only restart the whole remux session if starved this long with a gap. */
   const STARVE_SECONDS = 1.25;
   const EVICT_BEHIND = 12;
-  const HIGH_WATER = 12;
-  const LOW_WATER = 3;
+  const HIGH_WATER = 24;
+  const LOW_WATER = 6;
 
   let refillPaused = false;
   let userPaused = false;
+  let audioTranscoding = false;
 
   const releaseDrain = () => {
     if (drainResolve) {
@@ -261,6 +265,19 @@ export async function startRemuxedPlayback(
     new Promise<void>((resolve) => {
       drainResolve = resolve;
     });
+
+  const targetAhead = (): number => {
+    const paused = userPaused || (!!video.paused && !refillPaused);
+    if (!paused) return MAX_AHEAD_PLAYING;
+    if (fullDuration > 0) {
+      const tenPercent = fullDuration * 0.1;
+      return Math.min(
+        MAX_AHEAD_PAUSED_CAP,
+        Math.max(MAX_AHEAD_PAUSED_FLOOR, tenPercent),
+      );
+    }
+    return MAX_AHEAD_PAUSED_CAP;
+  };
 
   const reportBuffer = () => {
     if (!sourceBuffer || !opts?.onBuffer) return;
@@ -293,7 +310,7 @@ export async function startRemuxedPlayback(
     }
   };
 
-  const wantsMore = (): boolean => bufferedAhead() < MAX_AHEAD;
+  const wantsMore = (): boolean => bufferedAhead() < targetAhead();
 
   const teardownMedia = () => {
     try {
@@ -461,7 +478,7 @@ export async function startRemuxedPlayback(
 
     input = new Input({
       source: new UrlSource(sourceUrl, {
-        maxCacheSize: 32 * 1024 * 1024,
+        maxCacheSize: 64 * 1024 * 1024,
       }),
       formats: ALL_FORMATS,
     });
@@ -475,6 +492,7 @@ export async function startRemuxedPlayback(
       target: new AppendOnlyStreamTarget(writable),
     });
 
+    audioTranscoding = false;
     conversion = await Conversion.init({
       input,
       output,
@@ -486,6 +504,8 @@ export async function startRemuxedPlayback(
         // Chrome MSE rarely accepts AC3/EAC3 in fMP4; transmux to AAC.
         const codec = await track.getCodec();
         if (codec === "ac3" || codec === "eac3") {
+          audioTranscoding = true;
+          log(`remux · audio ${codec} → aac (transcode)`);
           return { codec: "aac" };
         }
         return undefined;
@@ -607,17 +627,24 @@ export async function startRemuxedPlayback(
     });
 
     // Wait until we have a healthy start buffer (not just the first fragment).
-    // Starting with <1s ahead is why series were stalling every few seconds.
+    // Movies with AC3→AAC transcode are slower — give them more time, but
+    // also accept a smaller buffer so playback can start sooner.
     const started = Date.now();
+    const startTimeoutMs = audioTranscoding ? 90000 : 45000;
+    const softAfterMs = audioTranscoding ? 20000 : 10000;
+    const softAhead = audioTranscoding ? 2 : 2.5;
     while (!closed && gen === sessionGen && !appendError) {
       const ahead = bufferedAhead();
       if (sawData && ahead >= START_BUFFER) break;
-      if (sawData && ahead > 0 && Date.now() - started > 12000 && ahead >= 3) {
-        // Slow network: accept a smaller buffer rather than timing out forever.
+      if (
+        sawData &&
+        ahead >= softAhead &&
+        Date.now() - started > softAfterMs
+      ) {
         log(`remux · start buffer soft · ahead=${ahead.toFixed(1)}s`);
         break;
       }
-      if (Date.now() - started > 35000) {
+      if (Date.now() - started > startTimeoutMs) {
         throw new Error("Timed out waiting for remuxed media");
       }
       await new Promise((r) => window.setTimeout(r, 200));
@@ -747,11 +774,22 @@ export async function startRemuxedPlayback(
     if (!closed) {
       userPaused = false;
       void pump();
+      releaseDrain();
       reportBuffer();
+      log(
+        `remux · playing · ahead=${bufferedAhead().toFixed(1)}s · target=${targetAhead()}s`,
+      );
     }
   };
   const onPause = () => {
     if (!refillPaused) userPaused = true;
+    // Keep remuxing while the user is paused — fill toward ~10% / cap.
+    const target = targetAhead();
+    log(
+      `remux · user pause · filling toward ${target.toFixed(0)}s (ahead=${bufferedAhead().toFixed(1)}s)`,
+    );
+    releaseDrain();
+    void pump();
   };
 
   video.addEventListener("timeupdate", onTimeUpdate);

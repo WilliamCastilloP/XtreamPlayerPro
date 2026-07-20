@@ -65,16 +65,36 @@ const sessions = new Map();
  * }} HlsSession
  */
 
-function hasFfmpeg() {
-  try {
-    execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
+function resolveFfmpegBin() {
+  if (process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH;
+  const candidates = ["ffmpeg"];
+  if (process.platform === "win32") {
+    candidates.push(
+      "C:\\ffmpeg\\bin\\ffmpeg.exe",
+      "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
+      path.join(
+        process.env.LOCALAPPDATA || "",
+        "Microsoft",
+        "WinGet",
+        "Links",
+        "ffmpeg.exe",
+      ),
+    );
   }
+  for (const bin of candidates) {
+    if (!bin || bin.endsWith(path.sep)) continue;
+    try {
+      execFileSync(bin, ["-version"], { stdio: "ignore" });
+      return bin;
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
 }
 
-const FFMPEG_OK = hasFfmpeg();
+const FFMPEG_BIN = resolveFfmpegBin();
+const FFMPEG_OK = Boolean(FFMPEG_BIN);
 
 function sessionIdFor(url) {
   return createHash("sha1").update(url).digest("hex").slice(0, 16);
@@ -360,11 +380,10 @@ async function getOrStartSession(sourceUrl) {
   ];
 
   console.log(`[hls] start ${id} ← ${sourceUrl.slice(0, 80)}…`);
-  const proc = spawn("ffmpeg", args, {
+  const proc = spawn(FFMPEG_BIN || "ffmpeg", args, {
     stdio: ["ignore", "ignore", "pipe"],
     env: {
       ...process.env,
-      // Panels often have odd TLS; match local Next TLS opt-out if set.
     },
   });
   session.proc = proc;
@@ -454,7 +473,10 @@ async function handleHlsPlaylist(req, res, sourceUrl) {
   if (!FFMPEG_OK) {
     sendJson(res, 503, {
       error: "ffmpeg not installed on this proxy",
-      hint: "sudo apt install -y ffmpeg",
+      hint:
+        process.platform === "win32"
+          ? "Install ffmpeg (winget install Gyan.FFmpeg), open a NEW terminal, run npm run proxy again. Or set FFMPEG_PATH to ffmpeg.exe"
+          : "sudo apt install -y ffmpeg",
     });
     return;
   }
@@ -600,6 +622,7 @@ const server = http.createServer(async (req, res) => {
       ok: true,
       service: "xtream-stream-proxy",
       ffmpeg: FFMPEG_OK,
+      ffmpegPath: FFMPEG_BIN,
       stream: "/api/stream?url=...",
       hls: "/api/hls?url=... (MKV/AVI/MOV → HLS)",
       sessions: sessions.size,
@@ -648,7 +671,16 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[xtream-stream-proxy] listening on http://0.0.0.0:${PORT}`);
-  console.log(`[xtream-stream-proxy] ffmpeg: ${FFMPEG_OK ? "ok" : "MISSING"}`);
+  console.log(
+    `[xtream-stream-proxy] ffmpeg: ${FFMPEG_OK ? `ok (${FFMPEG_BIN})` : "MISSING"}`,
+  );
+  if (!FFMPEG_OK) {
+    console.log(
+      process.platform === "win32"
+        ? `[xtream-stream-proxy] install: winget install Gyan.FFmpeg  (then NEW terminal + npm run proxy)`
+        : `[xtream-stream-proxy] install: sudo apt install -y ffmpeg`,
+    );
+  }
   console.log(`[xtream-stream-proxy] health: GET /health`);
   console.log(`[xtream-stream-proxy] stream: GET /api/stream?url=<upstream>`);
   console.log(`[xtream-stream-proxy] hls:    GET /api/hls?url=<mkv>`);

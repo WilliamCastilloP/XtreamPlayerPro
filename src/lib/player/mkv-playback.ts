@@ -9,6 +9,8 @@ import {
 } from "mediabunny";
 
 export function needsContainerRemux(extension?: string, url?: string): boolean {
+  // Server HLS playlist — never client-remux even if nested url ends in .mkv
+  if (url && url.includes("/api/hls")) return false;
   const ext = (extension || guessExtFromUrl(url) || "")
     .toLowerCase()
     .replace(/^\./, "");

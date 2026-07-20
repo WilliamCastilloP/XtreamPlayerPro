@@ -467,7 +467,10 @@ export function VideoPlayer({
 
     // Decide remux from THIS candidate's own URL (not the title's extension),
     // otherwise HLS/MP4 fallbacks get wrongly routed through the remuxer.
-    const wantsRemux = candidate.remux || needsContainerRemux(undefined, src);
+    // Server HLS (/api/hls) must use hls.js — never Mediabunny.
+    const isHls = looksLikeHlsUrl(src);
+    const wantsRemux =
+      !isHls && (candidate.remux || needsContainerRemux(undefined, src));
 
     // MKV/AVI: remux via Mediabunny → fMP4 (browsers can't play Matroska; Smarters can)
     if (wantsRemux && candidate.transport === "proxy") {
@@ -550,7 +553,6 @@ export function VideoPlayer({
       };
     }
 
-    const isHls = looksLikeHlsUrl(src);
     const useHlsJs = isHls && Hls.isSupported();
     const useNativeHls =
       isHls &&

@@ -123,7 +123,7 @@ function appendChunk(
   sourceBuffer: SourceBuffer,
   chunk: Uint8Array,
   video: HTMLVideoElement,
-  opts?: { onQuota?: () => void },
+  opts?: { onQuota?: () => void; onDetail?: (detail: string) => void },
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     let quotaRetries = 0;
@@ -138,14 +138,24 @@ function appendChunk(
       };
       const onError = () => {
         sourceBuffer.removeEventListener("updateend", onEnd);
-        reject(new Error("SourceBuffer append error"));
+        const mediaErr = video.error;
+        const detail = [
+          "SourceBuffer append error",
+          mediaErr ? `mediaError=${mediaErr.code}` : null,
+          `bytes=${chunk.byteLength}`,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        opts?.onDetail?.(detail);
+        reject(new Error(detail));
       };
       sourceBuffer.addEventListener("updateend", onEnd, { once: true });
       sourceBuffer.addEventListener("error", onError, { once: true });
       try {
+        // Fresh ArrayBuffer — avoid SharedArrayBuffer views that Chrome rejects.
         const copy = new Uint8Array(chunk.byteLength);
         copy.set(chunk);
-        sourceBuffer.appendBuffer(copy.buffer);
+        sourceBuffer.appendBuffer(copy);
       } catch (err) {
         sourceBuffer.removeEventListener("updateend", onEnd);
         sourceBuffer.removeEventListener("error", onError);
@@ -332,6 +342,7 @@ export async function startRemuxedPlayback(
         if (!chunk) continue;
         await appendChunk(sourceBuffer, chunk, video, {
           onQuota: () => log("remux · quota · evicting + retry"),
+          onDetail: (detail) => log(`remux · ${detail}`),
         });
         if (gen !== sessionGen) return;
         sawData = true;
@@ -426,35 +437,14 @@ export async function startRemuxedPlayback(
     await waitForSourceOpen(mediaSource);
     if (closed || gen !== sessionGen) return;
 
-    const mimeCandidates = [
-      'video/mp4; codecs="avc1.640028, mp4a.40.2"',
-      'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
-      'video/mp4; codecs="avc1.64001F, mp4a.40.2"',
-      "video/mp4",
-    ];
-    sourceBuffer = null;
-    for (const mime of mimeCandidates) {
-      if (MediaSourceImpl.isTypeSupported(mime)) {
-        sourceBuffer = mediaSource.addSourceBuffer(mime);
-        sourceBuffer.mode = "segments";
-        // Map remuxed timestamps (start at 0 after trim) onto the real timeline.
-        try {
-          sourceBuffer.timestampOffset = baseTime;
-        } catch {
-          /* ignore */
-        }
-        log(`remux · SourceBuffer ${mime} · offset=${baseTime.toFixed(1)}`);
-        break;
-      }
-    }
-    if (!sourceBuffer) {
-      throw new Error("No supported fMP4 SourceBuffer type");
-    }
-
+    // Queue data first; create SourceBuffer only after we know the real codecs.
+    // Hardcoding avc1.640028 while remuxing every track (incl. 2nd audio /
+    // subs) is a common cause of async "SourceBuffer append error".
     queue = [];
     pumping = false;
     appendError = null;
     sawData = false;
+    sourceBuffer = null;
 
     const writable = new WritableStream<Uint8Array>({
       async write(chunk) {
@@ -479,7 +469,8 @@ export async function startRemuxedPlayback(
     const output = new Output({
       format: new Mp4OutputFormat({
         fastStart: "fragmented",
-        minimumFragmentDuration: 1.2,
+        // Slightly smaller fragments append more reliably on Chrome MSE.
+        minimumFragmentDuration: 0.8,
       }),
       target: new AppendOnlyStreamTarget(writable),
     });
@@ -487,6 +478,10 @@ export async function startRemuxedPlayback(
     conversion = await Conversion.init({
       input,
       output,
+      // One video + one audio — extra MKV tracks break a single SourceBuffer.
+      tracks: "primary",
+      video: (_track, n) => (n > 0 ? { discard: true } : undefined),
+      audio: (_track, n) => (n > 0 ? { discard: true } : undefined),
       trim: baseTime > 0.05 ? { start: baseTime } : undefined,
       showWarnings: false,
     });
@@ -506,6 +501,58 @@ export async function startRemuxedPlayback(
           : "Cannot remux this file for browser playback",
       );
     }
+
+    const codecParts: string[] = [];
+    for (const track of conversion.utilizedTracks) {
+      let codecStr: string | null = null;
+      try {
+        codecStr = await track.getCodecParameterString();
+      } catch {
+        codecStr = track.codec ?? null;
+      }
+      if (codecStr) codecParts.push(codecStr);
+      const kind = track.isVideoTrack()
+        ? "video"
+        : track.isAudioTrack()
+          ? "audio"
+          : "other";
+      log(`remux · track · ${kind} · ${codecStr || "?"}`);
+    }
+
+    const mimeCandidates = [
+      codecParts.length > 0
+        ? `video/mp4; codecs="${codecParts.join(", ")}"`
+        : null,
+      'video/mp4; codecs="avc1.640028, mp4a.40.2"',
+      'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
+      'video/mp4; codecs="avc1.64001F, mp4a.40.2"',
+      "video/mp4",
+    ].filter((m): m is string => Boolean(m));
+
+    for (const mime of mimeCandidates) {
+      if (!MediaSourceImpl.isTypeSupported(mime)) continue;
+      try {
+        sourceBuffer = mediaSource.addSourceBuffer(mime);
+        sourceBuffer.mode = "segments";
+        try {
+          sourceBuffer.timestampOffset = baseTime;
+        } catch {
+          /* ignore */
+        }
+        log(`remux · SourceBuffer ${mime} · offset=${baseTime.toFixed(1)}`);
+        break;
+      } catch (err) {
+        log(
+          `remux · SourceBuffer rejected ${mime} · ${err instanceof Error ? err.message : String(err)}`,
+        );
+        sourceBuffer = null;
+      }
+    }
+    if (!sourceBuffer) {
+      throw new Error("No supported fMP4 SourceBuffer type");
+    }
+    // Flush anything that arrived while the SourceBuffer was being created.
+    void pump();
 
     // Duration: prefer metadata; after a seek, keep the known full length.
     if (fullDuration <= 0) {

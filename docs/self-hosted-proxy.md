@@ -15,30 +15,24 @@
 
 Necesitas **dos procesos** y **ffmpeg** instalado.
 
-### 1. Instalar ffmpeg (Windows)
-
-Con winget:
+### 1. Dependencias
 
 ```powershell
-winget install Gyan.FFmpeg
+git pull origin main
+npm install
 ```
 
-Cierra y abre la terminal, comprueba:
-
-```powershell
-ffmpeg -version
-```
+Esto descarga **ffmpeg-static** (no hace falta `winget install ffmpeg`).
 
 ### 2. Arrancar el proxy (terminal A)
 
 ```powershell
-cd ruta\a\XtreamPlayerPro
 npm run proxy
 ```
 
-Debería decir `ffmpeg: ok` y escuchar en `http://0.0.0.0:8080`.
+Debe decir `ffmpeg: ok (...ffmpeg-static...)`.
 
-Prueba: http://127.0.0.1:8080/health
+Prueba: http://127.0.0.1:8080/health → `"ffmpeg": true`
 
 ### 3. Apuntar la app al proxy
 

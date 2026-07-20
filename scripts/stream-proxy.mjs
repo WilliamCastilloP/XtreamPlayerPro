@@ -11,7 +11,8 @@
  *   node scripts/stream-proxy.mjs
  *   STREAM_PROXY_PORT=8080 node scripts/stream-proxy.mjs
  *
- * Requires ffmpeg on PATH for /api/hls.
+ * Bundled ffmpeg-static is used automatically (npm install).
+ * Optional override: FFMPEG_PATH=/path/to/ffmpeg
  *
  * Then set (local .env.local or Vercel) and restart/redeploy:
  *   NEXT_PUBLIC_STREAM_PROXY_BASE=http://127.0.0.1:8080
@@ -21,11 +22,73 @@
 import http from "node:http";
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { URL } from "node:url";
+
+const require = createRequire(import.meta.url);
+
+/**
+ * Prefer bundled ffmpeg-static so Windows/Oracle work without a system install.
+ */
+function resolveFfmpegBin() {
+  if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
+    return process.env.FFMPEG_PATH;
+  }
+
+  try {
+    const bundled = require("ffmpeg-static");
+    if (typeof bundled === "string" && bundled && fs.existsSync(bundled)) {
+      return bundled;
+    }
+  } catch {
+    // optional dependency missing
+  }
+
+  // Resolve from repo root when script is started via npm run proxy
+  try {
+    const fromRoot = require.resolve("ffmpeg-static");
+    const pkgDir = path.dirname(fromRoot);
+    const guessed = path.join(
+      pkgDir,
+      process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg",
+    );
+    if (fs.existsSync(guessed)) return guessed;
+  } catch {
+    /* ignore */
+  }
+
+  const candidates = ["ffmpeg"];
+  if (process.platform === "win32") {
+    candidates.push(
+      "C:\\ffmpeg\\bin\\ffmpeg.exe",
+      "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
+      path.join(
+        process.env.LOCALAPPDATA || "",
+        "Microsoft",
+        "WinGet",
+        "Links",
+        "ffmpeg.exe",
+      ),
+    );
+  }
+  for (const bin of candidates) {
+    if (!bin || bin.endsWith(path.sep)) continue;
+    try {
+      execFileSync(bin, ["-version"], { stdio: "ignore" });
+      return bin;
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
+}
+
+const FFMPEG_BIN = resolveFfmpegBin();
+const FFMPEG_OK = Boolean(FFMPEG_BIN);
 
 const PORT = Number(process.env.STREAM_PROXY_PORT || process.env.PORT || 8080);
 const UPSTREAM_UA = "VLC/3.0.20 LibVLC/3.0.20";
@@ -64,37 +127,6 @@ const sessions = new Map();
  *   error: string | null,
  * }} HlsSession
  */
-
-function resolveFfmpegBin() {
-  if (process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH;
-  const candidates = ["ffmpeg"];
-  if (process.platform === "win32") {
-    candidates.push(
-      "C:\\ffmpeg\\bin\\ffmpeg.exe",
-      "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
-      path.join(
-        process.env.LOCALAPPDATA || "",
-        "Microsoft",
-        "WinGet",
-        "Links",
-        "ffmpeg.exe",
-      ),
-    );
-  }
-  for (const bin of candidates) {
-    if (!bin || bin.endsWith(path.sep)) continue;
-    try {
-      execFileSync(bin, ["-version"], { stdio: "ignore" });
-      return bin;
-    } catch {
-      /* try next */
-    }
-  }
-  return null;
-}
-
-const FFMPEG_BIN = resolveFfmpegBin();
-const FFMPEG_OK = Boolean(FFMPEG_BIN);
 
 function sessionIdFor(url) {
   return createHash("sha1").update(url).digest("hex").slice(0, 16);
@@ -472,11 +504,8 @@ setInterval(() => {
 async function handleHlsPlaylist(req, res, sourceUrl) {
   if (!FFMPEG_OK) {
     sendJson(res, 503, {
-      error: "ffmpeg not installed on this proxy",
-      hint:
-        process.platform === "win32"
-          ? "Install ffmpeg (winget install Gyan.FFmpeg), open a NEW terminal, run npm run proxy again. Or set FFMPEG_PATH to ffmpeg.exe"
-          : "sudo apt install -y ffmpeg",
+      error: "ffmpeg not available on this proxy",
+      hint: "Run npm install (includes ffmpeg-static), then restart npm run proxy",
     });
     return;
   }
@@ -676,9 +705,7 @@ server.listen(PORT, "0.0.0.0", () => {
   );
   if (!FFMPEG_OK) {
     console.log(
-      process.platform === "win32"
-        ? `[xtream-stream-proxy] install: winget install Gyan.FFmpeg  (then NEW terminal + npm run proxy)`
-        : `[xtream-stream-proxy] install: sudo apt install -y ffmpeg`,
+      `[xtream-stream-proxy] install: npm install   (bundles ffmpeg-static)`,
     );
   }
   console.log(`[xtream-stream-proxy] health: GET /health`);

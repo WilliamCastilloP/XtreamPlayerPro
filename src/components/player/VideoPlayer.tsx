@@ -7,6 +7,7 @@ import {
   Bug,
   Copy,
   Maximize,
+  Minimize,
   Pause,
   Play,
   RotateCcw,
@@ -221,6 +222,7 @@ export function VideoPlayer({
   const [scrubbing, setScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState(0);
   const [seekingUi, setSeekingUi] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   /** Cover art, or a freeze-frame data URL held across seek reloads. */
   const [holdPoster, setHoldPoster] = useState<string | undefined>(poster);
   const [bufferRanges, setBufferRanges] = useState<BufferRange[]>([]);
@@ -893,21 +895,47 @@ export function VideoPlayer({
     bumpChrome();
   };
 
-  const goFullscreen = async () => {
+  const toggleFullscreen = async () => {
     const root = rootRef.current;
     const video = videoRef.current;
     if (!video) return;
+    const doc = document as Document & {
+      webkitFullscreenElement?: Element | null;
+      webkitExitFullscreen?: () => Promise<void> | void;
+    };
+    const iosVideo = video as HTMLVideoElement & {
+      webkitEnterFullscreen?: () => void;
+      webkitExitFullscreen?: () => void;
+      webkitDisplayingFullscreen?: boolean;
+    };
     try {
-      // iPhone: only webkitEnterFullscreen on the <video> reliably works.
-      const webkitFs = (
-        video as HTMLVideoElement & { webkitEnterFullscreen?: () => void }
-      ).webkitEnterFullscreen;
-      if (typeof webkitFs === "function") {
-        webkitFs.call(video);
-      } else if (root && root.requestFullscreen) {
+      const active =
+        document.fullscreenElement || doc.webkitFullscreenElement || null;
+      if (active) {
+        if (document.exitFullscreen) await document.exitFullscreen();
+        else if (typeof doc.webkitExitFullscreen === "function") {
+          await doc.webkitExitFullscreen();
+        }
+        bumpChrome();
+        return;
+      }
+      // iPhone native video fullscreen (enter/exit on the media element).
+      if (iosVideo.webkitDisplayingFullscreen) {
+        iosVideo.webkitExitFullscreen?.();
+        bumpChrome();
+        return;
+      }
+      if (
+        typeof iosVideo.webkitEnterFullscreen === "function" &&
+        !root?.requestFullscreen
+      ) {
+        iosVideo.webkitEnterFullscreen();
+      } else if (root?.requestFullscreen) {
         await root.requestFullscreen();
       } else if (video.requestFullscreen) {
         await video.requestFullscreen();
+      } else if (typeof iosVideo.webkitEnterFullscreen === "function") {
+        iosVideo.webkitEnterFullscreen();
       }
       // Best-effort landscape lock (supported on some browsers).
       try {
@@ -934,7 +962,7 @@ export function VideoPlayer({
     setNeedsUnmute(false);
     video.muted = false;
     setMuted(false);
-    void goFullscreen();
+    void toggleFullscreen();
     void video.play().catch((err) => {
       if (err instanceof Error && err.name === "NotAllowedError") {
         setAwaitingTap(true);
@@ -1070,6 +1098,39 @@ export function VideoPlayer({
     },
     [],
   );
+
+  useEffect(() => {
+    const syncFs = () => {
+      const doc = document as Document & {
+        webkitFullscreenElement?: Element | null;
+      };
+      const video = videoRef.current as
+        | (HTMLVideoElement & { webkitDisplayingFullscreen?: boolean })
+        | null;
+      setIsFullscreen(
+        !!(
+          document.fullscreenElement ||
+          doc.webkitFullscreenElement ||
+          video?.webkitDisplayingFullscreen
+        ),
+      );
+    };
+    document.addEventListener("fullscreenchange", syncFs);
+    document.addEventListener("webkitfullscreenchange", syncFs as EventListener);
+    const video = videoRef.current;
+    video?.addEventListener("webkitbeginfullscreen", syncFs);
+    video?.addEventListener("webkitendfullscreen", syncFs);
+    syncFs();
+    return () => {
+      document.removeEventListener("fullscreenchange", syncFs);
+      document.removeEventListener(
+        "webkitfullscreenchange",
+        syncFs as EventListener,
+      );
+      video?.removeEventListener("webkitbeginfullscreen", syncFs);
+      video?.removeEventListener("webkitendfullscreen", syncFs);
+    };
+  }, []);
   const showLoader =
     (!error && !hasStarted && !awaitingTap) || seekingUi;
   const freezeHold = !!holdPoster?.startsWith("data:");
@@ -1414,12 +1475,16 @@ export function VideoPlayer({
                   onClick={(e) => {
                     e.stopPropagation();
                     if (!controlsEnabled) return;
-                    void goFullscreen();
+                    void toggleFullscreen();
                   }}
                   className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white disabled:opacity-40"
-                  aria-label="Fullscreen"
+                  aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
                 >
-                  <Maximize className="h-5 w-5" />
+                  {isFullscreen ? (
+                    <Minimize className="h-5 w-5" />
+                  ) : (
+                    <Maximize className="h-5 w-5" />
+                  )}
                 </button>
               </div>
             </div>

@@ -37,6 +37,24 @@ function snapHlsStart(seconds: number): number {
   return Math.max(0, Math.floor(seconds / 2) * 2);
 }
 
+/** Grab the current decoded frame so seek reload doesn't flash the cover art. */
+function captureFreezeFrame(video: HTMLVideoElement): string | null {
+  try {
+    if (video.readyState < 2 || video.videoWidth < 2 || video.videoHeight < 2) {
+      return null;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0);
+    return canvas.toDataURL("image/jpeg", 0.75);
+  } catch {
+    return null;
+  }
+}
+
 function withServerHlsStart(url: string, startSec: number): string {
   if (!url.includes("/api/hls")) return url;
   try {
@@ -203,6 +221,8 @@ export function VideoPlayer({
   const [scrubbing, setScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState(0);
   const [seekingUi, setSeekingUi] = useState(false);
+  /** Cover art, or a freeze-frame data URL held across seek reloads. */
+  const [holdPoster, setHoldPoster] = useState<string | undefined>(poster);
   const [bufferRanges, setBufferRanges] = useState<BufferRange[]>([]);
   const [qualityOptions, setQualityOptions] = useState<
     { id: number; label: string }[]
@@ -212,6 +232,7 @@ export function VideoPlayer({
   const [qualityIsHls, setQualityIsHls] = useState(false);
   const scrubbingRef = useRef(false);
   const prefetchTimer = useRef<number | null>(null);
+  const seekingReloadRef = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sourcesKey = sources.map((s) => s.url).join("|");
   const [seenSourcesKey, setSeenSourcesKey] = useState(sourcesKey);
@@ -231,6 +252,9 @@ export function VideoPlayer({
     setAwaitingTap(false);
     setHasStarted(false);
     setServerHlsOffset(0);
+    setSeekingUi(false);
+    seekingReloadRef.current = false;
+    setHoldPoster(poster);
   }
 
   const candidate = sources[sourceIndex];
@@ -384,7 +408,12 @@ export function VideoPlayer({
     setHasStarted(false);
     setAwaitingTap(false);
     setLoadPercent(0);
-    setStatusText(t("playerConnecting"));
+    if (seekingReloadRef.current) {
+      setSeekingUi(true);
+      setStatusText(t("playerSeeking"));
+    } else {
+      setStatusText(t("playerConnecting"));
+    }
     lastFailDetail.current = null;
     pushDebug(
       `try ${sourceIndex + 1}/${sources.length} · ${candidate.label} · ${redactStreamUrl(playSrc)} · hls?=${looksLikeHlsUrl(playSrc)} · start=${serverHlsOffset.toFixed(0)}s`,
@@ -518,6 +547,8 @@ export function VideoPlayer({
         setProgress(100);
         setStatusText(t("playerPlaying"));
         setHasStarted(true);
+        setSeekingUi(false);
+        seekingReloadRef.current = false;
         pushDebug(`playing · ${candidate.label}`);
       }
     };
@@ -595,6 +626,8 @@ export function VideoPlayer({
           setQualityId(-1);
           setQualityIsHls(false);
           setHasStarted(true);
+          setSeekingUi(false);
+          seekingReloadRef.current = false;
           setStatusText(t("playerPlaying"));
           setProgress(100);
         })
@@ -963,9 +996,12 @@ export function VideoPlayer({
           // match the proxy session id so scrub-prefetch can warm it).
           const snapped = snapHlsStart(target);
           restartingServerHls = true;
+          const frame = captureFreezeFrame(video);
+          if (frame) setHoldPoster(frame);
+          seekingReloadRef.current = true;
           setHasStarted(false);
           setLoadPercent(0);
-          setStatusText(t("playerConnecting"));
+          setStatusText(t("playerSeeking"));
           setServerHlsOffset(snapped);
           setCurrentTime(0);
         }
@@ -978,10 +1014,11 @@ export function VideoPlayer({
         `seek failed · ${err instanceof Error ? err.message : String(err)}`,
       );
     } finally {
-      setSeekingUi(false);
-      if (!restartingServerHls && hasStarted) {
-        setStatusText(t("playerPlaying"));
+      if (!restartingServerHls) {
+        setSeekingUi(false);
+        if (hasStarted) setStatusText(t("playerPlaying"));
       }
+      // Keep seekingUi + freeze poster until the restarted stream hits playing.
     }
   };
 
@@ -993,6 +1030,9 @@ export function VideoPlayer({
     setServerHlsOffset(0);
     setLoadPercent(0);
     setSourceIndex(0);
+    setSeekingUi(false);
+    seekingReloadRef.current = false;
+    setHoldPoster(poster);
     lastFailDetail.current = null;
     resetDebug();
     setReloadToken((n) => n + 1);
@@ -1032,6 +1072,7 @@ export function VideoPlayer({
   );
   const showLoader =
     (!error && !hasStarted && !awaitingTap) || seekingUi;
+  const freezeHold = !!holdPoster?.startsWith("data:");
   const timelineValue = scrubbing
     ? scrubValue
     : serverHlsOffset + currentTime;
@@ -1051,7 +1092,7 @@ export function VideoPlayer({
       <video
         ref={videoRef}
         className="h-full w-full object-contain"
-        poster={poster}
+        poster={holdPoster || poster}
         playsInline
         preload="auto"
         controls={false}
@@ -1061,7 +1102,11 @@ export function VideoPlayer({
       />
 
       {showLoader ? (
-        <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/55 px-6">
+        <div
+          className={`pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 px-6 ${
+            freezeHold ? "bg-black/35" : "bg-black/55"
+          }`}
+        >
           <div className="relative h-20 w-20">
             <svg className="h-20 w-20 -rotate-90" viewBox="0 0 64 64">
               <circle

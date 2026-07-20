@@ -408,6 +408,8 @@ function probeDurationSeconds(mediaUrl) {
 
 /** @type {Map<string, string>} sourceUrl → audio codec hint (aac, ac3, …) */
 const audioCodecBySource = new Map();
+/** @type {Map<string, number>} sourceUrl → duration seconds */
+const durationBySource = new Map();
 
 /**
  * @param {string} sourceUrl
@@ -427,13 +429,11 @@ async function getOrStartSession(sourceUrl, startSec = 0) {
     await destroySession(existing);
   }
 
-  // Free CPU: drop other mid-seek sessions for this title (keep start=0 warm).
+  // One title = one ffmpeg. Concurrent sessions on the same MKV fight for
+  // upstream bandwidth and spam "Will reconnect … End of file".
   for (const other of [...sessions.values()]) {
-    if (
-      other.sourceUrl === sourceUrl &&
-      other.startSec > 0 &&
-      other.id !== id
-    ) {
+    if (other.sourceUrl === sourceUrl && other.id !== id) {
+      console.log(`[hls] stop ${other.id} (handoff → ${id})`);
       void destroySession(other);
     }
   }
@@ -455,27 +455,20 @@ async function getOrStartSession(sourceUrl, startSec = 0) {
     lastAccess: Date.now(),
     ready: false,
     error: null,
-    durationSec: null,
+    durationSec: durationBySource.get(sourceUrl) || null,
     startSec: start,
   };
   sessions.set(id, session);
 
   // Only probe duration on the primary (start=0) session — seeks skip this.
-  if (start === 0) {
+  if (start === 0 && !session.durationSec) {
     void probeDurationSeconds(localProxy).then((sec) => {
       if (sec && sessions.get(id) === session) {
         session.durationSec = sec;
+        durationBySource.set(sourceUrl, sec);
         console.log(`[hls] duration ${id} = ${Math.round(sec)}s`);
       }
     });
-  } else {
-    // Reuse duration learned from the start=0 session when available.
-    for (const s of sessions.values()) {
-      if (s.sourceUrl === sourceUrl && s.durationSec) {
-        session.durationSec = s.durationSec;
-        break;
-      }
-    }
   }
 
   const playlist = path.join(dir, "index.m3u8");
@@ -577,6 +570,8 @@ async function getOrStartSession(sourceUrl, startSec = 0) {
       audioCodecBySource.set(sourceUrl, audioMatch[1].toLowerCase());
       console.log(`[hls] audio codec ${audioMatch[1]} for source`);
     }
+    // Upstream HTTP drops under seek load — reconnect is expected, not useful.
+    if (/Will reconnect|error=End of file/i.test(text)) return;
     if (/error|invalid|failed/i.test(text)) {
       console.warn(`[hls] ffmpeg ${id}:`, text.trim().slice(0, 240));
     }
@@ -688,9 +683,12 @@ async function handleHlsPlaylist(req, res, sourceUrl, startSec = 0) {
   try {
     const session = await getOrStartSession(sourceUrl, startSec);
     const text = await waitUntilReady(session);
-    // Wait briefly for duration probe if still pending.
-    if (!session.durationSec) {
+    // Only wait for duration on the initial (start=0) playlist — never on scrub.
+    if (!session.durationSec && session.startSec === 0) {
       await new Promise((r) => setTimeout(r, 800));
+    }
+    if (!session.durationSec && durationBySource.has(sourceUrl)) {
+      session.durationSec = durationBySource.get(sourceUrl) || null;
     }
     const rewritten = rewriteLocalHlsPlaylist(
       text,

@@ -406,13 +406,17 @@ function probeDurationSeconds(mediaUrl) {
   });
 }
 
+/** @type {Map<string, string>} sourceUrl → audio codec hint (aac, ac3, …) */
+const audioCodecBySource = new Map();
+
 /**
  * @param {string} sourceUrl
  * @param {number} [startSec]
  * @returns {Promise<HlsSession>}
  */
 async function getOrStartSession(sourceUrl, startSec = 0) {
-  const start = Math.max(0, Math.floor(startSec || 0));
+  // Snap to 2s buckets so nearby scrubs reuse the same ffmpeg session.
+  const start = Math.max(0, Math.floor((startSec || 0) / 2) * 2);
   const id = sessionIdFor(sourceUrl, start);
   const existing = sessions.get(id);
   if (existing && !existing.error) {
@@ -421,6 +425,17 @@ async function getOrStartSession(sourceUrl, startSec = 0) {
   }
   if (existing) {
     await destroySession(existing);
+  }
+
+  // Free CPU: drop other mid-seek sessions for this title (keep start=0 warm).
+  for (const other of [...sessions.values()]) {
+    if (
+      other.sourceUrl === sourceUrl &&
+      other.startSec > 0 &&
+      other.id !== id
+    ) {
+      void destroySession(other);
+    }
   }
 
   await ensureHlsDir();
@@ -445,16 +460,30 @@ async function getOrStartSession(sourceUrl, startSec = 0) {
   };
   sessions.set(id, session);
 
-  // Probe full file duration from the beginning (ignore start offset).
-  void probeDurationSeconds(localProxy).then((sec) => {
-    if (sec && sessions.get(id) === session) {
-      session.durationSec = sec;
-      console.log(`[hls] duration ${id} = ${Math.round(sec)}s`);
+  // Only probe duration on the primary (start=0) session — seeks skip this.
+  if (start === 0) {
+    void probeDurationSeconds(localProxy).then((sec) => {
+      if (sec && sessions.get(id) === session) {
+        session.durationSec = sec;
+        console.log(`[hls] duration ${id} = ${Math.round(sec)}s`);
+      }
+    });
+  } else {
+    // Reuse duration learned from the start=0 session when available.
+    for (const s of sessions.values()) {
+      if (s.sourceUrl === sourceUrl && s.durationSec) {
+        session.durationSec = s.durationSec;
+        break;
+      }
     }
-  });
+  }
 
   const playlist = path.join(dir, "index.m3u8");
   const segmentPattern = path.join(dir, "seg_%05d.ts");
+  const knownAudio = audioCodecBySource.get(sourceUrl) || "";
+  const canCopyAudio = /^(aac|mp3|mp4a)/i.test(knownAudio);
+  // Shorter segments after a scrub → first playable chunk arrives sooner.
+  const hlsTime = start > 0 ? "2" : "3";
 
   const args = [
     "-hide_banner",
@@ -470,9 +499,20 @@ async function getOrStartSession(sourceUrl, startSec = 0) {
     "-user_agent",
     UPSTREAM_UA,
   ];
-  // Fast input seek for copy mode (keyframe-accurate enough for VOD scrubbing).
+  // Fast input seek (keyframe). noaccurate_seek = much snappier on big MKVs.
   if (start > 0) {
-    args.push("-ss", String(start));
+    args.push(
+      "-ss",
+      String(start),
+      "-noaccurate_seek",
+      "-fflags",
+      "+fastseek",
+      // Don't spend seconds probing the whole MKV on every scrub.
+      "-probesize",
+      "512k",
+      "-analyzeduration",
+      "500000",
+    );
   }
   args.push(
     "-i",
@@ -483,16 +523,31 @@ async function getOrStartSession(sourceUrl, startSec = 0) {
     "0:a:0?",
     "-c:v",
     "copy",
-    "-c:a",
-    "aac",
-    "-ac",
-    "2",
-    "-b:a",
-    "128k",
+  );
+  if (canCopyAudio) {
+    args.push("-c:a", "copy");
+  } else {
+    // Fast AAC for AC3/DTS movies (transcode is the seek bottleneck).
+    args.push(
+      "-c:a",
+      "aac",
+      "-aac_coder",
+      "fast",
+      "-b:a",
+      "96k",
+      "-ac",
+      "2",
+      "-ar",
+      "48000",
+    );
+  }
+  args.push(
     "-f",
     "hls",
     "-hls_time",
-    "3",
+    hlsTime,
+    "-hls_list_size",
+    "0",
     "-hls_playlist_type",
     "event",
     "-hls_flags",
@@ -503,7 +558,7 @@ async function getOrStartSession(sourceUrl, startSec = 0) {
   );
 
   console.log(
-    `[hls] start ${id} ← from=${start}s · ${sourceUrl.slice(0, 72)}…`,
+    `[hls] start ${id} ← from=${start}s · audio=${canCopyAudio ? "copy" : "aac"} · ${sourceUrl.slice(0, 64)}…`,
   );
   const proc = spawn(FFMPEG_BIN || "ffmpeg", args, {
     stdio: ["ignore", "ignore", "pipe"],
@@ -517,6 +572,11 @@ async function getOrStartSession(sourceUrl, startSec = 0) {
   proc.stderr?.on("data", (chunk) => {
     const text = String(chunk);
     stderrBuf = (stderrBuf + text).slice(-4000);
+    const audioMatch = text.match(/Audio:\s*([a-z0-9_]+)/i);
+    if (audioMatch && !audioCodecBySource.has(sourceUrl)) {
+      audioCodecBySource.set(sourceUrl, audioMatch[1].toLowerCase());
+      console.log(`[hls] audio codec ${audioMatch[1]} for source`);
+    }
     if (/error|invalid|failed/i.test(text)) {
       console.warn(`[hls] ffmpeg ${id}:`, text.trim().slice(0, 240));
     }
@@ -543,21 +603,22 @@ async function getOrStartSession(sourceUrl, startSec = 0) {
 async function waitUntilReady(session) {
   const playlist = path.join(session.dir, "index.m3u8");
   const started = Date.now();
+  // Scrub restarts: 1 segment is enough to start playing ASAP.
+  const needSegs = session.startSec > 0 ? 1 : 2;
   while (Date.now() - started < READY_TIMEOUT_MS) {
     session.lastAccess = Date.now();
     if (session.error) throw new Error(session.error);
     try {
       const text = await fsp.readFile(playlist, "utf8");
       const segs = text.split(/\r?\n/).filter((l) => l && !l.startsWith("#"));
-      // Wait for a couple of segments so start/seek feels ready to play.
-      if (segs.length >= 2) {
+      if (segs.length >= needSegs) {
         session.ready = true;
         return text;
       }
     } catch {
       /* not ready */
     }
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise((r) => setTimeout(r, 150));
   }
   throw new Error(
     "Timed out waiting for HLS segments (ffmpeg still starting or source unreachable)",

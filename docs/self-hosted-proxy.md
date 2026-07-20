@@ -144,6 +144,19 @@ Así el remux HLS lo hace Oracle y tu PC/iPhone solo bajan segmentos.
 | `npm run proxy` + variable local | **HLS en tu PC** → mucho más fluido |
 | Oracle + variable (Vercel o local) | **HLS en Oracle** → fluido + no quema Vercel |
 
+### Seek (scrub)
+
+El seek fuera del buffer **reinicia ffmpeg** con `-ss` (no es un HLS VOD ya segmentado). Por eso las películas (MKV grande + audio AC3→AAC) tardan más que muchas series.
+
+Aceleraciones en el proxy/player:
+
+- Prefetch al arrastrar la barra (calienta la sesión antes de soltar)
+- Snap a buckets de 2s (reutiliza la misma sesión)
+- Tras scrub: 1 segmento listo + `hls_time=2` + seek no-accurate
+- Si el audio ya es AAC: `-c:a copy` (sin re-encode)
+
+Seek “como un solo segmento” (tipo Netflix) requiere **HLS VOD pregenerado** con todos los `.ts` en disco — no remux al vuelo.
+
 ---
 
 ## Checklist

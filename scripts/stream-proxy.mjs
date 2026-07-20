@@ -126,11 +126,13 @@ const sessions = new Map();
  *   ready: boolean,
  *   error: string | null,
  *   durationSec: number | null,
+ *   startSec: number,
  * }} HlsSession
  */
 
-function sessionIdFor(url) {
-  return createHash("sha1").update(url).digest("hex").slice(0, 16);
+function sessionIdFor(url, startSec = 0) {
+  const key = `${url}|${Math.max(0, Math.floor(startSec))}`;
+  return createHash("sha1").update(key).digest("hex").slice(0, 16);
 }
 
 function rewriteUpstreamPlaylist(body, playlistUrl) {
@@ -406,10 +408,12 @@ function probeDurationSeconds(mediaUrl) {
 
 /**
  * @param {string} sourceUrl
+ * @param {number} [startSec]
  * @returns {Promise<HlsSession>}
  */
-async function getOrStartSession(sourceUrl) {
-  const id = sessionIdFor(sourceUrl);
+async function getOrStartSession(sourceUrl, startSec = 0) {
+  const start = Math.max(0, Math.floor(startSec || 0));
+  const id = sessionIdFor(sourceUrl, start);
   const existing = sessions.get(id);
   if (existing && !existing.error) {
     existing.lastAccess = Date.now();
@@ -437,10 +441,11 @@ async function getOrStartSession(sourceUrl) {
     ready: false,
     error: null,
     durationSec: null,
+    startSec: start,
   };
   sessions.set(id, session);
 
-  // Probe in parallel with remux start (metadata only).
+  // Probe full file duration from the beginning (ignore start offset).
   void probeDurationSeconds(localProxy).then((sec) => {
     if (sec && sessions.get(id) === session) {
       session.durationSec = sec;
@@ -464,6 +469,12 @@ async function getOrStartSession(sourceUrl) {
     "5",
     "-user_agent",
     UPSTREAM_UA,
+  ];
+  // Fast input seek for copy mode (keyframe-accurate enough for VOD scrubbing).
+  if (start > 0) {
+    args.push("-ss", String(start));
+  }
+  args.push(
     "-i",
     localProxy,
     "-map",
@@ -489,9 +500,11 @@ async function getOrStartSession(sourceUrl) {
     "-hls_segment_filename",
     segmentPattern,
     playlist,
-  ];
+  );
 
-  console.log(`[hls] start ${id} ← ${sourceUrl.slice(0, 80)}…`);
+  console.log(
+    `[hls] start ${id} ← from=${start}s · ${sourceUrl.slice(0, 72)}…`,
+  );
   const proc = spawn(FFMPEG_BIN || "ffmpeg", args, {
     stdio: ["ignore", "ignore", "pipe"],
     env: {
@@ -536,7 +549,8 @@ async function waitUntilReady(session) {
     try {
       const text = await fsp.readFile(playlist, "utf8");
       const segs = text.split(/\r?\n/).filter((l) => l && !l.startsWith("#"));
-      if (segs.length >= 1) {
+      // Wait for a couple of segments so start/seek feels ready to play.
+      if (segs.length >= 2) {
         session.ready = true;
         return text;
       }
@@ -581,7 +595,7 @@ setInterval(() => {
   void cleanupSessions();
 }, 60_000).unref();
 
-async function handleHlsPlaylist(req, res, sourceUrl) {
+async function handleHlsPlaylist(req, res, sourceUrl, startSec = 0) {
   if (!FFMPEG_OK) {
     sendJson(res, 503, {
       error: "ffmpeg not available on this proxy",
@@ -611,7 +625,7 @@ async function handleHlsPlaylist(req, res, sourceUrl) {
   }
 
   try {
-    const session = await getOrStartSession(sourceUrl);
+    const session = await getOrStartSession(sourceUrl, startSec);
     const text = await waitUntilReady(session);
     // Wait briefly for duration probe if still pending.
     if (!session.durationSec) {
@@ -776,7 +790,8 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 400, { error: "Missing url" });
       return;
     }
-    await handleHlsPlaylist(req, res, target);
+    const start = Number(url.searchParams.get("start") || 0);
+    await handleHlsPlaylist(req, res, target, start);
     return;
   }
 

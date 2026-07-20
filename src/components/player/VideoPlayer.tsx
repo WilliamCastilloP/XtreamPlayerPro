@@ -30,6 +30,38 @@ import {
   type RemuxHandle,
 } from "@/lib/player/mkv-playback";
 
+const CONNECT_READY_SEC = 3;
+
+function withServerHlsStart(url: string, startSec: number): string {
+  if (!url.includes("/api/hls")) return url;
+  try {
+    const absolute = url.startsWith("http")
+      ? new URL(url)
+      : new URL(url, "http://local");
+    if (startSec >= 1) absolute.searchParams.set("start", String(Math.floor(startSec)));
+    else absolute.searchParams.delete("start");
+    if (url.startsWith("http")) return absolute.toString();
+    return `${absolute.pathname}?${absolute.searchParams.toString()}`;
+  } catch {
+    return url;
+  }
+}
+
+function mediaBufferedAhead(video: HTMLVideoElement): number {
+  try {
+    const b = video.buffered;
+    if (!b.length) return 0;
+    const t = video.currentTime || 0;
+    for (let i = 0; i < b.length; i += 1) {
+      if (t >= b.start(i) - 0.35 && t <= b.end(i) + 0.35) {
+        return Math.max(0, b.end(i) - t);
+      }
+    }
+    return Math.max(0, b.end(b.length - 1) - t);
+  } catch {
+    return 0;
+  }
+}
 type Props = {
   sources: StreamCandidate[];
   title: string;
@@ -156,6 +188,8 @@ export function VideoPlayer({
   const [externalUrl, setExternalUrl] = useState<string | null>(null);
   const [awaitingTap, setAwaitingTap] = useState(false);
   const [needsUnmute, setNeedsUnmute] = useState(false);
+  const [hasStarted, setHasStarted] = useState(false);
+  const [serverHlsOffset, setServerHlsOffset] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(() =>
     durationHint && durationHint > 0 ? durationHint : 0,
@@ -188,10 +222,14 @@ export function VideoPlayer({
     setQualityIsHls(false);
     setNeedsUnmute(false);
     setAwaitingTap(false);
+    setHasStarted(false);
+    setServerHlsOffset(0);
   }
 
   const candidate = sources[sourceIndex];
   const src = candidate?.url || "";
+  const playSrc = withServerHlsStart(src, serverHlsOffset);
+  const isServerHls = src.includes("/api/hls");
 
   const pushDebug = useCallback((text: string) => {
     const at = new Date().toLocaleTimeString();
@@ -328,7 +366,7 @@ export function VideoPlayer({
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !src || !candidate) return;
+    if (!video || !playSrc || !candidate) return;
 
     let disposed = false;
     let fragTotal = 0;
@@ -336,12 +374,13 @@ export function VideoPlayer({
 
     setError(null);
     setPlaying(false);
+    setHasStarted(false);
     setAwaitingTap(false);
     setLoadPercent(0);
     setStatusText(t("playerConnecting"));
     lastFailDetail.current = null;
     pushDebug(
-      `try ${sourceIndex + 1}/${sources.length} · ${candidate.label} · ${redactStreamUrl(src)} · hls?=${looksLikeHlsUrl(src)}`,
+      `try ${sourceIndex + 1}/${sources.length} · ${candidate.label} · ${redactStreamUrl(playSrc)} · hls?=${looksLikeHlsUrl(playSrc)} · start=${serverHlsOffset.toFixed(0)}s`,
     );
 
     if (hlsRef.current) {
@@ -402,18 +441,12 @@ export function VideoPlayer({
 
     const updateNativeBuffer = () => {
       if (disposed) return;
-      const pct = bufferPercent(video);
-      if (pct !== null) {
-        setProgress(pct);
-        return;
-      }
-      if (video.buffered.length) {
-        try {
-          const secs = Math.round(video.buffered.end(video.buffered.length - 1));
-          setProgress(Math.min(95, 10 + secs * 4));
-        } catch {
-          /* ignore */
-        }
+      const ahead = mediaBufferedAhead(video);
+      if (ahead > 0) {
+        setProgress(
+          Math.min(99, Math.max(1, Math.round((ahead / CONNECT_READY_SEC) * 100))),
+        );
+        setStatusText(t("playerConnecting"));
       }
     };
 
@@ -474,6 +507,7 @@ export function VideoPlayer({
       if (!disposed) {
         setProgress(100);
         setStatusText(t("playerPlaying"));
+        setHasStarted(true);
         pushDebug(`playing · ${candidate.label}`);
       }
     };
@@ -488,21 +522,35 @@ export function VideoPlayer({
     // Decide remux from THIS candidate's own URL (not the title's extension),
     // otherwise HLS/MP4 fallbacks get wrongly routed through the remuxer.
     // Server HLS (/api/hls) must use hls.js — never Mediabunny.
-    const isHls = looksLikeHlsUrl(src);
+    const isHls = looksLikeHlsUrl(playSrc);
     const wantsRemux =
-      !isHls && (candidate.remux || needsContainerRemux(undefined, src));
+      !isHls && (candidate.remux || needsContainerRemux(undefined, playSrc));
+
+    const reportConnectProgress = () => {
+      if (disposed) return;
+      const ahead = mediaBufferedAhead(video);
+      const pct = Math.min(
+        99,
+        Math.max(1, Math.round((ahead / CONNECT_READY_SEC) * 100)),
+      );
+      setProgress(pct);
+      setStatusText(t("playerConnecting"));
+    };
 
     // MKV/AVI: remux via Mediabunny → fMP4 (browsers can't play Matroska; Smarters can)
     if (wantsRemux && candidate.transport === "proxy") {
       queueMicrotask(() => {
         if (disposed) return;
-        setStatusText(t("playerRemuxing"));
+        setStatusText(t("playerConnecting"));
         setProgress(5);
       });
       pushDebug(`engine=mediabunny-remux · ${candidate.label}`);
-      void startRemuxedPlayback(video, src, {
+      void startRemuxedPlayback(video, playSrc, {
         onProgress: (p) => {
-          if (!disposed) setProgress(Math.max(5, Math.round(p * 95)));
+          if (!disposed) {
+            setProgress(Math.min(99, Math.max(5, Math.round(p * 95))));
+            setStatusText(t("playerConnecting"));
+          }
         },
         onLog: (message) => {
           if (!disposed) pushDebug(message);
@@ -521,7 +569,10 @@ export function VideoPlayer({
           if (!disposed && seconds > 0) setDuration(seconds);
         },
         onBuffer: (ranges) => {
-          if (!disposed) setBufferRanges(ranges);
+          if (!disposed) {
+            setBufferRanges(ranges);
+            reportConnectProgress();
+          }
         },
       })
         .then((handle) => {
@@ -533,6 +584,7 @@ export function VideoPlayer({
           setQualityOptions([{ id: -1, label: t("playerQualityAuto") }]);
           setQualityId(-1);
           setQualityIsHls(false);
+          setHasStarted(true);
           setStatusText(t("playerPlaying"));
           setProgress(100);
         })
@@ -581,12 +633,10 @@ export function VideoPlayer({
 
     if (useHlsJs) {
       pushDebug(`engine=hls.js · ${candidate.label}`);
-      // Server HLS event playlists under-report duration until finished —
-      // pull #XTREAM-DURATION from the proxy playlist when present.
-      if (src.includes("/api/hls")) {
+      if (playSrc.includes("/api/hls")) {
         void (async () => {
           try {
-            const res = await fetch(src, { cache: "no-store" });
+            const res = await fetch(playSrc, { cache: "no-store" });
             const text = await res.text();
             const match = text.match(/#XTREAM-DURATION:(\d+(?:\.\d+)?)/);
             const headerDur = Number(res.headers.get("x-media-duration") || 0);
@@ -603,23 +653,51 @@ export function VideoPlayer({
       }
       const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: true,
-        maxBufferLength: 20,
-        maxMaxBufferLength: 40,
+        lowLatencyMode: false,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 60,
         backBufferLength: 30,
         xhrSetup: (xhr) => {
           xhr.withCredentials = false;
         },
       });
       hlsRef.current = hls;
-      hls.loadSource(src);
+      hls.loadSource(playSrc);
       hls.attachMedia(video);
+
+      const waitAndPlay = async () => {
+        const startedAt = Date.now();
+        while (!disposed && Date.now() - startedAt < 90000) {
+          reportConnectProgress();
+          if (mediaBufferedAhead(video) >= CONNECT_READY_SEC) break;
+          await new Promise((r) => window.setTimeout(r, 200));
+        }
+        if (disposed) return;
+        reportConnectProgress();
+        try {
+          video.muted = false;
+          await video.play();
+          setMuted(false);
+        } catch (err) {
+          pushDebug(
+            `play() rejected · ${err instanceof Error ? err.message : String(err)}`,
+          );
+          if (err instanceof Error && err.name === "NotAllowedError") {
+            try {
+              video.muted = true;
+              await video.play();
+              setMuted(true);
+              setNeedsUnmute(true);
+            } catch {
+              setAwaitingTap(true);
+            }
+          }
+        }
+      };
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_ev, data) => {
         if (disposed) return;
         fragTotal = Math.max(1, data.levels?.[0]?.details?.fragments?.length || 8);
-        setStatusText(t("playerLoadingStream"));
-        setProgress(8);
         const levels = (data.levels || []).map((level, index) => ({
           id: index,
           label: level.height
@@ -637,36 +715,20 @@ export function VideoPlayer({
           setQualityIsHls(false);
         }
         pushDebug(`manifest ok · levels=${data.levels?.length || 0}`);
-        void video.play().catch(async (err) => {
-          pushDebug(`play() rejected · ${err instanceof Error ? err.message : String(err)}`);
-          if (err instanceof Error && err.name === "NotAllowedError") {
-            try {
-              video.muted = true;
-              await video.play();
-              setMuted(true);
-              setNeedsUnmute(true);
-            } catch {
-              setAwaitingTap(true);
-            }
-          }
-        });
+        void waitAndPlay();
       });
 
       hls.on(Hls.Events.LEVEL_LOADED, (_ev, data) => {
         if (disposed) return;
         const total = data.details?.fragments?.length;
         if (total) fragTotal = total;
+        reportConnectProgress();
       });
 
       hls.on(Hls.Events.FRAG_LOADED, () => {
         if (disposed) return;
         fragLoaded += 1;
-        const pct = Math.min(
-          99,
-          Math.round((fragLoaded / Math.max(fragTotal, fragLoaded + 2)) * 100),
-        );
-        setProgress(pct);
-        setStatusText(t("playerLoadingStream"));
+        reportConnectProgress();
       });
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -685,7 +747,7 @@ export function VideoPlayer({
               hls.destroy();
               hlsRef.current = null;
               void (async () => {
-                const detail = await diagnoseSource(src);
+                const detail = await diagnoseSource(playSrc);
                 failOver(
                   detail ||
                     (typeof data.details === "string" ? data.details : undefined),
@@ -705,10 +767,11 @@ export function VideoPlayer({
       pushDebug(
         `engine=native · hls=${isHls} · canPlay=${video.canPlayType("application/vnd.apple.mpegurl") || "n/a"}`,
       );
-      video.src = src;
+      video.src = playSrc;
       video.addEventListener("loadedmetadata", onLoaded);
       video.addEventListener("error", onNativeError);
       const tryPlay = () => {
+        reportConnectProgress();
         void video.play().catch((err) => {
           pushDebug(
             `play() rejected · ${err instanceof Error ? err.message : String(err)}`,
@@ -718,6 +781,7 @@ export function VideoPlayer({
           }
         });
       };
+      video.addEventListener("progress", reportConnectProgress);
       if (video.readyState >= 2) tryPlay();
       else video.addEventListener("canplay", tryPlay, { once: true });
     } else {
@@ -746,7 +810,7 @@ export function VideoPlayer({
       video.load();
     };
   }, [
-    src,
+    playSrc,
     candidate,
     onProgress,
     sources,
@@ -760,6 +824,7 @@ export function VideoPlayer({
     logDebugToTerminal,
     extension,
     durationHint,
+    serverHlsOffset,
   ]);
 
   useEffect(
@@ -856,17 +921,40 @@ export function VideoPlayer({
 
   const seekTo = async (seconds: number) => {
     const video = videoRef.current;
-    if (!video || !Number.isFinite(seconds)) return;
+    if (!video || !Number.isFinite(seconds) || !hasStarted) return;
     const target = Math.max(0, duration > 0 ? Math.min(seconds, duration) : seconds);
     setSeekingUi(true);
-    setCurrentTime(target);
+    setCurrentTime(Math.max(0, target - serverHlsOffset));
     setStatusText(t("playerSeeking"));
-    pushDebug(`seek · ${target.toFixed(1)}s · remux=${!!remuxRef.current}`);
+    pushDebug(
+      `seek · ${target.toFixed(1)}s · remux=${!!remuxRef.current} · serverHls=${isServerHls}`,
+    );
     bumpChrome();
     try {
       if (remuxRef.current) {
-        // MKV: restart remux from the new point (lightweight — Range requests).
         await remuxRef.current.seek(target);
+      } else if (isServerHls) {
+        const local = target - serverHlsOffset;
+        let bufEnd = 0;
+        try {
+          if (video.buffered.length) {
+            bufEnd = video.buffered.end(video.buffered.length - 1);
+          }
+        } catch {
+          /* ignore */
+        }
+        // Within already-remuxed window → cheap local seek.
+        if (local >= 0 && local <= bufEnd - 0.35) {
+          video.currentTime = local;
+          void video.play().catch(() => undefined);
+        } else {
+          // Restart ffmpeg HLS from the scrubbed wall-clock position.
+          setHasStarted(false);
+          setLoadPercent(0);
+          setStatusText(t("playerConnecting"));
+          setServerHlsOffset(target);
+          setCurrentTime(0);
+        }
       } else {
         video.currentTime = target;
         void video.play().catch(() => undefined);
@@ -877,7 +965,7 @@ export function VideoPlayer({
       );
     } finally {
       setSeekingUi(false);
-      setStatusText(t("playerPlaying"));
+      if (hasStarted) setStatusText(t("playerPlaying"));
     }
   };
 
@@ -885,6 +973,8 @@ export function VideoPlayer({
     setError(null);
     setExternalUrl(null);
     setAwaitingTap(false);
+    setHasStarted(false);
+    setServerHlsOffset(0);
     setLoadPercent(0);
     setSourceIndex(0);
     lastFailDetail.current = null;
@@ -892,9 +982,17 @@ export function VideoPlayer({
     setReloadToken((n) => n + 1);
   };
 
-  const showLoader = (!error && !playing && !awaitingTap) || seekingUi;
-  const timelineValue = scrubbing ? scrubValue : currentTime;
-  const timelineMax = duration > 0 ? duration : Math.max(currentTime, 1);
+  const controlsEnabled = hasStarted && !seekingUi && !error;
+  const showLoader =
+    (!error && !hasStarted && !awaitingTap) || seekingUi;
+  const timelineValue = scrubbing
+    ? scrubValue
+    : serverHlsOffset + currentTime;
+  const timelineMax = duration > 0 ? duration : Math.max(timelineValue, 1);
+  const displayBufferRanges = bufferRanges.map((r) => ({
+    start: r.start + serverHlsOffset,
+    end: r.end + serverHlsOffset,
+  }));
 
   return (
     <div
@@ -910,7 +1008,9 @@ export function VideoPlayer({
         playsInline
         preload="auto"
         controls={false}
-        onClick={togglePlay}
+        onClick={() => {
+          if (controlsEnabled) togglePlay();
+        }}
       />
 
       {showLoader ? (
@@ -1055,7 +1155,7 @@ export function VideoPlayer({
 
       <div
         className={`xp-player-chrome absolute inset-0 z-20 bg-gradient-to-t from-black/80 via-transparent to-transparent transition-opacity duration-300 ${
-          showChrome && !error
+          showChrome && !error && hasStarted
             ? "opacity-100"
             : "pointer-events-none opacity-0"
         }`}
@@ -1069,7 +1169,7 @@ export function VideoPlayer({
               <div className="relative h-5 flex-1">
                 <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-white/20">
                   {timelineMax > 0
-                    ? bufferRanges.map((range, i) => (
+                    ? displayBufferRanges.map((range, i) => (
                         <div
                           key={`${range.start}-${range.end}-${i}`}
                           className="absolute top-0 h-full bg-white/45"
@@ -1094,20 +1194,22 @@ export function VideoPlayer({
                   step={0.1}
                   value={Math.min(timelineValue, timelineMax)}
                   aria-label="Seek"
-                  disabled={timelineMax <= 1 && duration <= 0}
+                  disabled={!controlsEnabled || timelineMax <= 1}
                   onPointerDown={(e) => {
                     e.stopPropagation();
+                    if (!controlsEnabled) return;
                     scrubbingRef.current = true;
                     setScrubbing(true);
-                    setScrubValue(videoRef.current?.currentTime || 0);
+                    setScrubValue(timelineValue);
                   }}
                   onChange={(e) => {
+                    if (!controlsEnabled) return;
                     const next = Number(e.target.value);
                     setScrubValue(next);
-                    setCurrentTime(next);
                   }}
                   onPointerUp={(e) => {
                     e.stopPropagation();
+                    if (!controlsEnabled) return;
                     const next = Number((e.target as HTMLInputElement).value);
                     scrubbingRef.current = false;
                     setScrubbing(false);
@@ -1115,12 +1217,13 @@ export function VideoPlayer({
                   }}
                   onTouchEnd={(e) => {
                     e.stopPropagation();
+                    if (!controlsEnabled) return;
                     const next = Number((e.target as HTMLInputElement).value);
                     scrubbingRef.current = false;
                     setScrubbing(false);
                     void seekTo(next);
                   }}
-                  className="absolute inset-0 z-10 m-0 h-full w-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:opacity-0"
+                  className="absolute inset-0 z-10 m-0 h-full w-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-not-allowed disabled:opacity-0"
                 />
               </div>
               <span className="w-12 shrink-0 font-mono text-[11px] text-white/70">
@@ -1131,7 +1234,8 @@ export function VideoPlayer({
               <button
                 type="button"
                 onClick={togglePlay}
-                className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--xp-accent)] text-[var(--xp-ink)]"
+                disabled={!controlsEnabled}
+                className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--xp-accent)] text-[var(--xp-ink)] disabled:opacity-40"
                 aria-label={playing ? "Pause" : "Play"}
               >
                 {playing ? (
@@ -1145,12 +1249,14 @@ export function VideoPlayer({
                   <>
                     <button
                       type="button"
+                      disabled={!controlsEnabled}
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (!controlsEnabled) return;
                         setShowQuality((v) => !v);
                         bumpChrome();
                       }}
-                      className="flex h-11 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-medium text-white"
+                      className="flex h-11 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-medium text-white disabled:opacity-40"
                       aria-label={t("playerQuality")}
                     >
                       <Settings2 className="h-4 w-4" />
@@ -1187,8 +1293,9 @@ export function VideoPlayer({
                 ) : null}
                 <button
                   type="button"
+                  disabled={!controlsEnabled}
                   onClick={toggleMute}
-                  className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white"
+                  className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white disabled:opacity-40"
                   aria-label={muted ? "Unmute" : "Mute"}
                 >
                   {muted ? (
@@ -1199,11 +1306,13 @@ export function VideoPlayer({
                 </button>
                 <button
                   type="button"
+                  disabled={!controlsEnabled}
                   onClick={(e) => {
                     e.stopPropagation();
+                    if (!controlsEnabled) return;
                     void goFullscreen();
                   }}
-                  className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white"
+                  className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white disabled:opacity-40"
                   aria-label="Fullscreen"
                 >
                   <Maximize className="h-5 w-5" />

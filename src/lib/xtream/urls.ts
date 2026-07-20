@@ -67,14 +67,26 @@ export function buildProxiedStreamUrl(directUrl: string): string {
   return base ? `${base}${path}` : path;
 }
 
+/**
+ * Server-side MKV→HLS on the standalone proxy (`npm run proxy` / Oracle).
+ * Only available when NEXT_PUBLIC_STREAM_PROXY_BASE points at that service.
+ */
+export function buildServerHlsUrl(directUrl: string): string | null {
+  const base = getStreamProxyBase();
+  if (!base) return null;
+  return `${base}/api/hls?url=${encodeURIComponent(directUrl)}`;
+}
+
 /** True for same-origin or absolute `/api/stream?...` URLs. */
 export function isProxiedStreamUrl(url: string): boolean {
-  if (url.startsWith("/api/stream")) return true;
+  if (url.startsWith("/api/stream") || url.startsWith("/api/hls")) return true;
   try {
     const parsed = new URL(url);
     return (
       parsed.pathname === "/api/stream" ||
-      parsed.pathname.endsWith("/api/stream")
+      parsed.pathname.endsWith("/api/stream") ||
+      parsed.pathname === "/api/hls" ||
+      parsed.pathname.includes("/api/hls/")
     );
   } catch {
     return false;
@@ -111,10 +123,12 @@ export function redactStreamUrl(url: string): string {
     const parsed = new URL(url, "http://local");
     const nested = parsed.searchParams.get("url");
     if (nested) {
+      const isHls =
+        parsed.pathname === "/api/hls" || parsed.pathname.endsWith("/api/hls");
       const prefix =
         url.startsWith("http://") || url.startsWith("https://")
-          ? `${parsed.origin}/api/stream?url=`
-          : `/api/stream?url=`;
+          ? `${parsed.origin}${isHls ? "/api/hls" : "/api/stream"}?url=`
+          : `${isHls ? "/api/hls" : "/api/stream"}?url=`;
       return `${prefix}${redactDirectUrl(nested)}`;
     }
     return redactDirectUrl(url);
@@ -210,6 +224,18 @@ export function buildStreamCandidates(
   const proxyPreferred = buildProxiedStreamUrl(directPreferred);
   const remux = needsRemuxExt(preferred);
 
+  // 0) Server HLS (Oracle / local `npm run proxy` + ffmpeg) — Netflix-like path
+  if (remux) {
+    const serverHls = buildServerHlsUrl(directPreferred);
+    if (serverHls) {
+      push({
+        url: serverHls,
+        transport: "proxy",
+        label: `${preferred.toUpperCase()} (server HLS)`,
+      });
+    }
+  }
+
   // 1) Native progressive on HTTPS → direct like Smarters (avoids proxy 502)
   if (isNativeProgressiveExt(preferred) && isHttpsUrl(directPreferred)) {
     push({
@@ -269,6 +295,9 @@ export function buildStreamCandidates(
 }
 
 export function looksLikeHlsUrl(url: string): boolean {
+  // Server-side MKV→HLS playlist (must win before nested .mkv is inspected).
+  if (url.includes("/api/hls")) return true;
+
   const decoded = (() => {
     try {
       const param = new URL(url, "http://local").searchParams.get("url");

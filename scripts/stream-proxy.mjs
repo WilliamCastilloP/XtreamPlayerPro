@@ -1,25 +1,40 @@
 #!/usr/bin/env node
 /**
- * Standalone stream proxy for XTREAM.
+ * Standalone media proxy for XTREAM.
  *
- * Run this on a VPS / home PC (not Vercel) so heavy video traffic does not
- * count against Vercel's 10 GB/month Fast Origin Transfer limit.
+ * - GET /api/stream?url=...  → byte-proxy (Range, HLS rewrite)
+ * - GET /api/hls?url=...     → MKV/AVI/MOV → HLS via ffmpeg (Netflix-like)
+ * - GET /api/hls/session/:id/:file → HLS segments / playlist
+ * - GET /health
  *
  * Usage:
  *   node scripts/stream-proxy.mjs
  *   STREAM_PROXY_PORT=8080 node scripts/stream-proxy.mjs
  *
- * Then set in Vercel (and redeploy the app):
- *   NEXT_PUBLIC_STREAM_PROXY_BASE=https://your-proxy.example.com
+ * Requires ffmpeg on PATH for /api/hls.
  *
- * Put HTTPS in front with Caddy, nginx, or Cloudflare Tunnel.
+ * Then set (local .env.local or Vercel) and restart/redeploy:
+ *   NEXT_PUBLIC_STREAM_PROXY_BASE=http://127.0.0.1:8080
+ *   # or https://your-oracle-proxy.example.com
  */
 
 import http from "node:http";
+import { spawn, execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import fsp from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { URL } from "node:url";
 
 const PORT = Number(process.env.STREAM_PROXY_PORT || process.env.PORT || 8080);
 const UPSTREAM_UA = "VLC/3.0.20 LibVLC/3.0.20";
+const HLS_ROOT = path.join(
+  process.env.STREAM_HLS_DIR || os.tmpdir(),
+  "xtream-hls",
+);
+const SESSION_TTL_MS = Number(process.env.STREAM_HLS_TTL_MS || 45 * 60 * 1000);
+const READY_TIMEOUT_MS = Number(process.env.STREAM_HLS_READY_MS || 90000);
 
 const HOP_BY_HOP = new Set([
   "connection",
@@ -34,7 +49,38 @@ const HOP_BY_HOP = new Set([
   "content-length",
 ]);
 
-function rewritePlaylist(body, playlistUrl) {
+/** @type {Map<string, HlsSession>} */
+const sessions = new Map();
+
+/**
+ * @typedef {{
+ *   id: string,
+ *   sourceUrl: string,
+ *   dir: string,
+ *   proc: import('node:child_process').ChildProcess | null,
+ *   startedAt: number,
+ *   lastAccess: number,
+ *   ready: boolean,
+ *   error: string | null,
+ * }} HlsSession
+ */
+
+function hasFfmpeg() {
+  try {
+    execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const FFMPEG_OK = hasFfmpeg();
+
+function sessionIdFor(url) {
+  return createHash("sha1").update(url).digest("hex").slice(0, 16);
+}
+
+function rewriteUpstreamPlaylist(body, playlistUrl) {
   const base = new URL(playlistUrl);
   return body
     .split(/\r?\n/)
@@ -63,8 +109,24 @@ function rewritePlaylist(body, playlistUrl) {
     .join("\n");
 }
 
+function rewriteLocalHlsPlaylist(body, sessionId) {
+  return body
+    .split(/\r?\n/)
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) return line;
+      const file = path.basename(trimmed.split("?")[0] || trimmed);
+      return `/api/hls/session/${sessionId}/${file}`;
+    })
+    .join("\n");
+}
+
 function isLargeProgressivePath(pathname) {
   return /\.(mp4|mkv|avi|mov|m4v)$/i.test(pathname);
+}
+
+function needsServerHls(pathname) {
+  return /\.(mkv|avi|mov|m4v)$/i.test(pathname);
 }
 
 function shouldBufferAsPlaylist(contentType, pathname) {
@@ -153,7 +215,7 @@ async function handleStream(req, res, target) {
   if (req.method !== "HEAD" && shouldBufferAsPlaylist(contentType, finalPath)) {
     const text = await upstream.text();
     if (text.includes("#EXTM3U")) {
-      const rewritten = rewritePlaylist(text, finalUrl);
+      const rewritten = rewriteUpstreamPlaylist(text, finalUrl);
       const headers = corsHeaders({
         "Content-Type": "application/vnd.apple.mpegurl",
       });
@@ -214,6 +276,310 @@ async function handleStream(req, res, target) {
   }
 }
 
+async function ensureHlsDir() {
+  await fsp.mkdir(HLS_ROOT, { recursive: true });
+}
+
+/**
+ * @param {string} sourceUrl
+ * @returns {Promise<HlsSession>}
+ */
+async function getOrStartSession(sourceUrl) {
+  const id = sessionIdFor(sourceUrl);
+  const existing = sessions.get(id);
+  if (existing && !existing.error) {
+    existing.lastAccess = Date.now();
+    return existing;
+  }
+  if (existing) {
+    await destroySession(existing);
+  }
+
+  await ensureHlsDir();
+  const dir = path.join(HLS_ROOT, id);
+  await fsp.rm(dir, { recursive: true, force: true });
+  await fsp.mkdir(dir, { recursive: true });
+
+  /** @type {HlsSession} */
+  const session = {
+    id,
+    sourceUrl,
+    dir,
+    proc: null,
+    startedAt: Date.now(),
+    lastAccess: Date.now(),
+    ready: false,
+    error: null,
+  };
+  sessions.set(id, session);
+
+  const playlist = path.join(dir, "index.m3u8");
+  const segmentPattern = path.join(dir, "seg_%05d.ts");
+
+  // Feed ffmpeg through our own byte-proxy so Range/UA match working remux path.
+  const localProxy = `http://127.0.0.1:${PORT}/api/stream?url=${encodeURIComponent(sourceUrl)}`;
+
+  const args = [
+    "-hide_banner",
+    "-loglevel",
+    "warning",
+    "-nostdin",
+    "-reconnect",
+    "1",
+    "-reconnect_streamed",
+    "1",
+    "-reconnect_delay_max",
+    "5",
+    "-user_agent",
+    UPSTREAM_UA,
+    "-i",
+    localProxy,
+    "-map",
+    "0:v:0",
+    "-map",
+    "0:a:0?",
+    "-c:v",
+    "copy",
+    "-c:a",
+    "aac",
+    "-ac",
+    "2",
+    "-b:a",
+    "128k",
+    "-f",
+    "hls",
+    "-hls_time",
+    "3",
+    "-hls_playlist_type",
+    "event",
+    "-hls_flags",
+    "independent_segments+append_list",
+    "-hls_segment_filename",
+    segmentPattern,
+    playlist,
+  ];
+
+  console.log(`[hls] start ${id} ← ${sourceUrl.slice(0, 80)}…`);
+  const proc = spawn("ffmpeg", args, {
+    stdio: ["ignore", "ignore", "pipe"],
+    env: {
+      ...process.env,
+      // Panels often have odd TLS; match local Next TLS opt-out if set.
+    },
+  });
+  session.proc = proc;
+
+  let stderrBuf = "";
+  proc.stderr?.on("data", (chunk) => {
+    const text = String(chunk);
+    stderrBuf = (stderrBuf + text).slice(-4000);
+    if (/error|invalid|failed/i.test(text)) {
+      console.warn(`[hls] ffmpeg ${id}:`, text.trim().slice(0, 240));
+    }
+  });
+
+  proc.on("exit", (code, signal) => {
+    if (session.error) return;
+    if (code && code !== 0) {
+      session.error =
+        stderrBuf.trim().slice(0, 400) ||
+        `ffmpeg exited code ${code}${signal ? ` signal ${signal}` : ""}`;
+      console.error(`[hls] failed ${id}:`, session.error);
+    } else {
+      console.log(`[hls] ffmpeg done ${id}`);
+    }
+  });
+
+  return session;
+}
+
+/**
+ * @param {HlsSession} session
+ */
+async function waitUntilReady(session) {
+  const playlist = path.join(session.dir, "index.m3u8");
+  const started = Date.now();
+  while (Date.now() - started < READY_TIMEOUT_MS) {
+    session.lastAccess = Date.now();
+    if (session.error) throw new Error(session.error);
+    try {
+      const text = await fsp.readFile(playlist, "utf8");
+      const segs = text.split(/\r?\n/).filter((l) => l && !l.startsWith("#"));
+      if (segs.length >= 1) {
+        session.ready = true;
+        return text;
+      }
+    } catch {
+      /* not ready */
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error(
+    "Timed out waiting for HLS segments (ffmpeg still starting or source unreachable)",
+  );
+}
+
+/**
+ * @param {HlsSession} session
+ */
+async function destroySession(session) {
+  sessions.delete(session.id);
+  try {
+    session.proc?.kill("SIGKILL");
+  } catch {
+    /* ignore */
+  }
+  try {
+    await fsp.rm(session.dir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+}
+
+async function cleanupSessions() {
+  const now = Date.now();
+  for (const session of [...sessions.values()]) {
+    if (now - session.lastAccess > SESSION_TTL_MS) {
+      console.log(`[hls] expire ${session.id}`);
+      await destroySession(session);
+    }
+  }
+}
+
+setInterval(() => {
+  void cleanupSessions();
+}, 60_000).unref();
+
+async function handleHlsPlaylist(req, res, sourceUrl) {
+  if (!FFMPEG_OK) {
+    sendJson(res, 503, {
+      error: "ffmpeg not installed on this proxy",
+      hint: "sudo apt install -y ffmpeg",
+    });
+    return;
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(sourceUrl);
+  } catch {
+    sendJson(res, 400, { error: "Invalid url" });
+    return;
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    sendJson(res, 400, { error: "Unsupported protocol" });
+    return;
+  }
+
+  // Only remux containers through ffmpeg; otherwise redirect to byte-proxy.
+  if (!needsServerHls(parsed.pathname) && !needsServerHls(sourceUrl)) {
+    const loc = `/api/stream?url=${encodeURIComponent(sourceUrl)}`;
+    res.writeHead(302, corsHeaders({ Location: loc }));
+    res.end();
+    return;
+  }
+
+  try {
+    const session = await getOrStartSession(sourceUrl);
+    const text = await waitUntilReady(session);
+    const rewritten = rewriteLocalHlsPlaylist(text, session.id);
+    res.writeHead(
+      200,
+      corsHeaders({
+        "Content-Type": "application/vnd.apple.mpegurl",
+        "Cache-Control": "no-cache",
+      }),
+    );
+    res.end(rewritten);
+  } catch (error) {
+    sendJson(res, 502, {
+      error: error instanceof Error ? error.message : "HLS remux failed",
+    });
+  }
+}
+
+async function handleHlsFile(req, res, sessionId, fileName) {
+  if (!/^[a-f0-9]{8,32}$/i.test(sessionId)) {
+    sendJson(res, 400, { error: "Bad session" });
+    return;
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(fileName) || fileName.includes("..")) {
+    sendJson(res, 400, { error: "Bad file" });
+    return;
+  }
+
+  const session = sessions.get(sessionId);
+  if (!session) {
+    sendJson(res, 404, { error: "Unknown or expired HLS session" });
+    return;
+  }
+  session.lastAccess = Date.now();
+
+  const filePath = path.join(session.dir, fileName);
+  if (!filePath.startsWith(session.dir)) {
+    sendJson(res, 400, { error: "Bad path" });
+    return;
+  }
+
+  // Playlist refresh while ffmpeg is still writing.
+  if (fileName.endsWith(".m3u8")) {
+    try {
+      const text = await fsp.readFile(filePath, "utf8");
+      const rewritten = rewriteLocalHlsPlaylist(text, sessionId);
+      res.writeHead(
+        200,
+        corsHeaders({
+          "Content-Type": "application/vnd.apple.mpegurl",
+          "Cache-Control": "no-cache",
+        }),
+      );
+      res.end(rewritten);
+      return;
+    } catch {
+      sendJson(res, 404, { error: "Playlist not ready" });
+      return;
+    }
+  }
+
+  // Wait briefly for the segment file to appear (ffmpeg slightly behind).
+  const waitUntil = Date.now() + 15000;
+  while (Date.now() < waitUntil) {
+    try {
+      await fsp.access(filePath, fs.constants.R_OK);
+      break;
+    } catch {
+      if (session.error) {
+        sendJson(res, 502, { error: session.error });
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
+  try {
+    const stat = await fsp.stat(filePath);
+    const type = fileName.endsWith(".ts")
+      ? "video/mp2t"
+      : "application/octet-stream";
+    res.writeHead(
+      200,
+      corsHeaders({
+        "Content-Type": type,
+        "Content-Length": String(stat.size),
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "public, max-age=60",
+      }),
+    );
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    fs.createReadStream(filePath).pipe(res);
+  } catch {
+    sendJson(res, 404, { error: "Segment not found" });
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const host = req.headers.host || `localhost:${PORT}`;
   const url = new URL(req.url || "/", `http://${host}`);
@@ -233,13 +599,11 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, 200, {
       ok: true,
       service: "xtream-stream-proxy",
-      path: "/api/stream?url=...",
+      ffmpeg: FFMPEG_OK,
+      stream: "/api/stream?url=...",
+      hls: "/api/hls?url=... (MKV/AVI/MOV → HLS)",
+      sessions: sessions.size,
     });
-    return;
-  }
-
-  if (url.pathname !== "/api/stream") {
-    sendJson(res, 404, { error: "Not found. Use /api/stream?url=..." });
     return;
   }
 
@@ -248,20 +612,47 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const target = url.searchParams.get("url");
-  if (!target) {
-    sendJson(res, 400, { error: "Missing url" });
+  const sessionMatch = url.pathname.match(
+    /^\/api\/hls\/session\/([a-f0-9]+)\/([^/]+)$/i,
+  );
+  if (sessionMatch) {
+    await handleHlsFile(req, res, sessionMatch[1], sessionMatch[2]);
     return;
   }
 
-  await handleStream(req, res, target);
+  if (url.pathname === "/api/hls") {
+    const target = url.searchParams.get("url");
+    if (!target) {
+      sendJson(res, 400, { error: "Missing url" });
+      return;
+    }
+    await handleHlsPlaylist(req, res, target);
+    return;
+  }
+
+  if (url.pathname === "/api/stream") {
+    const target = url.searchParams.get("url");
+    if (!target) {
+      sendJson(res, 400, { error: "Missing url" });
+      return;
+    }
+    await handleStream(req, res, target);
+    return;
+  }
+
+  sendJson(res, 404, {
+    error: "Not found",
+    hint: "Use /api/stream?url=... or /api/hls?url=...",
+  });
 });
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[xtream-stream-proxy] listening on http://0.0.0.0:${PORT}`);
-  console.log(`[xtream-stream-proxy] health:  GET /health`);
-  console.log(`[xtream-stream-proxy] stream:  GET /api/stream?url=<upstream>`);
+  console.log(`[xtream-stream-proxy] ffmpeg: ${FFMPEG_OK ? "ok" : "MISSING"}`);
+  console.log(`[xtream-stream-proxy] health: GET /health`);
+  console.log(`[xtream-stream-proxy] stream: GET /api/stream?url=<upstream>`);
+  console.log(`[xtream-stream-proxy] hls:    GET /api/hls?url=<mkv>`);
   console.log(
-    `[xtream-stream-proxy] set NEXT_PUBLIC_STREAM_PROXY_BASE to this host (https) in Vercel`,
+    `[xtream-stream-proxy] set NEXT_PUBLIC_STREAM_PROXY_BASE to this origin`,
   );
 });

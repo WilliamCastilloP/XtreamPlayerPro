@@ -1,126 +1,163 @@
-# Plan: mover el proxy de streaming fuera de Vercel
+# Plan: proxy de video + MKV→HLS (velocidad tipo Netflix)
 
-> Estado: **código listo** · setup del servidor **en stand‑by** hasta que
-> haya acceso a una computadora.
->
-> Este documento existe para no perder el plan. Cuando estés listo, sígelo
-> paso a paso.
+> El código del proxy ya convierte **MKV/AVI/MOV → HLS con ffmpeg**.
+> Sin ese proxy, la app sigue remuxeando en el navegador (más lento).
 
-## El problema
+## Idea
 
-La app está en Vercel. El plan gratuito (Hobby) incluye solo **10 GB/mes de
-"Fast Origin Transfer"** y se **reinicia cada mes**. Cuando se agota, Vercel
-**pausa el proyecto** hasta el mes siguiente.
+| Pieza | Dónde | Rol |
+|-------|--------|-----|
+| App (UI + catálogo) | Vercel o `npm run dev` | Ligera |
+| Proxy de media | **Oracle / tu PC** (`npm run proxy`) | Bytes + **HLS** |
+| Variable | `NEXT_PUBLIC_STREAM_PROXY_BASE` | Apunta la app al proxy |
 
-Todo el video se transmite a través de `/api/stream`, que por defecto corre
-en Vercel. Eso incluye:
+## Local (fluido)
 
-- **TV en vivo** (segmentos HLS): ~1.5–2 GB por hora.
-- **Remux de MKV** (películas/series): el archivo **completo** (p. ej. 2.4 GB
-  por película).
+Necesitas **dos procesos** y **ffmpeg** instalado.
 
-Por eso 10 GB/mes se agotan enseguida (equivale a ~4 películas o unas pocas
-horas de TV en vivo).
+### 1. Instalar ffmpeg (Windows)
 
-> Nota: las películas/series en **MP4** que se reproducen **directo** del panel
-> (navegador → panel, sin proxy) **no** consumen Vercel. Solo consume lo que
-> pasa por `/api/stream`.
+Con winget:
 
-## La solución
-
-Separar los dos tipos de tráfico:
-
-- La **app** (interfaz, ligera) se queda en **Vercel** (gratis, sin problema).
-- El **proxy de video** (pesado) se muda a un host con mucho ancho de banda.
-
-## Qué ya está implementado en el código
-
-1. **Variable de entorno** `NEXT_PUBLIC_STREAM_PROXY_BASE`
-   - Si **no** se define → todo sigue igual (proxy en Vercel). Nada se rompe.
-   - Si se define (ej. `https://mi-proxy.midominio.com`) → la app pide el
-     **video** a ese servidor; solo la **interfaz** sigue en Vercel.
-   - Se usa en `buildProxiedStreamUrl()` (`src/lib/xtream/urls.ts`).
-
-2. **Proxy standalone** listo para correr en un VPS / PC:
-   ```bash
-   npm run proxy
-   # o: STREAM_PROXY_PORT=8080 node scripts/stream-proxy.mjs
-   ```
-   Expone `GET /api/stream?url=...` (misma lógica que la ruta de Next) y
-   `GET /health`.
-
-3. **`.env.example`** documenta la variable.
-
-## Opción recomendada (gratis): Oracle Cloud "Always Free"
-
-- **Costo:** 0 USD permanente (no es prueba de 30 días).
-- **Tráfico:** ~10 TB/mes de salida gratis (prácticamente ilimitado para uso
-  personal).
-- **Ventaja:** vive en la nube, no necesitas una PC encendida en casa.
-- **Caveats:** piden una **tarjeta** para verificar (no cobran en Always Free);
-  el registro/configuración es algo quisquilloso.
-
-### Pasos
-
-1. Crear cuenta en Oracle Cloud (https://www.oracle.com/cloud/free/).
-2. Crear una instancia **Always Free** (Ampere ARM, Ubuntu). Guardar la llave
-   SSH.
-3. Abrir el puerto del proxy en la Security List / firewall (ej. 443 o 8080).
-4. Instalar Node.js en la instancia (Node 20+).
-5. Clonar este repo (o copiar solo `scripts/stream-proxy.mjs`) y correr:
-   ```bash
-   npm run proxy
-   # déjalo always-on con pm2:
-   npx pm2 start scripts/stream-proxy.mjs --name xtream-proxy
-   npx pm2 save
-   npx pm2 startup
-   ```
-6. Poner HTTPS delante (Cloudflare gratis, Caddy con Let's Encrypt, o
-   Cloudflare Tunnel).
-7. En Vercel → Project Settings → Environment Variables, añadir:
-   ```
-   NEXT_PUBLIC_STREAM_PROXY_BASE=https://<tu-proxy>
-   ```
-   y **Redeploy** (la variable es `NEXT_PUBLIC_*`, se incrusta en el build).
-8. Probar: abrir la app, reproducir TV en vivo, y confirmar en el debug del
-   player que las URLs de proxy empiezan con tu host (no con el de Vercel).
-   En el panel de Vercel, "Fast Origin Transfer" debería dejar de crecer con
-   el video.
-
-## Alternativas
-
-### Hetzner (de pago, "simplemente funciona")
-
-- ~4 €/mes, ~20 TB de tráfico, muy confiable y fácil de configurar.
-- Mismos pasos 3–8 de arriba.
-
-### Cloudflare Tunnel + PC en casa (gratis, sin nube)
-
-- Requiere una computadora **siempre encendida** en casa.
-- Corres `npm run proxy` localmente y expones un túnel HTTPS gratis con
-  `cloudflared`.
-- El ancho de banda lo pone tu internet de casa. Costo 0.
-- Luego pones la URL del túnel en `NEXT_PUBLIC_STREAM_PROXY_BASE`.
-
-## Mientras tanto (probar sin Vercel)
-
-En una computadora:
-
-```bash
-npm run dev
-npx cloudflared tunnel --url http://localhost:3000
+```powershell
+winget install Gyan.FFmpeg
 ```
 
-Abre la URL `https://…` en Safari del iPhone. El tráfico pasa por tu
-computadora, no por Vercel.
+Cierra y abre la terminal, comprueba:
 
-## Checklist para retomar
+```powershell
+ffmpeg -version
+```
 
-- [x] Implementar `NEXT_PUBLIC_STREAM_PROXY_BASE` en el código.
-- [x] Proxy standalone (`npm run proxy` / `scripts/stream-proxy.mjs`).
-- [ ] Conseguir acceso a una computadora.
-- [ ] Elegir host (Oracle gratis / Hetzner / Cloudflare Tunnel).
-- [ ] Desplegar el proxy en el host elegido (con HTTPS + always‑on).
-- [ ] Configurar la variable en Vercel y redeploy.
-- [ ] Verificar que TV en vivo y remux ya no consumen "Fast Origin Transfer"
-      en Vercel.
+### 2. Arrancar el proxy (terminal A)
+
+```powershell
+cd ruta\a\XtreamPlayerPro
+npm run proxy
+```
+
+Debería decir `ffmpeg: ok` y escuchar en `http://0.0.0.0:8080`.
+
+Prueba: http://127.0.0.1:8080/health
+
+### 3. Apuntar la app al proxy
+
+En `.env.local`:
+
+```env
+NEXT_PUBLIC_STREAM_PROXY_BASE=http://127.0.0.1:8080
+XTREAM_DEV_NAME=...
+XTREAM_DEV_SERVER=...
+XTREAM_DEV_USERNAME=...
+XTREAM_DEV_PASSWORD=...
+```
+
+### 4. Arrancar Next (terminal B)
+
+```powershell
+# Si el panel falla por TLS:
+$env:NODE_TLS_REJECT_UNAUTHORIZED=0
+npm run dev
+```
+
+Abre la app, reproduce una movie MKV. En debug deberías ver algo como:
+
+`MKV (server HLS)` + `engine=hls.js`
+
+Si no aparece `server HLS`, la variable no se cargó → reinicia `npm run dev`.
+
+> VPN: sí la necesitas si **tu PC** no alcanza el panel. El proxy local también sale por tu IP.
+
+---
+
+## Oracle Always Free (producción + mismo truco en local)
+
+### 1. Crear la VM
+
+1. https://www.oracle.com/cloud/free/
+2. Create instance → **Ampere ARM**, Ubuntu, Always Free
+3. Guarda la llave SSH (`.pem`)
+4. Networking → Security List → Ingress:
+   - TCP **22** (SSH)
+   - TCP **8080** (proxy) o **443** si usas Caddy
+
+### 2. Instalar Node + ffmpeg + proxy
+
+SSH a la VM:
+
+```bash
+ssh -i tu-llave.pem ubuntu@IP_PUBLICA_ORACLE
+
+sudo apt update
+sudo apt install -y ffmpeg git
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+
+git clone https://github.com/WilliamCastilloP/XtreamPlayerPro.git
+cd XtreamPlayerPro
+# solo hace falta el script; npm install no es obligatorio para el proxy
+
+sudo npm install -g pm2
+pm2 start scripts/stream-proxy.mjs --name xtream-proxy
+pm2 save
+pm2 startup
+# sigue las instrucciones que imprime pm2 startup
+```
+
+Comprueba:
+
+```bash
+curl -s http://127.0.0.1:8080/health
+# {"ok":true,"ffmpeg":true,...}
+```
+
+Abre en el firewall de Oracle el puerto **8080** hacia `0.0.0.0/0` (o solo tu IP).
+
+### 3. HTTPS (recomendado)
+
+Opción rápida: **Cloudflare Tunnel** (HTTPS gratis sin abrir 443):
+
+```bash
+# en la VM, tras instalar cloudflared
+cloudflared tunnel --url http://127.0.0.1:8080
+```
+
+O Caddy con un dominio apuntando a la IP.
+
+### 4. Variable en Vercel
+
+```
+NEXT_PUBLIC_STREAM_PROXY_BASE=https://TU-PROXY
+```
+
+**Redeploy** obligatorio (`NEXT_PUBLIC_*` se incrusta en el build).
+
+### 5. Variable en local (opcional, misma fluidez)
+
+```env
+NEXT_PUBLIC_STREAM_PROXY_BASE=https://TU-PROXY
+```
+
+Así el remux HLS lo hace Oracle y tu PC/iPhone solo bajan segmentos.
+
+---
+
+## Qué mejora / qué no
+
+| Setup | Movies MKV |
+|-------|------------|
+| Solo `npm run dev` (sin variable) | Remux en navegador (lento) |
+| `npm run proxy` + variable local | **HLS en tu PC** → mucho más fluido |
+| Oracle + variable (Vercel o local) | **HLS en Oracle** → fluido + no quema Vercel |
+
+---
+
+## Checklist
+
+- [x] `/api/stream` byte-proxy
+- [x] `/api/hls` MKV→HLS (ffmpeg)
+- [x] App prioriza `server HLS` si hay `NEXT_PUBLIC_STREAM_PROXY_BASE`
+- [ ] Instalar ffmpeg (PC y/o Oracle)
+- [ ] Correr `npm run proxy`
+- [ ] Poner la variable y reiniciar/redeploy
+- [ ] Verificar en debug: `MKV (server HLS)`

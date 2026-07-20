@@ -8,6 +8,7 @@ import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import { isFavorite, toggleFavorite } from "@/lib/library/storage";
 import { getVodInfo, watchPath } from "@/lib/xtream/client";
+import { parseMediaDuration } from "@/lib/player/duration";
 import type { VodInfo } from "@/lib/xtream/types";
 
 export default function MovieDetailPage() {
@@ -86,6 +87,11 @@ export default function MovieDetailPage() {
         title,
         ext: extension,
         image: image || "",
+        ...(parseMediaDuration(info?.info?.duration)
+          ? {
+              duration: String(parseMediaDuration(info?.info?.duration)),
+            }
+          : {}),
       })}
       playLabel={t("play")}
       favorited={fav}

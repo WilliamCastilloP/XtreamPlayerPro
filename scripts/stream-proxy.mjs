@@ -125,6 +125,7 @@ const sessions = new Map();
  *   lastAccess: number,
  *   ready: boolean,
  *   error: string | null,
+ *   durationSec: number | null,
  * }} HlsSession
  */
 
@@ -161,16 +162,22 @@ function rewriteUpstreamPlaylist(body, playlistUrl) {
     .join("\n");
 }
 
-function rewriteLocalHlsPlaylist(body, sessionId) {
-  return body
-    .split(/\r?\n/)
-    .map((line) => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) return line;
-      const file = path.basename(trimmed.split("?")[0] || trimmed);
-      return `/api/hls/session/${sessionId}/${file}`;
-    })
-    .join("\n");
+function rewriteLocalHlsPlaylist(body, sessionId, durationSec) {
+  const lines = body.split(/\r?\n/).map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) return line;
+    const file = path.basename(trimmed.split("?")[0] || trimmed);
+    return `/api/hls/session/${sessionId}/${file}`;
+  });
+  if (durationSec && durationSec > 0 && !body.includes("#XTREAM-DURATION:")) {
+    // Inject after #EXTM3U so the player can show the real runtime while the
+    // event playlist is still growing (only a few minutes of segments yet).
+    const idx = lines.findIndex((l) => l.trim() === "#EXTM3U");
+    const tag = `#XTREAM-DURATION:${Math.round(durationSec)}`;
+    if (idx >= 0) lines.splice(idx + 1, 0, tag);
+    else lines.unshift("#EXTM3U", tag);
+  }
+  return lines.join("\n");
 }
 
 function isLargeProgressivePath(pathname) {
@@ -333,6 +340,71 @@ async function ensureHlsDir() {
 }
 
 /**
+ * Read container duration via ffmpeg banner (fast; stops after headers).
+ * @param {string} mediaUrl
+ * @returns {Promise<number|null>}
+ */
+function probeDurationSeconds(mediaUrl) {
+  return new Promise((resolve) => {
+    if (!FFMPEG_BIN) {
+      resolve(null);
+      return;
+    }
+    const proc = spawn(
+      FFMPEG_BIN,
+      [
+        "-hide_banner",
+        "-user_agent",
+        UPSTREAM_UA,
+        "-i",
+        mediaUrl,
+        "-f",
+        "null",
+        "-t",
+        "0",
+        "-",
+      ],
+      { stdio: ["ignore", "ignore", "pipe"] },
+    );
+    let err = "";
+    const timer = setTimeout(() => {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        /* ignore */
+      }
+    }, 20000);
+    proc.stderr?.on("data", (c) => {
+      err += String(c);
+      if (err.length > 8000) err = err.slice(-8000);
+      const m = err.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+      if (m) {
+        clearTimeout(timer);
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          /* ignore */
+        }
+        const sec =
+          Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+        resolve(sec > 1 ? sec : null);
+      }
+    });
+    proc.on("close", () => {
+      clearTimeout(timer);
+      const m = err.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+      if (m) {
+        const sec =
+          Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+        resolve(sec > 1 ? sec : null);
+        return;
+      }
+      resolve(null);
+    });
+  });
+}
+
+/**
  * @param {string} sourceUrl
  * @returns {Promise<HlsSession>}
  */
@@ -352,6 +424,8 @@ async function getOrStartSession(sourceUrl) {
   await fsp.rm(dir, { recursive: true, force: true });
   await fsp.mkdir(dir, { recursive: true });
 
+  const localProxy = `http://127.0.0.1:${PORT}/api/stream?url=${encodeURIComponent(sourceUrl)}`;
+
   /** @type {HlsSession} */
   const session = {
     id,
@@ -362,14 +436,20 @@ async function getOrStartSession(sourceUrl) {
     lastAccess: Date.now(),
     ready: false,
     error: null,
+    durationSec: null,
   };
   sessions.set(id, session);
 
+  // Probe in parallel with remux start (metadata only).
+  void probeDurationSeconds(localProxy).then((sec) => {
+    if (sec && sessions.get(id) === session) {
+      session.durationSec = sec;
+      console.log(`[hls] duration ${id} = ${Math.round(sec)}s`);
+    }
+  });
+
   const playlist = path.join(dir, "index.m3u8");
   const segmentPattern = path.join(dir, "seg_%05d.ts");
-
-  // Feed ffmpeg through our own byte-proxy so Range/UA match working remux path.
-  const localProxy = `http://127.0.0.1:${PORT}/api/stream?url=${encodeURIComponent(sourceUrl)}`;
 
   const args = [
     "-hide_banner",
@@ -533,14 +613,25 @@ async function handleHlsPlaylist(req, res, sourceUrl) {
   try {
     const session = await getOrStartSession(sourceUrl);
     const text = await waitUntilReady(session);
-    const rewritten = rewriteLocalHlsPlaylist(text, session.id);
-    res.writeHead(
-      200,
-      corsHeaders({
-        "Content-Type": "application/vnd.apple.mpegurl",
-        "Cache-Control": "no-cache",
-      }),
+    // Wait briefly for duration probe if still pending.
+    if (!session.durationSec) {
+      await new Promise((r) => setTimeout(r, 800));
+    }
+    const rewritten = rewriteLocalHlsPlaylist(
+      text,
+      session.id,
+      session.durationSec,
     );
+    const headers = corsHeaders({
+      "Content-Type": "application/vnd.apple.mpegurl",
+      "Cache-Control": "no-cache",
+    });
+    if (session.durationSec) {
+      headers["X-Media-Duration"] = String(Math.round(session.durationSec));
+      headers["Access-Control-Expose-Headers"] =
+        "Content-Length, Content-Range, Accept-Ranges, X-Media-Duration";
+    }
+    res.writeHead(200, headers);
     res.end(rewritten);
   } catch (error) {
     sendJson(res, 502, {
@@ -576,14 +667,21 @@ async function handleHlsFile(req, res, sessionId, fileName) {
   if (fileName.endsWith(".m3u8")) {
     try {
       const text = await fsp.readFile(filePath, "utf8");
-      const rewritten = rewriteLocalHlsPlaylist(text, sessionId);
-      res.writeHead(
-        200,
-        corsHeaders({
-          "Content-Type": "application/vnd.apple.mpegurl",
-          "Cache-Control": "no-cache",
-        }),
+      const rewritten = rewriteLocalHlsPlaylist(
+        text,
+        sessionId,
+        session.durationSec,
       );
+      const headers = corsHeaders({
+        "Content-Type": "application/vnd.apple.mpegurl",
+        "Cache-Control": "no-cache",
+      });
+      if (session.durationSec) {
+        headers["X-Media-Duration"] = String(Math.round(session.durationSec));
+        headers["Access-Control-Expose-Headers"] =
+          "Content-Length, Content-Range, Accept-Ranges, X-Media-Duration";
+      }
+      res.writeHead(200, headers);
       res.end(rewritten);
       return;
     } catch {

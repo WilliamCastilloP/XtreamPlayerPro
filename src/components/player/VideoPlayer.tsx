@@ -37,6 +37,8 @@ type Props = {
   kind?: string;
   streamId?: string;
   extension?: string;
+  /** Known full duration in seconds (catalog / probe). Beats under-reported HLS event playlists. */
+  durationHint?: number;
   onProgress?: (position: number, duration: number) => void;
 };
 
@@ -128,6 +130,7 @@ export function VideoPlayer({
   kind,
   streamId,
   extension,
+  durationHint,
   onProgress,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -154,7 +157,9 @@ export function VideoPlayer({
   const [awaitingTap, setAwaitingTap] = useState(false);
   const [needsUnmute, setNeedsUnmute] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const [duration, setDuration] = useState(() =>
+    durationHint && durationHint > 0 ? durationHint : 0,
+  );
   const [scrubbing, setScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState(0);
   const [seekingUi, setSeekingUi] = useState(false);
@@ -288,6 +293,12 @@ export function VideoPlayer({
     router.replace("/");
   }, [router]);
 
+  useEffect(() => {
+    if (durationHint && durationHint > 0) {
+      setDuration((prev) => Math.max(prev, durationHint));
+    }
+  }, [durationHint]);
+
   const bumpChrome = () => {
     setShowChrome(true);
     if (hideTimer.current) window.clearTimeout(hideTimer.current);
@@ -413,8 +424,17 @@ export function VideoPlayer({
     const onPause = () => setPlaying(false);
     const onTime = () => {
       if (!scrubbingRef.current) setCurrentTime(video.currentTime || 0);
-      const dur = video.duration;
-      if (Number.isFinite(dur) && dur > 0) setDuration(dur);
+      const mediaDur = video.duration;
+      // HLS event playlists grow over time (~minutes) while the movie is
+      // hours long — never shrink below catalog/probe hint.
+      const best =
+        [
+          Number.isFinite(mediaDur) && mediaDur > 0 ? mediaDur : 0,
+          durationHint && durationHint > 0 ? durationHint : 0,
+        ].reduce((a, b) => Math.max(a, b), 0) || 0;
+      if (best > 0) {
+        setDuration((prev) => (best > prev + 0.5 ? best : prev));
+      }
       // Native/HLS buffered ranges for the dual bar
       try {
         const ranges: BufferRange[] = [];
@@ -428,8 +448,8 @@ export function VideoPlayer({
       } catch {
         /* ignore */
       }
-      if (dur && onProgress) {
-        onProgress(video.currentTime, dur);
+      if (best && onProgress) {
+        onProgress(video.currentTime, best);
       }
     };
     const onNativeError = () => {
@@ -561,6 +581,26 @@ export function VideoPlayer({
 
     if (useHlsJs) {
       pushDebug(`engine=hls.js · ${candidate.label}`);
+      // Server HLS event playlists under-report duration until finished —
+      // pull #XTREAM-DURATION from the proxy playlist when present.
+      if (src.includes("/api/hls")) {
+        void (async () => {
+          try {
+            const res = await fetch(src, { cache: "no-store" });
+            const text = await res.text();
+            const match = text.match(/#XTREAM-DURATION:(\d+(?:\.\d+)?)/);
+            const headerDur = Number(res.headers.get("x-media-duration") || 0);
+            const tagged = match ? Number(match[1]) : 0;
+            const best = Math.max(headerDur, tagged);
+            if (!disposed && best > 0) {
+              setDuration((prev) => Math.max(prev, best));
+              pushDebug(`hls · duration hint ${Math.round(best)}s`);
+            }
+          } catch {
+            /* ignore */
+          }
+        })();
+      }
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
@@ -719,6 +759,7 @@ export function VideoPlayer({
     formatDebugDump,
     logDebugToTerminal,
     extension,
+    durationHint,
   ]);
 
   useEffect(

@@ -5,6 +5,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { VideoPlayer } from "@/components/player/VideoPlayer";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import { upsertContinue } from "@/lib/library/storage";
+import { parseMediaDuration } from "@/lib/player/duration";
 import { buildStreamCandidates } from "@/lib/xtream/urls";
 import type { StreamKind } from "@/lib/xtream/types";
 
@@ -21,6 +22,8 @@ function WatchInner() {
   const seriesId = search.get("seriesId") || undefined;
   const season = search.get("season") || undefined;
   const episode = search.get("episode") || undefined;
+  const durationHint =
+    parseMediaDuration(search.get("duration")) || undefined;
 
   useEffect(() => {
     if (!ready) return;
@@ -105,6 +108,7 @@ function WatchInner() {
       kind={kind}
       streamId={params.id}
       extension={ext}
+      durationHint={durationHint}
       onProgress={onProgress}
     />
   );

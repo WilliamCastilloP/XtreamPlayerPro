@@ -10,6 +10,7 @@ import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import { isFavorite, toggleFavorite } from "@/lib/library/storage";
 import { getSeriesInfo, watchPath } from "@/lib/xtream/client";
+import { parseMediaDuration } from "@/lib/player/duration";
 import type { SeriesEpisode, SeriesInfo } from "@/lib/xtream/types";
 
 export default function SeriesDetailPage() {
@@ -146,6 +147,13 @@ export default function SeriesDetailPage() {
                     seriesId: params.id,
                     season,
                     episode: String(ep.episode_num ?? ""),
+                    ...(parseMediaDuration(ep.info?.duration)
+                      ? {
+                          duration: String(
+                            parseMediaDuration(ep.info?.duration),
+                          ),
+                        }
+                      : {}),
                   })}
                   className="flex items-center gap-3 rounded-xl bg-[var(--xp-surface)] px-3 py-3 transition hover:bg-[var(--xp-surface-2)]"
                 >

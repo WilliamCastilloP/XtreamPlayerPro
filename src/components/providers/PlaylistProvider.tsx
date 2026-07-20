@@ -4,7 +4,9 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useSyncExternalStore,
 } from "react";
 import {
@@ -69,6 +71,7 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
     () => true,
     () => false,
   );
+  const seededRef = useRef(false);
 
   const { playlists, activePlaylist } = useMemo(() => {
     const parsed = JSON.parse(snapshot) as {
@@ -80,6 +83,51 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
       getActivePlaylist();
     return { playlists: parsed.playlists, activePlaylist: active };
   }, [snapshot]);
+
+  // Local/dev: if `.env.local` has XTREAM_DEV_* and there is no playlist yet,
+  // seed one automatically so you don't retype credentials every time.
+  useEffect(() => {
+    if (!ready || seededRef.current || playlists.length > 0) return;
+    seededRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/dev/xtream-defaults", {
+          cache: "no-store",
+        });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as {
+          configured?: boolean;
+          name?: string;
+          serverUrl?: string;
+          username?: string;
+          password?: string;
+        };
+        if (
+          !data.configured ||
+          !data.serverUrl ||
+          !data.username ||
+          !data.password
+        ) {
+          return;
+        }
+        if (cancelled || listPlaylists().length > 0) return;
+        const playlist = createPlaylist({
+          name: data.name || data.username,
+          serverUrl: data.serverUrl,
+          username: data.username,
+          password: data.password,
+        });
+        setActivePlaylistId(playlist.id);
+        emit();
+      } catch {
+        /* ignore — form still works manually */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, playlists.length]);
 
   const refresh = useCallback(() => {
     emit();

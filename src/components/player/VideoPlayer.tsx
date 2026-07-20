@@ -30,7 +30,30 @@ import {
   type RemuxHandle,
 } from "@/lib/player/mkv-playback";
 
-const CONNECT_READY_SEC = 3;
+const CONNECT_READY_SEC = 2.5;
+const CONNECT_READY_SEEK_SEC = 1.2;
+
+function snapHlsStart(seconds: number): number {
+  return Math.max(0, Math.floor(seconds / 2) * 2);
+}
+
+/** Grab the current decoded frame so seek reload doesn't flash the cover art. */
+function captureFreezeFrame(video: HTMLVideoElement): string | null {
+  try {
+    if (video.readyState < 2 || video.videoWidth < 2 || video.videoHeight < 2) {
+      return null;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0);
+    return canvas.toDataURL("image/jpeg", 0.75);
+  } catch {
+    return null;
+  }
+}
 
 function withServerHlsStart(url: string, startSec: number): string {
   if (!url.includes("/api/hls")) return url;
@@ -38,7 +61,8 @@ function withServerHlsStart(url: string, startSec: number): string {
     const absolute = url.startsWith("http")
       ? new URL(url)
       : new URL(url, "http://local");
-    if (startSec >= 1) absolute.searchParams.set("start", String(Math.floor(startSec)));
+    const snapped = snapHlsStart(startSec);
+    if (snapped >= 1) absolute.searchParams.set("start", String(snapped));
     else absolute.searchParams.delete("start");
     if (url.startsWith("http")) return absolute.toString();
     return `${absolute.pathname}?${absolute.searchParams.toString()}`;
@@ -197,6 +221,8 @@ export function VideoPlayer({
   const [scrubbing, setScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState(0);
   const [seekingUi, setSeekingUi] = useState(false);
+  /** Cover art, or a freeze-frame data URL held across seek reloads. */
+  const [holdPoster, setHoldPoster] = useState<string | undefined>(poster);
   const [bufferRanges, setBufferRanges] = useState<BufferRange[]>([]);
   const [qualityOptions, setQualityOptions] = useState<
     { id: number; label: string }[]
@@ -205,6 +231,8 @@ export function VideoPlayer({
   const [showQuality, setShowQuality] = useState(false);
   const [qualityIsHls, setQualityIsHls] = useState(false);
   const scrubbingRef = useRef(false);
+  const prefetchTimer = useRef<number | null>(null);
+  const seekingReloadRef = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sourcesKey = sources.map((s) => s.url).join("|");
   const [seenSourcesKey, setSeenSourcesKey] = useState(sourcesKey);
@@ -224,6 +252,9 @@ export function VideoPlayer({
     setAwaitingTap(false);
     setHasStarted(false);
     setServerHlsOffset(0);
+    setSeekingUi(false);
+    seekingReloadRef.current = false;
+    setHoldPoster(poster);
   }
 
   const candidate = sources[sourceIndex];
@@ -377,7 +408,12 @@ export function VideoPlayer({
     setHasStarted(false);
     setAwaitingTap(false);
     setLoadPercent(0);
-    setStatusText(t("playerConnecting"));
+    if (seekingReloadRef.current) {
+      setSeekingUi(true);
+      setStatusText(t("playerSeeking"));
+    } else {
+      setStatusText(t("playerConnecting"));
+    }
     lastFailDetail.current = null;
     pushDebug(
       `try ${sourceIndex + 1}/${sources.length} · ${candidate.label} · ${redactStreamUrl(playSrc)} · hls?=${looksLikeHlsUrl(playSrc)} · start=${serverHlsOffset.toFixed(0)}s`,
@@ -439,12 +475,15 @@ export function VideoPlayer({
       });
     };
 
+    const readySec =
+      serverHlsOffset > 0 ? CONNECT_READY_SEEK_SEC : CONNECT_READY_SEC;
+
     const updateNativeBuffer = () => {
       if (disposed) return;
       const ahead = mediaBufferedAhead(video);
       if (ahead > 0) {
         setProgress(
-          Math.min(99, Math.max(1, Math.round((ahead / CONNECT_READY_SEC) * 100))),
+          Math.min(99, Math.max(1, Math.round((ahead / readySec) * 100))),
         );
         setStatusText(t("playerConnecting"));
       }
@@ -508,6 +547,8 @@ export function VideoPlayer({
         setProgress(100);
         setStatusText(t("playerPlaying"));
         setHasStarted(true);
+        setSeekingUi(false);
+        seekingReloadRef.current = false;
         pushDebug(`playing · ${candidate.label}`);
       }
     };
@@ -531,7 +572,7 @@ export function VideoPlayer({
       const ahead = mediaBufferedAhead(video);
       const pct = Math.min(
         99,
-        Math.max(1, Math.round((ahead / CONNECT_READY_SEC) * 100)),
+        Math.max(1, Math.round((ahead / readySec) * 100)),
       );
       setProgress(pct);
       setStatusText(t("playerConnecting"));
@@ -585,6 +626,8 @@ export function VideoPlayer({
           setQualityId(-1);
           setQualityIsHls(false);
           setHasStarted(true);
+          setSeekingUi(false);
+          seekingReloadRef.current = false;
           setStatusText(t("playerPlaying"));
           setProgress(100);
         })
@@ -669,8 +712,8 @@ export function VideoPlayer({
         const startedAt = Date.now();
         while (!disposed && Date.now() - startedAt < 90000) {
           reportConnectProgress();
-          if (mediaBufferedAhead(video) >= CONNECT_READY_SEC) break;
-          await new Promise((r) => window.setTimeout(r, 200));
+          if (mediaBufferedAhead(video) >= readySec) break;
+          await new Promise((r) => window.setTimeout(r, 150));
         }
         if (disposed) return;
         reportConnectProgress();
@@ -930,6 +973,7 @@ export function VideoPlayer({
       `seek · ${target.toFixed(1)}s · remux=${!!remuxRef.current} · serverHls=${isServerHls}`,
     );
     bumpChrome();
+    let restartingServerHls = false;
     try {
       if (remuxRef.current) {
         await remuxRef.current.seek(target);
@@ -948,11 +992,17 @@ export function VideoPlayer({
           video.currentTime = local;
           void video.play().catch(() => undefined);
         } else {
-          // Restart ffmpeg HLS from the scrubbed wall-clock position.
+          // Restart ffmpeg HLS from a snapped wall-clock position (2s buckets
+          // match the proxy session id so scrub-prefetch can warm it).
+          const snapped = snapHlsStart(target);
+          restartingServerHls = true;
+          const frame = captureFreezeFrame(video);
+          if (frame) setHoldPoster(frame);
+          seekingReloadRef.current = true;
           setHasStarted(false);
           setLoadPercent(0);
-          setStatusText(t("playerConnecting"));
-          setServerHlsOffset(target);
+          setStatusText(t("playerSeeking"));
+          setServerHlsOffset(snapped);
           setCurrentTime(0);
         }
       } else {
@@ -964,8 +1014,11 @@ export function VideoPlayer({
         `seek failed · ${err instanceof Error ? err.message : String(err)}`,
       );
     } finally {
-      setSeekingUi(false);
-      if (hasStarted) setStatusText(t("playerPlaying"));
+      if (!restartingServerHls) {
+        setSeekingUi(false);
+        if (hasStarted) setStatusText(t("playerPlaying"));
+      }
+      // Keep seekingUi + freeze poster until the restarted stream hits playing.
     }
   };
 
@@ -977,14 +1030,49 @@ export function VideoPlayer({
     setServerHlsOffset(0);
     setLoadPercent(0);
     setSourceIndex(0);
+    setSeekingUi(false);
+    seekingReloadRef.current = false;
+    setHoldPoster(poster);
     lastFailDetail.current = null;
     resetDebug();
     setReloadToken((n) => n + 1);
   };
 
   const controlsEnabled = hasStarted && !seekingUi && !error;
+
+  const prefetchServerHls = useCallback(
+    (absoluteSec: number) => {
+      if (!isServerHls || !src) return;
+      const start = snapHlsStart(absoluteSec);
+      if (start <= 0) return;
+      const warmUrl = withServerHlsStart(src, start);
+      // Fire-and-forget: warms ffmpeg so pointer-up seek is already cooking.
+      void fetch(warmUrl, { cache: "no-store" }).catch(() => undefined);
+    },
+    [isServerHls, src],
+  );
+
+  const schedulePrefetch = useCallback(
+    (absoluteSec: number) => {
+      if (!isServerHls) return;
+      if (prefetchTimer.current) window.clearTimeout(prefetchTimer.current);
+      prefetchTimer.current = window.setTimeout(() => {
+        prefetchTimer.current = null;
+        prefetchServerHls(absoluteSec);
+      }, 120);
+    },
+    [isServerHls, prefetchServerHls],
+  );
+
+  useEffect(
+    () => () => {
+      if (prefetchTimer.current) window.clearTimeout(prefetchTimer.current);
+    },
+    [],
+  );
   const showLoader =
     (!error && !hasStarted && !awaitingTap) || seekingUi;
+  const freezeHold = !!holdPoster?.startsWith("data:");
   const timelineValue = scrubbing
     ? scrubValue
     : serverHlsOffset + currentTime;
@@ -1004,7 +1092,7 @@ export function VideoPlayer({
       <video
         ref={videoRef}
         className="h-full w-full object-contain"
-        poster={poster}
+        poster={holdPoster || poster}
         playsInline
         preload="auto"
         controls={false}
@@ -1014,7 +1102,11 @@ export function VideoPlayer({
       />
 
       {showLoader ? (
-        <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/55 px-6">
+        <div
+          className={`pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 px-6 ${
+            freezeHold ? "bg-black/35" : "bg-black/55"
+          }`}
+        >
           <div className="relative h-20 w-20">
             <svg className="h-20 w-20 -rotate-90" viewBox="0 0 64 64">
               <circle
@@ -1206,11 +1298,18 @@ export function VideoPlayer({
                     if (!controlsEnabled) return;
                     const next = Number(e.target.value);
                     setScrubValue(next);
+                    schedulePrefetch(next);
                   }}
                   onPointerUp={(e) => {
                     e.stopPropagation();
                     if (!controlsEnabled) return;
                     const next = Number((e.target as HTMLInputElement).value);
+                    if (prefetchTimer.current) {
+                      window.clearTimeout(prefetchTimer.current);
+                      prefetchTimer.current = null;
+                    }
+                    // Kick warm immediately for the release position.
+                    prefetchServerHls(next);
                     scrubbingRef.current = false;
                     setScrubbing(false);
                     void seekTo(next);
@@ -1219,6 +1318,11 @@ export function VideoPlayer({
                     e.stopPropagation();
                     if (!controlsEnabled) return;
                     const next = Number((e.target as HTMLInputElement).value);
+                    if (prefetchTimer.current) {
+                      window.clearTimeout(prefetchTimer.current);
+                      prefetchTimer.current = null;
+                    }
+                    prefetchServerHls(next);
                     scrubbingRef.current = false;
                     setScrubbing(false);
                     void seekTo(next);

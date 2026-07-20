@@ -127,6 +127,8 @@ const sessions = new Map();
  *   error: string | null,
  *   durationSec: number | null,
  *   startSec: number,
+ *   warm: boolean,
+ *   stopping: boolean,
  * }} HlsSession
  */
 
@@ -414,27 +416,44 @@ const durationBySource = new Map();
 /**
  * @param {string} sourceUrl
  * @param {number} [startSec]
+ * @param {{ warm?: boolean }} [opts]
  * @returns {Promise<HlsSession>}
  */
-async function getOrStartSession(sourceUrl, startSec = 0) {
+async function getOrStartSession(sourceUrl, startSec = 0, opts = {}) {
+  const warm = !!opts.warm;
   // Snap to 2s buckets so nearby scrubs reuse the same ffmpeg session.
   const start = Math.max(0, Math.floor((startSec || 0) / 2) * 2);
   const id = sessionIdFor(sourceUrl, start);
   const existing = sessions.get(id);
-  if (existing && !existing.error) {
+  if (existing && !existing.error && !existing.stopping) {
     existing.lastAccess = Date.now();
+    // Real playback takes ownership of a previously warmed session.
+    if (!warm) existing.warm = false;
     return existing;
   }
   if (existing) {
     await destroySession(existing);
   }
 
-  // One title = one ffmpeg. Concurrent sessions on the same MKV fight for
-  // upstream bandwidth and spam "Will reconnect … End of file".
-  for (const other of [...sessions.values()]) {
-    if (other.sourceUrl === sourceUrl && other.id !== id) {
-      console.log(`[hls] stop ${other.id} (handoff → ${id})`);
-      void destroySession(other);
+  if (!warm) {
+    // Committed playback/seek: drop every other session for this title.
+    for (const other of [...sessions.values()]) {
+      if (other.sourceUrl === sourceUrl && other.id !== id) {
+        console.log(`[hls] stop ${other.id} (handoff → ${id})`);
+        await destroySession(other);
+      }
+    }
+  } else {
+    // Prefetch only: keep the playing session; replace other warm seeks.
+    for (const other of [...sessions.values()]) {
+      if (
+        other.sourceUrl === sourceUrl &&
+        other.id !== id &&
+        other.warm
+      ) {
+        console.log(`[hls] stop ${other.id} (warm → ${id})`);
+        await destroySession(other);
+      }
     }
   }
 
@@ -457,6 +476,8 @@ async function getOrStartSession(sourceUrl, startSec = 0) {
     error: null,
     durationSec: durationBySource.get(sourceUrl) || null,
     startSec: start,
+    warm,
+    stopping: false,
   };
   sessions.set(id, session);
 
@@ -551,7 +572,7 @@ async function getOrStartSession(sourceUrl, startSec = 0) {
   );
 
   console.log(
-    `[hls] start ${id} ← from=${start}s · audio=${canCopyAudio ? "copy" : "aac"} · ${sourceUrl.slice(0, 64)}…`,
+    `[hls] start ${id} ← from=${start}s · ${warm ? "warm · " : ""}audio=${canCopyAudio ? "copy" : "aac"} · ${sourceUrl.slice(0, 64)}…`,
   );
   const proc = spawn(FFMPEG_BIN || "ffmpeg", args, {
     stdio: ["ignore", "ignore", "pipe"],
@@ -563,6 +584,7 @@ async function getOrStartSession(sourceUrl, startSec = 0) {
 
   let stderrBuf = "";
   proc.stderr?.on("data", (chunk) => {
+    if (session.stopping) return;
     const text = String(chunk);
     stderrBuf = (stderrBuf + text).slice(-4000);
     const audioMatch = text.match(/Audio:\s*([a-z0-9_]+)/i);
@@ -572,12 +594,18 @@ async function getOrStartSession(sourceUrl, startSec = 0) {
     }
     // Upstream HTTP drops under seek load — reconnect is expected, not useful.
     if (/Will reconnect|error=End of file/i.test(text)) return;
+    // Directory gone after intentional stop — ignore muxer noise.
+    if (/No such file or directory|Failed to open file/i.test(text)) return;
     if (/error|invalid|failed/i.test(text)) {
       console.warn(`[hls] ffmpeg ${id}:`, text.trim().slice(0, 240));
     }
   });
 
   proc.on("exit", (code, signal) => {
+    if (session.stopping) {
+      console.log(`[hls] stopped ${id}`);
+      return;
+    }
     if (session.error) return;
     if (code && code !== 0) {
       session.error =
@@ -624,12 +652,23 @@ async function waitUntilReady(session) {
  * @param {HlsSession} session
  */
 async function destroySession(session) {
+  if (session.stopping) return;
+  session.stopping = true;
   sessions.delete(session.id);
-  try {
-    session.proc?.kill("SIGKILL");
-  } catch {
-    /* ignore */
+  const proc = session.proc;
+  if (proc && proc.exitCode === null && !proc.killed) {
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      /* ignore */
+    }
+    // Wait for ffmpeg to release segment file handles (critical on Windows).
+    await Promise.race([
+      new Promise((resolve) => proc.once("exit", resolve)),
+      new Promise((resolve) => setTimeout(resolve, 1000)),
+    ]);
   }
+  await new Promise((resolve) => setTimeout(resolve, 40));
   try {
     await fsp.rm(session.dir, { recursive: true, force: true });
   } catch {
@@ -651,7 +690,14 @@ setInterval(() => {
   void cleanupSessions();
 }, 60_000).unref();
 
-async function handleHlsPlaylist(req, res, sourceUrl, startSec = 0) {
+/**
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:http').ServerResponse} res
+ * @param {string} sourceUrl
+ * @param {number} [startSec]
+ * @param {{ warm?: boolean }} [opts]
+ */
+async function handleHlsPlaylist(req, res, sourceUrl, startSec = 0, opts = {}) {
   if (!FFMPEG_OK) {
     sendJson(res, 503, {
       error: "ffmpeg not available on this proxy",
@@ -681,7 +727,7 @@ async function handleHlsPlaylist(req, res, sourceUrl, startSec = 0) {
   }
 
   try {
-    const session = await getOrStartSession(sourceUrl, startSec);
+    const session = await getOrStartSession(sourceUrl, startSec, opts);
     const text = await waitUntilReady(session);
     // Only wait for duration on the initial (start=0) playlist — never on scrub.
     if (!session.durationSec && session.startSec === 0) {
@@ -850,7 +896,10 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const start = Number(url.searchParams.get("start") || 0);
-    await handleHlsPlaylist(req, res, target, start);
+    const warm =
+      url.searchParams.get("warm") === "1" ||
+      url.searchParams.get("warm") === "true";
+    await handleHlsPlaylist(req, res, target, start, { warm });
     return;
   }
 

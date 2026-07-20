@@ -56,7 +56,11 @@ function captureFreezeFrame(video: HTMLVideoElement): string | null {
   }
 }
 
-function withServerHlsStart(url: string, startSec: number): string {
+function withServerHlsStart(
+  url: string,
+  startSec: number,
+  opts?: { warm?: boolean },
+): string {
   if (!url.includes("/api/hls")) return url;
   try {
     const absolute = url.startsWith("http")
@@ -65,6 +69,8 @@ function withServerHlsStart(url: string, startSec: number): string {
     const snapped = snapHlsStart(startSec);
     if (snapped >= 1) absolute.searchParams.set("start", String(snapped));
     else absolute.searchParams.delete("start");
+    if (opts?.warm) absolute.searchParams.set("warm", "1");
+    else absolute.searchParams.delete("warm");
     if (url.startsWith("http")) return absolute.toString();
     return `${absolute.pathname}?${absolute.searchParams.toString()}`;
   } catch {
@@ -1073,8 +1079,8 @@ export function VideoPlayer({
       if (!isServerHls || !src) return;
       const start = snapHlsStart(absoluteSec);
       if (start <= 0) return;
-      const warmUrl = withServerHlsStart(src, start);
-      // Fire-and-forget: warms ffmpeg so pointer-up seek is already cooking.
+      // warm=1: start ffmpeg without killing the session currently playing.
+      const warmUrl = withServerHlsStart(src, start, { warm: true });
       void fetch(warmUrl, { cache: "no-store" }).catch(() => undefined);
     },
     [isServerHls, src],

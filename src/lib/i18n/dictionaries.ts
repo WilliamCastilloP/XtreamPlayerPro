@@ -81,6 +81,11 @@ const en = {
   playerSeeking: "Jumping to new position…",
   playerOpenExternal: "Open in external player",
   playerTapToPlay: "Tap to play",
+  playerTapForSound: "Tap for sound",
+  playerQuality: "Quality",
+  playerQualityAuto: "Auto",
+  playerQualityRemuxHint:
+    "This file is a single MKV — quality switching needs HLS from the panel (like Netflix).",
   favorite: "Favorite",
   play: "Play",
   back: "Back",
@@ -169,6 +174,11 @@ const es: Record<MessageKey, string> = {
   playerSeeking: "Saltando a la nueva posición…",
   playerOpenExternal: "Abrir en reproductor externo",
   playerTapToPlay: "Toca para reproducir",
+  playerTapForSound: "Toca para sonido",
+  playerQuality: "Calidad",
+  playerQualityAuto: "Auto",
+  playerQualityRemuxHint:
+    "Este archivo es un solo MKV — cambiar calidad requiere HLS del panel (como Netflix).",
   favorite: "Favorito",
   play: "Play",
   back: "Atrás",

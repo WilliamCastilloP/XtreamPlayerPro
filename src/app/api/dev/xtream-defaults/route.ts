@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 
 /**
- * Dev-only helper: returns playlist defaults from `.env.local`.
- * Never enabled in production builds.
+ * Dev-only: returns XTREAM_DEV_* from `.env.local`.
+ * Restart `npm run dev` after editing that file.
  */
 export async function GET() {
   if (process.env.NODE_ENV === "production") {
@@ -16,7 +16,10 @@ export async function GET() {
     (process.env.XTREAM_DEV_NAME || "").trim() || username || "Dev playlist";
 
   if (!serverUrl || !username || !password) {
-    return NextResponse.json({ configured: false });
+    return NextResponse.json({
+      configured: false,
+      hint: "Set XTREAM_DEV_SERVER, XTREAM_DEV_USERNAME, and XTREAM_DEV_PASSWORD in .env.local, then restart npm run dev.",
+    });
   }
 
   return NextResponse.json({

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
 import type { PlaylistDraft } from "@/lib/playlists/types";
 import { authenticate } from "@/lib/xtream/client";
 
@@ -17,35 +17,6 @@ export function PlaylistForm({ initial, submitLabel, onSubmit }: Props) {
   const [password, setPassword] = useState(initial?.password ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Prefill from `.env.local` (XTREAM_DEV_*) when opening the form empty.
-  useEffect(() => {
-    if (initial?.serverUrl || initial?.username) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch("/api/dev/xtream-defaults", { cache: "no-store" });
-        if (!res.ok || cancelled) return;
-        const data = (await res.json()) as {
-          configured?: boolean;
-          name?: string;
-          serverUrl?: string;
-          username?: string;
-          password?: string;
-        };
-        if (!data.configured || cancelled) return;
-        if (data.name) setName((v) => v || data.name || "");
-        if (data.serverUrl) setServerUrl((v) => v || data.serverUrl || "");
-        if (data.username) setUsername((v) => v || data.username || "");
-        if (data.password) setPassword((v) => v || data.password || "");
-      } catch {
-        /* ignore */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [initial?.serverUrl, initial?.username]);
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -66,7 +37,7 @@ export function PlaylistForm({ initial, submitLabel, onSubmit }: Props) {
         await authenticate(draft);
       } catch (authErr) {
         // In local dev, still save so you can keep working if the panel is
-        // temporarily unreachable from this PC (common on remote/datacenter IPs).
+        // temporarily unreachable from this PC.
         if (process.env.NODE_ENV === "development") {
           setError(
             authErr instanceof Error

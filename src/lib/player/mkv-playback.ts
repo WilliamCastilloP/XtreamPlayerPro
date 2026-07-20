@@ -478,10 +478,18 @@ export async function startRemuxedPlayback(
     conversion = await Conversion.init({
       input,
       output,
-      // One video + one audio — extra MKV tracks break a single SourceBuffer.
+      // One video + one audio. Extra MKV tracks (2nd audio / subs) break a
+      // single MSE SourceBuffer. Do NOT discard via `n > 0` — mediabunny's `n`
+      // is 1-based and that wrongly drops the primary tracks too.
       tracks: "primary",
-      video: (_track, n) => (n > 0 ? { discard: true } : undefined),
-      audio: (_track, n) => (n > 0 ? { discard: true } : undefined),
+      audio: async (track) => {
+        // Chrome MSE rarely accepts AC3/EAC3 in fMP4; transmux to AAC.
+        const codec = await track.getCodec();
+        if (codec === "ac3" || codec === "eac3") {
+          return { codec: "aac" };
+        }
+        return undefined;
+      },
       trim: baseTime > 0.05 ? { start: baseTime } : undefined,
       showWarnings: false,
     });

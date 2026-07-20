@@ -33,7 +33,22 @@ export function PlaylistForm({ initial, submitLabel, onSubmit }: Props) {
       if (!draft.name || !draft.serverUrl || !draft.username || !draft.password) {
         throw new Error("Please fill in all fields.");
       }
-      await authenticate(draft);
+      try {
+        await authenticate(draft);
+      } catch (authErr) {
+        // In local dev, still save so you can keep working if the panel is
+        // temporarily unreachable from this PC.
+        if (process.env.NODE_ENV === "development") {
+          setError(
+            authErr instanceof Error
+              ? `Saved locally, but panel check failed: ${authErr.message}`
+              : "Saved locally, but panel check failed.",
+          );
+          await onSubmit(draft);
+          return;
+        }
+        throw authErr;
+      }
       await onSubmit(draft);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save playlist");

@@ -171,12 +171,18 @@ export type RemuxHandle = {
   objectUrl: string;
 };
 
+export type BufferRange = { start: number; end: number };
+
 type RemuxOpts = {
   onProgress?: (progress: number) => void;
   onLog?: (message: string) => void;
   onAutoplayBlocked?: () => void;
+  /** Muted autoplay succeeded — UI should offer unmute. */
+  onMutedAutoplay?: () => void;
   /** Fired when full media duration is known (seconds). */
   onDuration?: (seconds: number) => void;
+  /** Fired when MSE buffered ranges change (for the dual progress bar). */
+  onBuffer?: (ranges: BufferRange[], currentTime: number) => void;
 };
 
 /**
@@ -218,12 +224,21 @@ export async function startRemuxedPlayback(
   let input: Input | null = null;
   let drainResolve: (() => void) | null = null;
 
-  const MAX_AHEAD = 24;
-  /** If ahead drops below this while playing, treat as underrun. */
-  const STARVE_SECONDS = 1;
-  const EVICT_BEHIND = 10;
-  const HIGH_WATER = 10;
+  const MAX_AHEAD = 30;
+  /** Seconds of buffer required before we start/resume playback. */
+  const START_BUFFER = 6;
+  /** Pause playback when ahead falls below this (refill without killing session). */
+  const REFILL_PAUSE = 2.5;
+  /** Resume after a refill pause once ahead reaches this. */
+  const REFILL_RESUME = 6;
+  /** Only restart the whole remux session if starved this long with a gap. */
+  const STARVE_SECONDS = 1.25;
+  const EVICT_BEHIND = 12;
+  const HIGH_WATER = 12;
   const LOW_WATER = 3;
+
+  let refillPaused = false;
+  let userPaused = false;
 
   const releaseDrain = () => {
     if (drainResolve) {
@@ -236,6 +251,20 @@ export async function startRemuxedPlayback(
     new Promise<void>((resolve) => {
       drainResolve = resolve;
     });
+
+  const reportBuffer = () => {
+    if (!sourceBuffer || !opts?.onBuffer) return;
+    try {
+      const b = sourceBuffer.buffered;
+      const ranges: BufferRange[] = [];
+      for (let i = 0; i < b.length; i += 1) {
+        ranges.push({ start: b.start(i), end: b.end(i) });
+      }
+      opts.onBuffer(ranges, video.currentTime || baseTime);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const bufferedAhead = (): number => {
     if (!sourceBuffer) return 0;
@@ -306,6 +335,7 @@ export async function startRemuxedPlayback(
         });
         if (gen !== sessionGen) return;
         sawData = true;
+        reportBuffer();
         if (queue.length <= LOW_WATER) releaseDrain();
       }
     } catch (err) {
@@ -328,19 +358,30 @@ export async function startRemuxedPlayback(
   };
 
   const attemptPlay = async () => {
+    if (userPaused) return;
     try {
+      video.muted = false;
       await video.play();
       log("remux · playing");
     } catch (err) {
       const name = err instanceof Error ? err.name : "";
       log(`remux · play() · ${err instanceof Error ? err.message : String(err)}`);
       if (name === "NotAllowedError") {
-        opts?.onAutoplayBlocked?.();
+        // Web/iOS often allow muted autoplay; unmute on the next user tap.
+        try {
+          video.muted = true;
+          await video.play();
+          log("remux · playing muted (awaiting unmute tap)");
+          opts?.onMutedAutoplay?.();
+          return;
+        } catch {
+          opts?.onAutoplayBlocked?.();
+        }
       }
       video.addEventListener(
         "canplay",
         () => {
-          if (closed) return;
+          if (closed || userPaused) return;
           void video.play().catch((e) => {
             if (e instanceof Error && e.name === "NotAllowedError") {
               opts?.onAutoplayBlocked?.();
@@ -510,10 +551,18 @@ export async function startRemuxedPlayback(
       log(`remux · conversion error · ${appendError.message}`);
     });
 
-    // Wait for first buffered media
+    // Wait until we have a healthy start buffer (not just the first fragment).
+    // Starting with <1s ahead is why series were stalling every few seconds.
     const started = Date.now();
-    while (!closed && gen === sessionGen && !sawData && !appendError) {
-      if (Date.now() - started > 25000) {
+    while (!closed && gen === sessionGen && !appendError) {
+      const ahead = bufferedAhead();
+      if (sawData && ahead >= START_BUFFER) break;
+      if (sawData && ahead > 0 && Date.now() - started > 12000 && ahead >= 3) {
+        // Slow network: accept a smaller buffer rather than timing out forever.
+        log(`remux · start buffer soft · ahead=${ahead.toFixed(1)}s`);
+        break;
+      }
+      if (Date.now() - started > 35000) {
         throw new Error("Timed out waiting for remuxed media");
       }
       await new Promise((r) => window.setTimeout(r, 200));
@@ -527,6 +576,9 @@ export async function startRemuxedPlayback(
       /* ignore */
     }
     seeking = false;
+    refillPaused = false;
+    reportBuffer();
+    log(`remux · start buffer ready · ahead=${bufferedAhead().toFixed(1)}s`);
     await attemptPlay();
 
     void conversionPromise.finally(async () => {
@@ -554,20 +606,65 @@ export async function startRemuxedPlayback(
     });
   };
 
-  // Keep buffer filled; if the playhead falls into a gap (common on iOS after
-  // ManagedMediaSource silently evicts), restart from currentTime.
+  // Prefer pause→refill→resume over tearing down the remux session.
   let recovering = false;
-  const onTimeUpdate = () => {
-    if (closed || !sourceBuffer || seeking) return;
+  let recoverTimer: number | null = null;
+
+  const manageBufferHealth = () => {
+    if (closed || seeking || !sourceBuffer) return;
+    reportBuffer();
     void evictBehind(sourceBuffer, video, EVICT_BEHIND);
     void pump();
+
+    const t = video.currentTime || baseTime;
+    const ahead = bufferedAhead();
+    const covered = playheadCovered(sourceBuffer, t);
+
+    if (!userPaused && covered && ahead < REFILL_PAUSE && !video.paused) {
+      refillPaused = true;
+      video.pause();
+      log(`remux · refill pause · ahead=${ahead.toFixed(1)}s`);
+      return;
+    }
+
+    if (refillPaused && !userPaused && covered && ahead >= REFILL_RESUME) {
+      refillPaused = false;
+      log(`remux · refill resume · ahead=${ahead.toFixed(1)}s`);
+      void attemptPlay();
+      return;
+    }
+
+    if (!covered && ahead < STARVE_SECONDS && !recovering && !seeking) {
+      if (recoverTimer) window.clearTimeout(recoverTimer);
+      recoverTimer = window.setTimeout(() => {
+        recoverTimer = null;
+        if (
+          closed ||
+          seeking ||
+          recovering ||
+          (sourceBuffer &&
+            playheadCovered(sourceBuffer, video.currentTime || 0))
+        ) {
+          return;
+        }
+        void recoverFromUnderrun("gap");
+      }, 1200);
+    }
   };
+
   const recoverFromUnderrun = async (reason: string) => {
     if (closed || seeking || recovering) return;
     const t = video.currentTime || baseTime;
-    if (sourceBuffer && playheadCovered(sourceBuffer, t) && bufferedAhead() >= 1) {
+    if (
+      sourceBuffer &&
+      playheadCovered(sourceBuffer, t) &&
+      bufferedAhead() >= REFILL_PAUSE
+    ) {
       void pump();
-      void video.play().catch(() => undefined);
+      if (refillPaused || video.paused) {
+        refillPaused = false;
+        void attemptPlay();
+      }
       return;
     }
     recovering = true;
@@ -582,51 +679,48 @@ export async function startRemuxedPlayback(
       recovering = false;
     }
   };
+
+  const onTimeUpdate = () => manageBufferHealth();
   const onWaiting = () => {
     if (closed || seeking) return;
-    log(`remux · waiting · ahead=${bufferedAhead().toFixed(1)}s queue=${queue.length}`);
-    void pump();
-    window.setTimeout(() => {
-      if (!closed && !seeking && bufferedAhead() < STARVE_SECONDS) {
-        void recoverFromUnderrun("waiting");
-      }
-    }, 900);
+    log(
+      `remux · waiting · ahead=${bufferedAhead().toFixed(1)}s queue=${queue.length}`,
+    );
+    manageBufferHealth();
   };
   const onPlaying = () => {
-    if (!closed) void pump();
+    if (!closed) {
+      userPaused = false;
+      void pump();
+      reportBuffer();
+    }
+  };
+  const onPause = () => {
+    if (!refillPaused) userPaused = true;
   };
 
   video.addEventListener("timeupdate", onTimeUpdate);
   video.addEventListener("waiting", onWaiting);
   video.addEventListener("playing", onPlaying);
+  video.addEventListener("pause", onPause);
 
   const pumpTimer = window.setInterval(() => {
     if (closed || seeking) return;
-    void pump();
+    manageBufferHealth();
     if (queue.length < HIGH_WATER) releaseDrain();
-    // If we have been starved for a bit while supposedly playing, recover.
-    if (
-      !video.paused &&
-      bufferedAhead() < STARVE_SECONDS &&
-      sourceBuffer &&
-      !playheadCovered(sourceBuffer, video.currentTime || 0)
-    ) {
-      void recoverFromUnderrun("gap");
-    }
   }, 400);
-
-  // Ignore ManagedMediaSource endstreaming for remux — our MAX_AHEAD window
-  // already caps memory. Obeying endstreaming was starving series episodes.
 
   await startSession(0);
 
   const stop = () => {
     closed = true;
     releaseDrain();
+    if (recoverTimer) window.clearTimeout(recoverTimer);
     window.clearInterval(pumpTimer);
     video.removeEventListener("timeupdate", onTimeUpdate);
     video.removeEventListener("waiting", onWaiting);
     video.removeEventListener("playing", onPlaying);
+    video.removeEventListener("pause", onPause);
     void cancelSession();
     teardownMedia();
   };
@@ -637,18 +731,20 @@ export async function startRemuxedPlayback(
       0,
       Math.min(seconds, fullDuration > 0 ? fullDuration - 0.5 : seconds),
     );
-    // If the target is already buffered, just jump the playhead (cheap).
     if (sourceBuffer && playheadCovered(sourceBuffer, target)) {
       try {
         video.currentTime = target;
+        userPaused = false;
         void video.play().catch(() => undefined);
         log(`remux · seek buffered · ${target.toFixed(1)}s`);
+        reportBuffer();
         return;
       } catch {
         /* fall through to restart */
       }
     }
     log(`remux · seek restart · ${target.toFixed(1)}s`);
+    userPaused = false;
     await startSession(target);
   };
 

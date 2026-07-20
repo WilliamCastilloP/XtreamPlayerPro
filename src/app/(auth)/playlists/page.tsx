@@ -4,8 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus, Trash2 } from "lucide-react";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
+import { DevEnvConnectButton } from "@/components/playlists/DevEnvConnectButton";
 import { authenticate } from "@/lib/xtream/client";
 import { useState } from "react";
+
+const isDev = process.env.NODE_ENV === "development";
 
 export default function PlaylistsPage() {
   const { ready, playlists, selectPlaylist, removePlaylist } = usePlaylists();
@@ -19,11 +22,15 @@ export default function PlaylistsPage() {
     setError(null);
     setLoadingId(id);
     try {
-      await authenticate({
-        serverUrl: playlist.serverUrl,
-        username: playlist.username,
-        password: playlist.password,
-      });
+      // In local/dev, skip the panel ping so a blocked IP doesn't block login.
+      // Catalog calls will still surface errors on the home screen.
+      if (process.env.NODE_ENV !== "development") {
+        await authenticate({
+          serverUrl: playlist.serverUrl,
+          username: playlist.username,
+          password: playlist.password,
+        });
+      }
       selectPlaylist(id);
       router.push("/");
     } catch (err) {
@@ -48,16 +55,26 @@ export default function PlaylistsPage() {
           XTREAM
         </p>
         <p className="text-[var(--xp-muted)]">
-          Choose a playlist or add a new Xtream Codes account.
+          {isDev
+            ? "Pulsa Conectar para usar .env.local, o abre una lista guardada."
+            : "Choose a playlist or add a new Xtream Codes account."}
         </p>
       </div>
+
+      {isDev ? (
+        <div className="xp-fade-in mb-8">
+          <DevEnvConnectButton />
+        </div>
+      ) : null}
 
       <div className="xp-fade-in space-y-3">
         {playlists.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-[var(--xp-border)] px-5 py-10 text-center">
             <p className="mb-1 font-medium">No playlists yet</p>
             <p className="text-sm text-[var(--xp-muted)]">
-              Add your first server to start watching.
+              {isDev
+                ? "Pulsa Conectar arriba para usar .env.local."
+                : "Add your first server to start watching."}
             </p>
           </div>
         ) : (
@@ -109,13 +126,22 @@ export default function PlaylistsPage() {
         <p className="mt-4 text-sm text-[var(--xp-danger)]">{error}</p>
       ) : null}
 
-      <Link
-        href="/playlists/new"
-        className="xp-btn xp-btn-primary mt-8 w-full"
-      >
-        <Plus className="h-4 w-4" />
-        Add playlist
-      </Link>
+      {!isDev ? (
+        <Link
+          href="/playlists/new"
+          className="xp-btn xp-btn-primary mt-8 w-full"
+        >
+          <Plus className="h-4 w-4" />
+          Add playlist
+        </Link>
+      ) : (
+        <Link
+          href="/playlists/new"
+          className="mt-6 text-center text-sm text-[var(--xp-muted)] hover:text-[var(--xp-text)]"
+        >
+          Or add a playlist manually
+        </Link>
+      )}
     </div>
   );
 }

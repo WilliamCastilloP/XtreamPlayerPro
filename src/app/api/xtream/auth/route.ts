@@ -23,6 +23,9 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Authentication failed";
+    console.error("[xtream/auth]", message, {
+      server: credentials.serverUrl,
+    });
     return jsonError(message, 502);
   }
 }

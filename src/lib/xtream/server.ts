@@ -34,13 +34,48 @@ export async function fetchXtreamJson(
   params: Record<string, string | number | undefined> = {},
 ): Promise<unknown> {
   const url = buildPlayerApiUrl(credentials, params);
-  const res = await fetch(url, {
-    cache: "no-store",
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "XTREAM/1.0",
-    },
-  });
+  // Log host only (no password) so local debugging is obvious in the terminal.
+  try {
+    const host = new URL(credentials.serverUrl).host;
+    console.info("[xtream] fetching", host, Object.keys(params).length ? params : "auth");
+  } catch {
+    console.info("[xtream] fetching", credentials.serverUrl);
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "XTREAM/1.0",
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch (error) {
+    const root =
+      error instanceof Error
+        ? ((error as Error & { cause?: unknown }).cause ?? error)
+        : error;
+    const detail =
+      root instanceof Error
+        ? root.message
+        : typeof root === "string"
+          ? root
+          : "network error";
+    const name = error instanceof Error ? error.name : "";
+    const timedOut =
+      name === "TimeoutError" || /aborted|timeout/i.test(detail);
+    const tlsHint = /certificate|SSL|TLS|UNABLE_TO_VERIFY/i.test(detail)
+      ? " If the panel uses a bad HTTPS certificate, restart with NODE_TLS_REJECT_UNAUTHORIZED=0."
+      : "";
+    const timeoutHint = timedOut
+      ? " Connection timed out — this PC cannot reach the panel (firewall, wrong host/port, or the panel blocks this IP/datacenter)."
+      : "";
+    throw new Error(
+      `Cannot reach Xtream panel (${detail}). Check the Server URL and that this PC can open the panel in a browser.${timeoutHint}${tlsHint}`,
+    );
+  }
 
   if (!res.ok) {
     throw new Error(`Xtream panel responded with ${res.status}`);

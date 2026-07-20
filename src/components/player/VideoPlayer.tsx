@@ -9,6 +9,7 @@ import {
   Pause,
   Play,
   RotateCcw,
+  Settings2,
   Volume2,
   VolumeX,
   X,
@@ -24,6 +25,7 @@ import {
 import {
   needsContainerRemux,
   startRemuxedPlayback,
+  type BufferRange,
   type RemuxHandle,
 } from "@/lib/player/mkv-playback";
 
@@ -148,12 +150,21 @@ export function VideoPlayer({
   const debugRef = useRef<DebugLine[]>([]);
   const [externalUrl, setExternalUrl] = useState<string | null>(null);
   const [awaitingTap, setAwaitingTap] = useState(false);
+  const [needsUnmute, setNeedsUnmute] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [scrubbing, setScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState(0);
   const [seekingUi, setSeekingUi] = useState(false);
+  const [bufferRanges, setBufferRanges] = useState<BufferRange[]>([]);
+  const [qualityOptions, setQualityOptions] = useState<
+    { id: number; label: string }[]
+  >([]);
+  const [qualityId, setQualityId] = useState(-1);
+  const [showQuality, setShowQuality] = useState(false);
+  const [qualityIsHls, setQualityIsHls] = useState(false);
   const scrubbingRef = useRef(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const sourcesKey = sources.map((s) => s.url).join("|");
   const [seenSourcesKey, setSeenSourcesKey] = useState(sourcesKey);
 
@@ -164,6 +175,12 @@ export function VideoPlayer({
     setLoadPercent(0);
     setCurrentTime(0);
     setDuration(0);
+    setBufferRanges([]);
+    setQualityOptions([]);
+    setQualityId(-1);
+    setQualityIsHls(false);
+    setNeedsUnmute(false);
+    setAwaitingTap(false);
   }
 
   const candidate = sources[sourceIndex];
@@ -325,6 +342,19 @@ export function VideoPlayer({
       if (!scrubbingRef.current) setCurrentTime(video.currentTime || 0);
       const dur = video.duration;
       if (Number.isFinite(dur) && dur > 0) setDuration(dur);
+      // Native/HLS buffered ranges for the dual bar
+      try {
+        const ranges: BufferRange[] = [];
+        for (let i = 0; i < video.buffered.length; i += 1) {
+          ranges.push({
+            start: video.buffered.start(i),
+            end: video.buffered.end(i),
+          });
+        }
+        if (ranges.length) setBufferRanges(ranges);
+      } catch {
+        /* ignore */
+      }
       if (dur && onProgress) {
         onProgress(video.currentTime, dur);
       }
@@ -384,8 +414,18 @@ export function VideoPlayer({
         onAutoplayBlocked: () => {
           if (!disposed) setAwaitingTap(true);
         },
+        onMutedAutoplay: () => {
+          if (!disposed) {
+            setNeedsUnmute(true);
+            setMuted(true);
+            setAwaitingTap(false);
+          }
+        },
         onDuration: (seconds) => {
           if (!disposed && seconds > 0) setDuration(seconds);
+        },
+        onBuffer: (ranges) => {
+          if (!disposed) setBufferRanges(ranges);
         },
       })
         .then((handle) => {
@@ -394,6 +434,9 @@ export function VideoPlayer({
             return;
           }
           remuxRef.current = handle;
+          setQualityOptions([{ id: -1, label: t("playerQualityAuto") }]);
+          setQualityId(-1);
+          setQualityIsHls(false);
           setStatusText(t("playerPlaying"));
           setProgress(100);
         })
@@ -462,11 +505,34 @@ export function VideoPlayer({
         fragTotal = Math.max(1, data.levels?.[0]?.details?.fragments?.length || 8);
         setStatusText(t("playerLoadingStream"));
         setProgress(8);
+        const levels = (data.levels || []).map((level, index) => ({
+          id: index,
+          label: level.height
+            ? `${level.height}p`
+            : level.bitrate
+              ? `${Math.round(level.bitrate / 1000)} kbps`
+              : `L${index + 1}`,
+        }));
+        if (levels.length > 1) {
+          setQualityOptions([{ id: -1, label: t("playerQualityAuto") }, ...levels]);
+          setQualityId(-1);
+          setQualityIsHls(true);
+        } else {
+          setQualityOptions([]);
+          setQualityIsHls(false);
+        }
         pushDebug(`manifest ok · levels=${data.levels?.length || 0}`);
-        void video.play().catch((err) => {
+        void video.play().catch(async (err) => {
           pushDebug(`play() rejected · ${err instanceof Error ? err.message : String(err)}`);
           if (err instanceof Error && err.name === "NotAllowedError") {
-            setAwaitingTap(true);
+            try {
+              video.muted = true;
+              await video.play();
+              setMuted(true);
+              setNeedsUnmute(true);
+            } catch {
+              setAwaitingTap(true);
+            }
           }
         });
       });
@@ -602,22 +668,35 @@ export function VideoPlayer({
   };
 
   const goFullscreen = async () => {
+    const root = rootRef.current;
     const video = videoRef.current;
     if (!video) return;
     try {
-      if (video.requestFullscreen) await video.requestFullscreen();
-      else if (
-        "webkitEnterFullscreen" in video &&
-        typeof (
-          video as HTMLVideoElement & { webkitEnterFullscreen: () => void }
-        ).webkitEnterFullscreen === "function"
-      ) {
-        (
-          video as HTMLVideoElement & { webkitEnterFullscreen: () => void }
-        ).webkitEnterFullscreen();
+      // iPhone: only webkitEnterFullscreen on the <video> reliably works.
+      const webkitFs = (
+        video as HTMLVideoElement & { webkitEnterFullscreen?: () => void }
+      ).webkitEnterFullscreen;
+      if (typeof webkitFs === "function") {
+        webkitFs.call(video);
+      } else if (root && root.requestFullscreen) {
+        await root.requestFullscreen();
+      } else if (video.requestFullscreen) {
+        await video.requestFullscreen();
       }
-    } catch {
-      /* ignore */
+      // Best-effort landscape lock (supported on some browsers).
+      try {
+        await (
+          screen.orientation as ScreenOrientation & {
+            lock?: (o: string) => Promise<void>;
+          }
+        ).lock?.("landscape");
+      } catch {
+        /* ignore */
+      }
+    } catch (err) {
+      pushDebug(
+        `fullscreen failed · ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
     bumpChrome();
   };
@@ -626,14 +705,35 @@ export function VideoPlayer({
     const video = videoRef.current;
     if (!video) return;
     setAwaitingTap(false);
-    // Enter fullscreen first, within the user gesture — on iPhone this rotates
-    // to landscape. Then start playback with sound.
+    setNeedsUnmute(false);
+    video.muted = false;
+    setMuted(false);
     void goFullscreen();
     void video.play().catch((err) => {
       if (err instanceof Error && err.name === "NotAllowedError") {
         setAwaitingTap(true);
       }
     });
+  };
+
+  const unmuteFromTap = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = false;
+    setMuted(false);
+    setNeedsUnmute(false);
+    void video.play().catch(() => undefined);
+    bumpChrome();
+  };
+
+  const applyQuality = (id: number) => {
+    setQualityId(id);
+    setShowQuality(false);
+    const hls = hlsRef.current;
+    if (!hls) return;
+    hls.currentLevel = id; // -1 = auto
+    pushDebug(`quality · ${id < 0 ? "auto" : id}`);
+    bumpChrome();
   };
 
   const seekTo = async (seconds: number) => {
@@ -680,6 +780,7 @@ export function VideoPlayer({
 
   return (
     <div
+      ref={rootRef}
       className="relative flex h-dvh w-full items-center justify-center bg-black"
       onMouseMove={bumpChrome}
       onTouchStart={bumpChrome}
@@ -752,6 +853,19 @@ export function VideoPlayer({
             {t("playerTapToPlay")}
           </span>
           <span className="text-xs text-white/60">{t("playerRotate")}</span>
+        </button>
+      ) : null}
+
+      {needsUnmute && !awaitingTap && !error ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            unmuteFromTap();
+          }}
+          className="absolute bottom-28 left-1/2 z-40 -translate-x-1/2 rounded-full bg-white/90 px-4 py-2 text-sm font-semibold text-black shadow-lg"
+        >
+          {t("playerTapForSound")}
         </button>
       ) : null}
 
@@ -834,41 +948,63 @@ export function VideoPlayer({
               <span className="w-12 shrink-0 text-right font-mono text-[11px] text-white/70">
                 {formatClock(timelineValue)}
               </span>
-              <input
-                type="range"
-                min={0}
-                max={timelineMax}
-                step={0.1}
-                value={Math.min(timelineValue, timelineMax)}
-                aria-label="Seek"
-                disabled={timelineMax <= 1 && duration <= 0}
-                onPointerDown={(e) => {
-                  e.stopPropagation();
-                  scrubbingRef.current = true;
-                  setScrubbing(true);
-                  setScrubValue(videoRef.current?.currentTime || 0);
-                }}
-                onChange={(e) => {
-                  const next = Number(e.target.value);
-                  setScrubValue(next);
-                  setCurrentTime(next);
-                }}
-                onPointerUp={(e) => {
-                  e.stopPropagation();
-                  const next = Number((e.target as HTMLInputElement).value);
-                  scrubbingRef.current = false;
-                  setScrubbing(false);
-                  void seekTo(next);
-                }}
-                onTouchEnd={(e) => {
-                  e.stopPropagation();
-                  const next = Number((e.target as HTMLInputElement).value);
-                  scrubbingRef.current = false;
-                  setScrubbing(false);
-                  void seekTo(next);
-                }}
-                className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/25 accent-[var(--xp-accent)] disabled:opacity-40"
-              />
+              <div className="relative h-5 flex-1">
+                <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-white/20">
+                  {timelineMax > 0
+                    ? bufferRanges.map((range, i) => (
+                        <div
+                          key={`${range.start}-${range.end}-${i}`}
+                          className="absolute top-0 h-full bg-white/45"
+                          style={{
+                            left: `${(range.start / timelineMax) * 100}%`,
+                            width: `${(Math.max(0, range.end - range.start) / timelineMax) * 100}%`,
+                          }}
+                        />
+                      ))
+                    : null}
+                  <div
+                    className="absolute left-0 top-0 h-full bg-[var(--xp-accent)]"
+                    style={{
+                      width: `${timelineMax > 0 ? (Math.min(timelineValue, timelineMax) / timelineMax) * 100 : 0}%`,
+                    }}
+                  />
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={timelineMax}
+                  step={0.1}
+                  value={Math.min(timelineValue, timelineMax)}
+                  aria-label="Seek"
+                  disabled={timelineMax <= 1 && duration <= 0}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    scrubbingRef.current = true;
+                    setScrubbing(true);
+                    setScrubValue(videoRef.current?.currentTime || 0);
+                  }}
+                  onChange={(e) => {
+                    const next = Number(e.target.value);
+                    setScrubValue(next);
+                    setCurrentTime(next);
+                  }}
+                  onPointerUp={(e) => {
+                    e.stopPropagation();
+                    const next = Number((e.target as HTMLInputElement).value);
+                    scrubbingRef.current = false;
+                    setScrubbing(false);
+                    void seekTo(next);
+                  }}
+                  onTouchEnd={(e) => {
+                    e.stopPropagation();
+                    const next = Number((e.target as HTMLInputElement).value);
+                    scrubbingRef.current = false;
+                    setScrubbing(false);
+                    void seekTo(next);
+                  }}
+                  className="absolute inset-0 z-10 m-0 h-full w-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:opacity-0"
+                />
+              </div>
               <span className="w-12 shrink-0 font-mono text-[11px] text-white/70">
                 {formatClock(duration)}
               </span>
@@ -886,7 +1022,51 @@ export function VideoPlayer({
                   <Play className="h-5 w-5 fill-current" />
                 )}
               </button>
-              <div className="flex items-center gap-2">
+              <div className="relative flex items-center gap-2">
+                {qualityOptions.length > 0 ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowQuality((v) => !v);
+                        bumpChrome();
+                      }}
+                      className="flex h-11 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-medium text-white"
+                      aria-label={t("playerQuality")}
+                    >
+                      <Settings2 className="h-4 w-4" />
+                      {qualityOptions.find((q) => q.id === qualityId)?.label ||
+                        t("playerQuality")}
+                    </button>
+                    {showQuality ? (
+                      <div className="absolute bottom-14 right-0 z-50 min-w-[9rem] overflow-hidden rounded-xl border border-white/15 bg-black/90 py-1 shadow-xl backdrop-blur">
+                        {qualityOptions.map((q) => (
+                          <button
+                            key={q.id}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              applyQuality(q.id);
+                            }}
+                            className={`block w-full px-3 py-2 text-left text-xs ${
+                              q.id === qualityId
+                                ? "bg-white/15 text-[var(--xp-accent)]"
+                                : "text-white/85"
+                            }`}
+                          >
+                            {q.label}
+                          </button>
+                        ))}
+                        {!qualityIsHls ? (
+                          <p className="border-t border-white/10 px-3 py-2 text-[10px] text-white/50">
+                            {t("playerQualityRemuxHint")}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
                 <button
                   type="button"
                   onClick={toggleMute}
@@ -901,7 +1081,10 @@ export function VideoPlayer({
                 </button>
                 <button
                   type="button"
-                  onClick={goFullscreen}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void goFullscreen();
+                  }}
                   className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white"
                   aria-label="Fullscreen"
                 >

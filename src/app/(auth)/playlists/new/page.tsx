@@ -23,11 +23,11 @@ export default function NewPlaylistPage() {
         Back
       </Link>
       <h1 className="mb-2 font-[family-name:var(--xp-font-display)] text-3xl font-bold">
-        {isDev ? "Connect" : "Add playlist"}
+        {isDev ? "Conectar" : "Add playlist"}
       </h1>
       <p className="mb-8 text-sm text-[var(--xp-muted)]">
         {isDev
-          ? "One click uses XTREAM_DEV_* from your .env.local file."
+          ? "Un clic lee XTREAM_DEV_* de tu .env.local y entra a la app."
           : "Credentials stay on this device. We only use them to talk to your Xtream panel."}
       </p>
 

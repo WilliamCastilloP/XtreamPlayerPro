@@ -22,11 +22,15 @@ export default function PlaylistsPage() {
     setError(null);
     setLoadingId(id);
     try {
-      await authenticate({
-        serverUrl: playlist.serverUrl,
-        username: playlist.username,
-        password: playlist.password,
-      });
+      // In local/dev, skip the panel ping so a blocked IP doesn't block login.
+      // Catalog calls will still surface errors on the home screen.
+      if (process.env.NODE_ENV !== "development") {
+        await authenticate({
+          serverUrl: playlist.serverUrl,
+          username: playlist.username,
+          password: playlist.password,
+        });
+      }
       selectPlaylist(id);
       router.push("/");
     } catch (err) {
@@ -52,7 +56,7 @@ export default function PlaylistsPage() {
         </p>
         <p className="text-[var(--xp-muted)]">
           {isDev
-            ? "Connect with credentials from .env.local, or open a saved playlist."
+            ? "Pulsa Conectar para usar .env.local, o abre una lista guardada."
             : "Choose a playlist or add a new Xtream Codes account."}
         </p>
       </div>
@@ -69,7 +73,7 @@ export default function PlaylistsPage() {
             <p className="mb-1 font-medium">No playlists yet</p>
             <p className="text-sm text-[var(--xp-muted)]">
               {isDev
-                ? "Press Connect above to use .env.local."
+                ? "Pulsa Conectar arriba para usar .env.local."
                 : "Add your first server to start watching."}
             </p>
           </div>

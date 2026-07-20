@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { PlugZap } from "lucide-react";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
-import { authenticate } from "@/lib/xtream/client";
 import type { PlaylistDraft } from "@/lib/playlists/types";
 
 type DevDefaults = {
@@ -18,6 +17,7 @@ type DevDefaults = {
 
 /**
  * One-click connect using XTREAM_DEV_* from `.env.local` (dev only).
+ * Does not call the Xtream panel — just loads credentials and opens the app.
  */
 export function DevEnvConnectButton({
   className = "xp-btn xp-btn-primary w-full",
@@ -29,13 +29,11 @@ export function DevEnvConnectButton({
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   if (process.env.NODE_ENV === "production") return null;
 
   const connect = async () => {
     setError(null);
-    setNotice(null);
     setLoading(true);
     try {
       const res = await fetch("/api/dev/xtream-defaults", { cache: "no-store" });
@@ -43,7 +41,7 @@ export function DevEnvConnectButton({
       if (!data.configured || !data.serverUrl || !data.username || !data.password) {
         throw new Error(
           data.hint ||
-            "Missing XTREAM_DEV_* in .env.local. Restart npm run dev after saving.",
+            "Faltan XTREAM_DEV_* en .env.local. Guarda el archivo y reinicia npm run dev.",
         );
       }
 
@@ -53,18 +51,6 @@ export function DevEnvConnectButton({
         username: data.username,
         password: data.password,
       };
-
-      let authOk = true;
-      try {
-        await authenticate(draft);
-      } catch (authErr) {
-        authOk = false;
-        setNotice(
-          authErr instanceof Error
-            ? `Connected locally, but panel check failed: ${authErr.message}`
-            : "Connected locally, but panel check failed.",
-        );
-      }
 
       const existing = playlists.find(
         (p) =>
@@ -77,14 +63,9 @@ export function DevEnvConnectButton({
         addPlaylist(draft);
       }
 
-      if (authOk) {
-        router.replace("/");
-        return;
-      }
-      // Keep the notice visible briefly, then go home anyway.
-      window.setTimeout(() => router.replace("/"), 1200);
+      router.replace("/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not connect");
+      setError(err instanceof Error ? err.message : "No se pudo conectar");
     } finally {
       setLoading(false);
     }
@@ -99,18 +80,15 @@ export function DevEnvConnectButton({
         className={className}
       >
         <PlugZap className="h-4 w-4" />
-        {loading ? "Connecting…" : "Connect"}
+        {loading ? "Conectando…" : "Conectar"}
       </button>
       <p className="text-center text-xs text-[var(--xp-muted)]">
-        Uses <code className="text-[var(--xp-text)]">.env.local</code>{" "}
-        (<code className="text-[var(--xp-text)]">XTREAM_DEV_*</code>). Restart
-        the server after editing it.
+        Lee <code className="text-[var(--xp-text)]">.env.local</code> (
+        <code className="text-[var(--xp-text)]">XTREAM_DEV_*</code>). Reinicia
+        el servidor si acabas de editarlo.
       </p>
       {error ? (
         <p className="text-sm text-[var(--xp-danger)]">{error}</p>
-      ) : null}
-      {notice ? (
-        <p className="text-sm text-[var(--xp-accent)]">{notice}</p>
       ) : null}
     </div>
   );

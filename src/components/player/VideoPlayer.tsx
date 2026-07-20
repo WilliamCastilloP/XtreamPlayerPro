@@ -5,6 +5,7 @@ import Hls from "hls.js";
 import {
   ArrowLeft,
   Bug,
+  Copy,
   Maximize,
   Pause,
   Play,
@@ -142,6 +143,7 @@ export function VideoPlayer({
   const [statusText, setStatusText] = useState(t("playerConnecting"));
   const [showDebug, setShowDebug] = useState(false);
   const [debugLines, setDebugLines] = useState<DebugLine[]>([]);
+  const [copyState, setCopyState] = useState<"idle" | "ok" | "err">("idle");
   const [probing, setProbing] = useState(false);
   const hideTimer = useRef<number | null>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -208,6 +210,75 @@ export function VideoPlayer({
       }
     });
   }, []);
+
+  const formatDebugDump = useCallback(() => {
+    const meta = [
+      `title=${title}`,
+      kind ? `kind=${kind}` : null,
+      streamId ? `streamId=${streamId}` : null,
+      extension ? `ext=${extension}` : null,
+      `sources=${sources.length}`,
+      `sourceIndex=${sourceIndex}`,
+      typeof navigator !== "undefined" ? `ua=${navigator.userAgent}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const body = debugRef.current
+      .map((line) => `${line.at} ${line.text}`)
+      .join("\n");
+    return `${meta}\n${body}`.trim();
+  }, [title, kind, streamId, extension, sources.length, sourceIndex]);
+
+  const logDebugToTerminal = useCallback(
+    async (text: string) => {
+      if (process.env.NODE_ENV === "production") return;
+      try {
+        await fetch("/api/dev/player-debug", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title,
+            kind,
+            streamId,
+            text,
+          }),
+        });
+      } catch {
+        /* ignore — clipboard still works */
+      }
+    },
+    [title, kind, streamId],
+  );
+
+  const copyDebug = useCallback(async () => {
+    const text = formatDebugDump();
+    if (!text) {
+      setCopyState("err");
+      return;
+    }
+    void logDebugToTerminal(text);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyState("ok");
+    } catch {
+      // Fallback for older Safari / insecure contexts
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        setCopyState(ok ? "ok" : "err");
+      } catch {
+        setCopyState("err");
+      }
+    }
+    window.setTimeout(() => setCopyState("idle"), 2000);
+  }, [formatDebugDump, logDebugToTerminal]);
 
   const goBack = useCallback(() => {
     if (typeof window !== "undefined" && window.history.length > 1) {
@@ -298,7 +369,9 @@ export function VideoPlayer({
           : t("playerPlaybackFailed"),
       );
       setShowDebug(true);
-      void runProbes();
+      // Probe then dump to the npm run dev terminal so it's easy to share.
+      await runProbes();
+      if (!disposed) void logDebugToTerminal(formatDebugDump());
     };
 
     const failOver = (reason?: string) => {
@@ -641,6 +714,8 @@ export function VideoPlayer({
     sourceIndex,
     pushDebug,
     runProbes,
+    formatDebugDump,
+    logDebugToTerminal,
     extension,
   ]);
 
@@ -1103,6 +1178,19 @@ export function VideoPlayer({
               {t("playerDebug")}
             </p>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={!debugLines.length}
+                onClick={() => void copyDebug()}
+                className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-[11px] text-white disabled:opacity-50"
+              >
+                <Copy className="h-3 w-3" />
+                {copyState === "ok"
+                  ? t("playerDebugCopied")
+                  : copyState === "err"
+                    ? t("playerDebugCopyFailed")
+                    : t("playerDebugCopy")}
+              </button>
               <button
                 type="button"
                 disabled={probing}

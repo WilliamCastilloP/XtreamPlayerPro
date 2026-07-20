@@ -1,16 +1,6 @@
 import { NextRequest } from "next/server";
-import { Agent } from "undici";
 import { buildPlayerApiUrl, normalizeServerUrl } from "./urls";
 import type { XtreamCredentials } from "./types";
-
-/** Local/dev only: some IPTV panels use broken/self-signed TLS certs. */
-const insecureTls =
-  process.env.XTREAM_INSECURE_TLS === "1" ||
-  process.env.XTREAM_INSECURE_TLS === "true";
-
-const insecureAgent = insecureTls
-  ? new Agent({ connect: { rejectUnauthorized: false } })
-  : undefined;
 
 export function credentialsFromRequest(
   request: NextRequest,
@@ -52,10 +42,6 @@ export async function fetchXtreamJson(
         Accept: "application/json",
         "User-Agent": "XTREAM/1.0",
       },
-      ...(insecureAgent
-        ? // Node's fetch (undici) accepts a dispatcher for TLS overrides.
-          ({ dispatcher: insecureAgent } as RequestInit)
-        : {}),
     });
   } catch (error) {
     const root =
@@ -69,7 +55,7 @@ export async function fetchXtreamJson(
           ? root
           : "network error";
     const tlsHint = /certificate|SSL|TLS|UNABLE_TO_VERIFY/i.test(detail)
-      ? " If the panel uses a bad HTTPS certificate, restart with XTREAM_INSECURE_TLS=1."
+      ? " If the panel uses a bad HTTPS certificate, restart with: set XTREAM_INSECURE_TLS=1 (or NODE_TLS_REJECT_UNAUTHORIZED=0)."
       : "";
     throw new Error(
       `Cannot reach Xtream panel (${detail}). Check the Server URL and that this PC can open the panel in a browser.${tlsHint}`,

@@ -5,9 +5,7 @@ import Hls from "hls.js";
 import {
   ArrowLeft,
   Bug,
-  Captions,
   Copy,
-  Languages,
   Maximize,
   Minimize,
   Pause,
@@ -32,11 +30,7 @@ import {
   type BufferRange,
   type RemuxHandle,
 } from "@/lib/player/mkv-playback";
-import {
-  buildServerHlsSubsUrl,
-  parseXtreamTracksFromPlaylist,
-  type MediaTrackOption,
-} from "@/lib/player/tracks";
+import { cueTextAt, parseWebVtt, type VttCue } from "@/lib/player/vtt";
 
 const CONNECT_READY_SEC = 2.5;
 const CONNECT_READY_SEEK_SEC = 1.2;
@@ -63,10 +57,11 @@ function captureFreezeFrame(video: HTMLVideoElement): string | null {
   }
 }
 
-function withServerHlsStart(
+function withServerHlsParams(
   url: string,
   startSec: number,
-  opts?: { warm?: boolean; audio?: number },
+  audioIndex = 0,
+  opts?: { warm?: boolean },
 ): string {
   if (!url.includes("/api/hls")) return url;
   try {
@@ -76,16 +71,55 @@ function withServerHlsStart(
     const snapped = snapHlsStart(startSec);
     if (snapped >= 1) absolute.searchParams.set("start", String(snapped));
     else absolute.searchParams.delete("start");
+    if (audioIndex > 0) absolute.searchParams.set("audio", String(audioIndex));
+    else absolute.searchParams.delete("audio");
     if (opts?.warm) absolute.searchParams.set("warm", "1");
     else absolute.searchParams.delete("warm");
-    const audio = Math.max(0, Math.floor(opts?.audio ?? 0));
-    if (audio > 0) absolute.searchParams.set("audio", String(audio));
-    else absolute.searchParams.delete("audio");
     if (url.startsWith("http")) return absolute.toString();
     return `${absolute.pathname}?${absolute.searchParams.toString()}`;
   } catch {
     return url;
   }
+}
+
+/** Shorter window = faster first paint; we prefetch the next chunk in the background. */
+const SUB_WINDOW_SEC = 240;
+/** Softsubs from fast `-ss` tend to land ~1s early vs the HLS video clock. */
+const SUBTITLE_DELAY_SEC = 1.5;
+
+/** Rewrite `/api/hls?url=` → `/api/hls/tracks?url=` or `/api/hls/sub?url=`. */
+function serverHlsApiUrl(
+  hlsUrl: string,
+  kind: "tracks" | "sub",
+  subIndex?: number,
+  windowFrom?: number,
+  windowDuration = SUB_WINDOW_SEC,
+): string | null {
+  if (!hlsUrl.includes("/api/hls")) return null;
+  try {
+    const absolute = hlsUrl.startsWith("http")
+      ? new URL(hlsUrl)
+      : new URL(hlsUrl, typeof window !== "undefined" ? window.location.origin : "http://local");
+    absolute.pathname = absolute.pathname.replace(/\/api\/hls\/?$/, `/api/hls/${kind}`);
+    absolute.searchParams.delete("start");
+    absolute.searchParams.delete("audio");
+    if (kind === "sub") {
+      absolute.searchParams.set("index", String(subIndex ?? 0));
+      // Same 2s snap as server HLS video sessions.
+      const from = snapHlsStart(windowFrom || 0);
+      absolute.searchParams.set("from", String(from));
+      absolute.searchParams.set("duration", String(windowDuration));
+    }
+    if (hlsUrl.startsWith("http")) return absolute.toString();
+    return `${absolute.pathname}?${absolute.searchParams.toString()}`;
+  } catch {
+    return null;
+  }
+}
+
+function clearInjectedTextTracks(video: HTMLVideoElement) {
+  const injected = video.querySelectorAll("track[data-xp-sub]");
+  injected.forEach((el) => el.remove());
 }
 
 function mediaBufferedAhead(video: HTMLVideoElement): number {
@@ -144,6 +178,19 @@ function formatClock(totalSeconds: number): string {
     return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
   }
   return `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+type TrackOption = { id: number; label: string };
+
+function mediaTrackLabel(
+  track: { name?: string; lang?: string; label?: string },
+  index: number,
+  fallback: string,
+): string {
+  const name = track.name || track.label;
+  if (name && name.trim()) return name.trim();
+  if (track.lang && track.lang.trim()) return track.lang.trim().toUpperCase();
+  return `${fallback} ${index + 1}`;
 }
 
 async function diagnoseSource(url: string): Promise<string | null> {
@@ -231,6 +278,7 @@ export function VideoPlayer({
   const [needsUnmute, setNeedsUnmute] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
   const [serverHlsOffset, setServerHlsOffset] = useState(0);
+  const [serverHlsAudio, setServerHlsAudio] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(() =>
     durationHint && durationHint > 0 ? durationHint : 0,
@@ -242,25 +290,29 @@ export function VideoPlayer({
   /** Cover art, or a freeze-frame data URL held across seek reloads. */
   const [holdPoster, setHoldPoster] = useState<string | undefined>(poster);
   const [bufferRanges, setBufferRanges] = useState<BufferRange[]>([]);
-  const [qualityOptions, setQualityOptions] = useState<
-    { id: number; label: string }[]
-  >([]);
+  const [qualityOptions, setQualityOptions] = useState<TrackOption[]>([]);
   const [qualityId, setQualityId] = useState(-1);
-  const [showQuality, setShowQuality] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [qualityIsHls, setQualityIsHls] = useState(false);
-  const [audioOptions, setAudioOptions] = useState<MediaTrackOption[]>([]);
-  const [subOptions, setSubOptions] = useState<MediaTrackOption[]>([]);
+  const [audioOptions, setAudioOptions] = useState<TrackOption[]>([]);
   const [audioId, setAudioId] = useState(0);
-  const [subId, setSubId] = useState(-1);
-  const [showAudio, setShowAudio] = useState(false);
-  const [showSubs, setShowSubs] = useState(false);
-  const [serverHlsAudio, setServerHlsAudio] = useState(0);
+  const [subtitleOptions, setSubtitleOptions] = useState<TrackOption[]>([]);
+  const [subtitleId, setSubtitleId] = useState(-1);
+  const [subtitleCues, setSubtitleCues] = useState<VttCue[]>([]);
+  const [subtitleLoading, setSubtitleLoading] = useState(false);
+  const [subtitleError, setSubtitleError] = useState<string | null>(null);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverPct, setHoverPct] = useState(0);
   const scrubbingRef = useRef(false);
+  const subtitleAbortRef = useRef<AbortController | null>(null);
+  const subtitleCacheRef = useRef<Map<string, VttCue[]>>(new Map());
+  const subtitleWindowRef = useRef<{
+    id: number;
+    from: number;
+    duration: number;
+  } | null>(null);
   const prefetchTimer = useRef<number | null>(null);
   const seekingReloadRef = useRef(false);
-  const subTrackElRef = useRef<HTMLTrackElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sourcesKey = sources.map((s) => s.url).join("|");
   const [seenSourcesKey, setSeenSourcesKey] = useState(sourcesKey);
@@ -277,28 +329,31 @@ export function VideoPlayer({
     setQualityId(-1);
     setQualityIsHls(false);
     setAudioOptions([]);
-    setSubOptions([]);
     setAudioId(0);
-    setSubId(-1);
-    setShowAudio(false);
-    setShowSubs(false);
-    setShowQuality(false);
-    setServerHlsAudio(0);
+    setSubtitleOptions([]);
+    setSubtitleId(-1);
+    setSubtitleCues([]);
+    setSubtitleLoading(false);
+    setSubtitleError(null);
+    subtitleCacheRef.current = new Map();
+    subtitleWindowRef.current = null;
+    subtitleAbortRef.current?.abort();
+    subtitleAbortRef.current = null;
+    setShowSettings(false);
+    setHoverTime(null);
     setNeedsUnmute(false);
     setAwaitingTap(false);
     setHasStarted(false);
     setServerHlsOffset(0);
+    setServerHlsAudio(0);
     setSeekingUi(false);
     seekingReloadRef.current = false;
     setHoldPoster(poster);
-    setHoverTime(null);
   }
 
   const candidate = sources[sourceIndex];
   const src = candidate?.url || "";
-  const playSrc = withServerHlsStart(src, serverHlsOffset, {
-    audio: serverHlsAudio,
-  });
+  const playSrc = withServerHlsParams(src, serverHlsOffset, serverHlsAudio);
   const isServerHls = src.includes("/api/hls");
 
   const pushDebug = useCallback((text: string) => {
@@ -411,7 +466,7 @@ export function VideoPlayer({
     setShowChrome(true);
     if (hideTimer.current) window.clearTimeout(hideTimer.current);
     hideTimer.current = window.setTimeout(() => {
-      if (playing && !error && !showDebug) setShowChrome(false);
+      if (playing && !error && !showDebug && !showSettings) setShowChrome(false);
     }, 2800);
   };
 
@@ -467,6 +522,7 @@ export function VideoPlayer({
       remuxRef.current = null;
     }
     video.removeAttribute("src");
+    clearInjectedTextTracks(video);
     video.load();
 
     const setProgress = (pct: number) => {
@@ -654,6 +710,18 @@ export function VideoPlayer({
             reportConnectProgress();
           }
         },
+        onAudioTracks: (tracks, selectedId) => {
+          if (disposed) return;
+          if (tracks.length > 1) {
+            setAudioOptions(
+              tracks.map((track) => ({ id: track.id, label: track.label })),
+            );
+            setAudioId(selectedId);
+          } else {
+            setAudioOptions([]);
+            setAudioId(0);
+          }
+        },
       })
         .then((handle) => {
           if (disposed) {
@@ -664,6 +732,9 @@ export function VideoPlayer({
           setQualityOptions([{ id: -1, label: t("playerQualityAuto") }]);
           setQualityId(-1);
           setQualityIsHls(false);
+          // Softsubs aren't available on the client remux path (mediabunny).
+          setSubtitleOptions([]);
+          setSubtitleId(-1);
           setHasStarted(true);
           setSeekingUi(false);
           seekingReloadRef.current = false;
@@ -712,6 +783,7 @@ export function VideoPlayer({
       isHls &&
       !useHlsJs &&
       !!video.canPlayType("application/vnd.apple.mpegurl");
+    let cleanupNativeTracks: (() => void) | null = null;
 
     if (useHlsJs) {
       pushDebug(`engine=hls.js · ${candidate.label}`);
@@ -727,21 +799,6 @@ export function VideoPlayer({
             if (!disposed && best > 0) {
               setDuration((prev) => Math.max(prev, best));
               pushDebug(`hls · duration hint ${Math.round(best)}s`);
-            }
-            const tracks = parseXtreamTracksFromPlaylist(text);
-            if (!disposed) {
-              if (tracks.audio.length) {
-                setAudioOptions(tracks.audio);
-                setAudioId(serverHlsAudio);
-              }
-              if (tracks.subs.length) {
-                setSubOptions(tracks.subs);
-              }
-              if (tracks.audio.length || tracks.subs.length) {
-                pushDebug(
-                  `hls · tracks audio=${tracks.audio.length} subs=${tracks.subs.length}`,
-                );
-              }
             }
           } catch {
             /* ignore */
@@ -792,30 +849,31 @@ export function VideoPlayer({
         }
       };
 
-      const syncHlsJsTracks = () => {
-        if (disposed || playSrc.includes("/api/hls")) return;
-        const audios = (hls.audioTracks || []).map((track, index) => ({
+      const syncHlsTracks = () => {
+        if (disposed || !hlsRef.current) return;
+        // Our ffmpeg proxy is single-rendition; audio/subs come from /api/hls/tracks.
+        if (playSrc.includes("/api/hls")) return;
+        const current = hlsRef.current;
+        const audios = current.audioTracks.map((track, index) => ({
           id: index,
-          lang: track.lang || "",
-          label:
-            track.name ||
-            track.lang ||
-            `${t("playerAudio")} ${index + 1}`,
+          label: mediaTrackLabel(track, index, "Audio"),
         }));
-        const subs = (hls.subtitleTracks || []).map((track, index) => ({
-          id: index,
-          lang: track.lang || "",
-          label:
-            track.name ||
-            track.lang ||
-            `${t("playerSubtitles")} ${index + 1}`,
-          text: true,
-        }));
-        if (audios.length) {
-          setAudioOptions(audios);
-          setAudioId(hls.audioTrack >= 0 ? hls.audioTrack : 0);
+        setAudioOptions(audios.length > 1 ? audios : []);
+        setAudioId(current.audioTrack);
+        if (current.subtitleTracks.length > 0) {
+          setSubtitleOptions([
+            { id: -1, label: t("playerSubtitlesOff") },
+            ...current.subtitleTracks.map((track, index) => ({
+              id: index,
+              label: mediaTrackLabel(track, index, "CC"),
+            })),
+          ]);
+          setSubtitleId(current.subtitleTrack);
+          current.subtitleDisplay = true;
+        } else {
+          setSubtitleOptions([]);
+          setSubtitleId(-1);
         }
-        if (subs.length) setSubOptions(subs);
       };
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_ev, data) => {
@@ -837,13 +895,25 @@ export function VideoPlayer({
           setQualityOptions([]);
           setQualityIsHls(false);
         }
-        syncHlsJsTracks();
-        pushDebug(`manifest ok · levels=${data.levels?.length || 0}`);
+        syncHlsTracks();
+        pushDebug(
+          `manifest ok · levels=${data.levels?.length || 0} · audio=${data.audioTracks?.length || 0} · subs=${data.subtitleTracks?.length || 0}`,
+        );
         void waitAndPlay();
       });
 
-      hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, syncHlsJsTracks);
-      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, syncHlsJsTracks);
+      hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => {
+        syncHlsTracks();
+      });
+      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => {
+        syncHlsTracks();
+      });
+      hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, () => {
+        if (!disposed && hlsRef.current) setAudioId(hlsRef.current.audioTrack);
+      });
+      hls.on(Hls.Events.SUBTITLE_TRACK_SWITCH, (_ev, data) => {
+        if (!disposed) setSubtitleId(data.id);
+      });
 
       hls.on(Hls.Events.LEVEL_LOADED, (_ev, data) => {
         if (disposed) return;
@@ -895,7 +965,45 @@ export function VideoPlayer({
         `engine=native · hls=${isHls} · canPlay=${video.canPlayType("application/vnd.apple.mpegurl") || "n/a"}`,
       );
       video.src = playSrc;
+      const syncNativeTextTracks = () => {
+        if (disposed || hlsRef.current) return;
+        const list = video.textTracks;
+        const tracks: TrackOption[] = [];
+        let selected = -1;
+        for (let i = 0; i < list.length; i += 1) {
+          const track = list[i]!;
+          if (track.kind !== "subtitles" && track.kind !== "captions") continue;
+          const id = tracks.length;
+          tracks.push({
+            id,
+            label: mediaTrackLabel(
+              { label: track.label, lang: track.language },
+              id,
+              "CC",
+            ),
+          });
+          if (track.mode === "showing") selected = id;
+          // Keep cues available; UI toggles showing vs hidden.
+          if (track.mode === "disabled") track.mode = "hidden";
+        }
+        if (tracks.length > 0) {
+          setSubtitleOptions([
+            { id: -1, label: t("playerSubtitlesOff") },
+            ...tracks,
+          ]);
+          setSubtitleId(selected);
+        } else {
+          setSubtitleOptions([]);
+          setSubtitleId(-1);
+        }
+      };
       video.addEventListener("loadedmetadata", onLoaded);
+      video.addEventListener("loadedmetadata", syncNativeTextTracks);
+      video.textTracks.addEventListener("addtrack", syncNativeTextTracks);
+      cleanupNativeTracks = () => {
+        video.removeEventListener("loadedmetadata", syncNativeTextTracks);
+        video.textTracks.removeEventListener("addtrack", syncNativeTextTracks);
+      };
       video.addEventListener("error", onNativeError);
       const tryPlay = () => {
         reportConnectProgress();
@@ -917,6 +1025,7 @@ export function VideoPlayer({
 
     return () => {
       disposed = true;
+      cleanupNativeTracks?.();
       video.removeEventListener("play", onPlay);
       video.removeEventListener("pause", onPause);
       video.removeEventListener("timeupdate", onTime);
@@ -932,15 +1041,6 @@ export function VideoPlayer({
       if (remuxRef.current) {
         remuxRef.current.stop();
         remuxRef.current = null;
-      }
-      const subEl = subTrackElRef.current;
-      if (subEl) {
-        try {
-          subEl.remove();
-        } catch {
-          /* ignore */
-        }
-        subTrackElRef.current = null;
       }
       video.removeAttribute("src");
       video.load();
@@ -961,7 +1061,6 @@ export function VideoPlayer({
     extension,
     durationHint,
     serverHlsOffset,
-    serverHlsAudio,
   ]);
 
   useEffect(
@@ -1074,132 +1173,215 @@ export function VideoPlayer({
 
   const applyQuality = (id: number) => {
     setQualityId(id);
-    setShowQuality(false);
-    setShowAudio(false);
-    setShowSubs(false);
     const hls = hlsRef.current;
-    if (!hls) return;
-    hls.currentLevel = id; // -1 = auto
+    if (hls) {
+      hls.currentLevel = id; // -1 = auto
+    }
     pushDebug(`quality · ${id < 0 ? "auto" : id}`);
     bumpChrome();
   };
 
-  const clearSideSubtitles = () => {
+  const restartServerHlsAt = (absoluteSec: number, nextAudio: number) => {
     const video = videoRef.current;
-    const el = subTrackElRef.current;
-    if (el) {
-      try {
-        el.remove();
-      } catch {
-        /* ignore */
-      }
-      subTrackElRef.current = null;
-    }
-    if (!video) return;
-    for (let i = 0; i < video.textTracks.length; i += 1) {
-      video.textTracks[i].mode = "disabled";
-    }
+    const snapped = snapHlsStart(absoluteSec);
+    const frame = video ? captureFreezeFrame(video) : null;
+    if (frame) setHoldPoster(frame);
+    seekingReloadRef.current = true;
+    setHasStarted(false);
+    setLoadPercent(0);
+    setSeekingUi(true);
+    setStatusText(t("playerSeeking"));
+    setServerHlsAudio(nextAudio);
+    setServerHlsOffset(snapped);
+    setCurrentTime(0);
   };
 
   const applyAudio = (id: number) => {
-    setShowAudio(false);
-    setShowQuality(false);
-    setShowSubs(false);
-    bumpChrome();
-    if (isServerHls) {
-      if (id === serverHlsAudio) {
-        setAudioId(id);
-        return;
-      }
-      const video = videoRef.current;
-      if (video) {
-        const frame = captureFreezeFrame(video);
-        if (frame) setHoldPoster(frame);
-      }
-      seekingReloadRef.current = true;
-      setSeekingUi(true);
-      setHasStarted(false);
-      setLoadPercent(0);
-      setStatusText(t("playerConnecting"));
-      setAudioId(id);
-      setServerHlsAudio(id);
-      pushDebug(`audio · server track ${id}`);
-      return;
-    }
-    const hls = hlsRef.current;
-    if (hls && hls.audioTracks?.length) {
-      hls.audioTrack = id;
-      setAudioId(id);
-      pushDebug(`audio · hls track ${id}`);
+    if (id === audioId) {
+      bumpChrome();
       return;
     }
     setAudioId(id);
+    const hls = hlsRef.current;
+    if (isServerHls) {
+      const absolute = serverHlsOffset + (videoRef.current?.currentTime || 0);
+      pushDebug(`audio · server HLS · ${id}`);
+      restartServerHlsAt(absolute, id);
+      bumpChrome();
+      return;
+    }
+    if (remuxRef.current) {
+      pushDebug(`audio · remux · ${id}`);
+      void remuxRef.current.setAudioTrack(id);
+      bumpChrome();
+      return;
+    }
+    if (hls) {
+      hls.audioTrack = id;
+      pushDebug(`audio · ${id}`);
+    }
+    bumpChrome();
   };
 
-  const applySubtitles = async (id: number) => {
-    setShowSubs(false);
-    setShowQuality(false);
-    setShowAudio(false);
-    bumpChrome();
-    setSubId(id);
+  const clearProxySubtitles = () => {
+    subtitleAbortRef.current?.abort();
+    subtitleAbortRef.current = null;
+    subtitleWindowRef.current = null;
+    setSubtitleCues([]);
+    setSubtitleLoading(false);
+    setSubtitleError(null);
+    const video = videoRef.current;
+    if (video) clearInjectedTextTracks(video);
+  };
 
-    if (id < 0) {
-      clearSideSubtitles();
-      const hls = hlsRef.current;
-      if (hls) hls.subtitleTrack = -1;
-      pushDebug("subs · off");
+  const loadProxySubtitles = async (
+    id: number,
+    opts?: { localTime?: number; quiet?: boolean },
+  ) => {
+    // Anchor to the same HLS session start as the video, then page forward in
+    // relative windows so cues line up with video.currentTime (not wall-clock).
+    const localTime = Math.max(
+      0,
+      opts?.localTime ?? videoRef.current?.currentTime ?? currentTime,
+    );
+    const overlap = 30;
+    const step = Math.max(60, SUB_WINDOW_SEC - overlap);
+    const segmentStart = Math.floor(localTime / step) * step;
+    const from = snapHlsStart(serverHlsOffset + segmentStart);
+    const localOffset = Math.max(0, from - serverHlsOffset);
+    const cacheKey = `${id}:${from}:${SUB_WINDOW_SEC}`;
+    const cached = subtitleCacheRef.current.get(cacheKey);
+    if (cached) {
+      subtitleWindowRef.current = {
+        id,
+        from,
+        duration: SUB_WINDOW_SEC,
+      };
+      setSubtitleCues(cached);
+      setSubtitleLoading(false);
+      setSubtitleError(null);
+      if (!opts?.quiet) {
+        pushDebug(
+          `subtitle · cache · ${id} · from=${from}s · cues=${cached.length}`,
+        );
+      }
       return;
     }
+    const vttUrl = serverHlsApiUrl(src, "sub", id, from, SUB_WINDOW_SEC);
+    if (!vttUrl) {
+      setSubtitleError(t("playerSubtitlesFailed"));
+      setSubtitleLoading(false);
+      return;
+    }
+    subtitleAbortRef.current?.abort();
+    const ac = new AbortController();
+    subtitleAbortRef.current = ac;
+    if (!opts?.quiet) {
+      setSubtitleLoading(true);
+      setSubtitleError(null);
+      pushDebug(`subtitle · loading · ${id} · hlsFrom=${from}s`);
+    }
+    try {
+      const res = await fetch(vttUrl, {
+        cache: "no-store",
+        signal: ac.signal,
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const raw = await res.text();
+      if (ac.signal.aborted) return;
+      // VTT is relative to `from`; shift into the HLS session timeline (currentTime).
+      const cues = parseWebVtt(raw).map((cue) => ({
+        start: cue.start + localOffset,
+        end: cue.end + localOffset,
+        text: cue.text,
+      }));
+      subtitleCacheRef.current.set(cacheKey, cues);
+      subtitleWindowRef.current = {
+        id,
+        from,
+        duration: SUB_WINDOW_SEC,
+      };
+      setSubtitleCues(cues);
+      setSubtitleLoading(false);
+      pushDebug(
+        `subtitle · ready · ${id} · from=${from}s · cues=${cues.length}`,
+      );
+      if (!cues.length && !opts?.quiet) {
+        setSubtitleError(t("playerSubtitlesFailed"));
+      }
+      // Prefetch the next window so scrubbing forward stays smooth.
+      const nextLocal = localOffset + step;
+      const nextFrom = snapHlsStart(serverHlsOffset + nextLocal);
+      const nextKey = `${id}:${nextFrom}:${SUB_WINDOW_SEC}`;
+      if (!subtitleCacheRef.current.has(nextKey)) {
+        const nextUrl = serverHlsApiUrl(src, "sub", id, nextFrom, SUB_WINDOW_SEC);
+        if (nextUrl) {
+          void fetch(nextUrl, { cache: "no-store" })
+            .then(async (nextRes) => {
+              if (!nextRes.ok) return;
+              const nextRaw = await nextRes.text();
+              const nextCues = parseWebVtt(nextRaw).map((cue) => ({
+                start: cue.start + nextLocal,
+                end: cue.end + nextLocal,
+                text: cue.text,
+              }));
+              subtitleCacheRef.current.set(nextKey, nextCues);
+            })
+            .catch(() => undefined);
+        }
+      }
+    } catch (err) {
+      if (ac.signal.aborted) return;
+      subtitleWindowRef.current = {
+        id,
+        from,
+        duration: SUB_WINDOW_SEC,
+      };
+      setSubtitleLoading(false);
+      if (!opts?.quiet) {
+        setSubtitleError(t("playerSubtitlesFailed"));
+      }
+      pushDebug(
+        `subtitle · failed · ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
 
+  const applySubtitle = (id: number) => {
+    setSubtitleId(id);
+    const hls = hlsRef.current;
+    const video = videoRef.current;
     if (isServerHls) {
-      const opt = subOptions.find((s) => s.id === id);
-      if (opt && opt.text === false) {
-        setStatusText(t("playerSubsUnsupported"));
-        pushDebug(`subs · unsupported image track ${id}`);
-        window.setTimeout(() => {
-          if (hasStarted) setStatusText(t("playerPlaying"));
-        }, 2200);
-        setSubId(-1);
+      if (id < 0) {
+        clearProxySubtitles();
+        pushDebug("subtitle · off");
+        bumpChrome();
         return;
       }
-      const subsUrl = buildServerHlsSubsUrl(src, id);
-      if (!subsUrl) return;
-      clearSideSubtitles();
-      const video = videoRef.current;
-      if (!video) return;
-      setStatusText(t("playerSubsLoading"));
-      pushDebug(`subs · load track ${id}`);
-      const trackEl = document.createElement("track");
-      trackEl.kind = "subtitles";
-      trackEl.label = opt?.label || `Sub ${id + 1}`;
-      if (opt?.lang) trackEl.srclang = opt.lang;
-      trackEl.src = subsUrl;
-      trackEl.default = true;
-      trackEl.addEventListener("load", () => {
-        for (let i = 0; i < video.textTracks.length; i += 1) {
-          video.textTracks[i].mode =
-            video.textTracks[i].label === trackEl.label ? "showing" : "disabled";
-        }
-        if (hasStarted) setStatusText(t("playerPlaying"));
-      });
-      trackEl.addEventListener("error", () => {
-        pushDebug("subs · failed to load VTT");
-        setStatusText(t("playerSubsUnsupported"));
-        setSubId(-1);
-        window.setTimeout(() => {
-          if (hasStarted) setStatusText(t("playerPlaying"));
-        }, 2200);
-      });
-      video.appendChild(trackEl);
-      subTrackElRef.current = trackEl;
+      void loadProxySubtitles(id);
+      bumpChrome();
       return;
     }
-
-    const hls = hlsRef.current;
-    if (hls && hls.subtitleTracks?.length) {
+    clearProxySubtitles();
+    if (hls) {
+      hls.subtitleDisplay = id >= 0;
       hls.subtitleTrack = id;
-      pushDebug(`subs · hls track ${id}`);
+      pushDebug(`subtitle · ${id < 0 ? "off" : id}`);
+    } else if (video) {
+      const list = video.textTracks;
+      let subIndex = 0;
+      for (let i = 0; i < list.length; i += 1) {
+        const track = list[i]!;
+        if (track.kind !== "subtitles" && track.kind !== "captions") continue;
+        track.mode =
+          id >= 0 && subIndex === id ? "showing" : "hidden";
+        subIndex += 1;
+      }
+      pushDebug(`subtitle · ${id < 0 ? "off" : id}`);
     }
+    bumpChrome();
   };
 
   const seekTo = async (seconds: number) => {
@@ -1269,11 +1451,6 @@ export function VideoPlayer({
     setHasStarted(false);
     setServerHlsOffset(0);
     setServerHlsAudio(0);
-    setAudioId(0);
-    setSubId(-1);
-    setAudioOptions([]);
-    setSubOptions([]);
-    clearSideSubtitles();
     setLoadPercent(0);
     setSourceIndex(0);
     setSeekingUi(false);
@@ -1292,14 +1469,70 @@ export function VideoPlayer({
       const start = snapHlsStart(absoluteSec);
       if (start <= 0) return;
       // warm=1: start ffmpeg without killing the session currently playing.
-      const warmUrl = withServerHlsStart(src, start, {
+      const warmUrl = withServerHlsParams(src, start, serverHlsAudio, {
         warm: true,
-        audio: serverHlsAudio,
       });
       void fetch(warmUrl, { cache: "no-store" }).catch(() => undefined);
     },
     [isServerHls, src, serverHlsAudio],
   );
+
+  // Soft audio/subtitle list from the ffmpeg proxy (MKV multi-track).
+  useEffect(() => {
+    if (!isServerHls || !src) return;
+    const tracksUrl = serverHlsApiUrl(src, "tracks");
+    if (!tracksUrl) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(tracksUrl, { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as {
+          audio?: { id: number; label: string }[];
+          subtitles?: { id: number; label: string }[];
+        };
+        if (cancelled) return;
+        const audios = data.audio || [];
+        if (audios.length > 1) {
+          setAudioOptions(
+            audios.map((a) => ({ id: a.id, label: a.label || `Audio ${a.id + 1}` })),
+          );
+          setAudioId((prev) =>
+            audios.some((a) => a.id === prev) ? prev : audios[0]!.id,
+          );
+        } else {
+          setAudioOptions([]);
+        }
+        const subs = data.subtitles || [];
+        if (subs.length > 0) {
+          setSubtitleOptions([
+            { id: -1, label: t("playerSubtitlesOff") },
+            ...subs.map((s) => ({
+              id: s.id,
+              label: s.label || `Subtitles ${s.id + 1}`,
+            })),
+          ]);
+          // Don't warm-extract here — competing with HLS truncated the VTT
+          // to ~15 minutes. Extract on demand when the user picks a track.
+        } else {
+          setSubtitleOptions([]);
+          setSubtitleId(-1);
+        }
+        pushDebug(
+          `proxy tracks · audio=${audios.length} · subs=${subs.length}`,
+        );
+      } catch (err) {
+        if (!cancelled) {
+          pushDebug(
+            `proxy tracks failed · ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isServerHls, src, t, pushDebug]);
 
   const schedulePrefetch = useCallback(
     (absoluteSec: number) => {
@@ -1363,6 +1596,56 @@ export function VideoPlayer({
     start: r.start + serverHlsOffset,
     end: r.end + serverHlsOffset,
   }));
+  const hasSettings =
+    qualityOptions.length > 0 ||
+    audioOptions.length > 0 ||
+    subtitleOptions.length > 0;
+  const tooltipTime = scrubbing ? scrubValue : hoverTime;
+  const tooltipPct = scrubbing
+    ? timelineMax > 0
+      ? (Math.min(scrubValue, timelineMax) / timelineMax) * 100
+      : 0
+    : hoverPct;
+  const showSeekTooltip =
+    tooltipTime !== null && controlsEnabled && timelineMax > 1;
+  // Cues are on the HLS-local timeline; delay slightly so they don't lead the video.
+  const subtitleText =
+    subtitleId >= 0 && subtitleCues.length > 0
+      ? cueTextAt(
+          subtitleCues,
+          Math.max(0, currentTime - SUBTITLE_DELAY_SEC),
+        )
+      : "";
+
+  // Seek / audio switch restarts HLS at a new offset — drop stale cues.
+  useEffect(() => {
+    if (!isServerHls || subtitleId < 0) return;
+    subtitleWindowRef.current = null;
+    subtitleCacheRef.current = new Map();
+    setSubtitleCues([]);
+  }, [serverHlsOffset, serverHlsAudio, isServerHls, subtitleId]);
+
+  // Reload when the playhead leaves the current relative window.
+  useEffect(() => {
+    if (!isServerHls || subtitleId < 0 || subtitleLoading) return;
+    const win = subtitleWindowRef.current;
+    if (!win || win.id !== subtitleId) {
+      void loadProxySubtitles(subtitleId, { localTime: currentTime });
+      return;
+    }
+    const localFrom = Math.max(0, win.from - serverHlsOffset);
+    const localEnd = localFrom + win.duration;
+    if (currentTime < localFrom || currentTime >= localEnd - 45) {
+      void loadProxySubtitles(subtitleId, { localTime: currentTime });
+    }
+  }, [
+    isServerHls,
+    subtitleId,
+    subtitleLoading,
+    currentTime,
+    src,
+    serverHlsOffset,
+  ]);
 
   return (
     <div
@@ -1461,6 +1744,28 @@ export function VideoPlayer({
         </button>
       ) : null}
 
+      {subtitleId >= 0 && !error ? (
+        <div
+          className={`pointer-events-none absolute inset-x-0 z-30 flex justify-center px-6 text-center transition-[bottom] duration-300 ${
+            showChrome && hasStarted ? "bottom-28" : "bottom-10"
+          }`}
+        >
+          {subtitleLoading ? (
+            <span className="rounded bg-black/70 px-3 py-1.5 text-xs text-white/80">
+              {t("playerSubtitlesLoading")}
+            </span>
+          ) : subtitleError ? (
+            <span className="rounded bg-black/70 px-3 py-1.5 text-xs text-red-200">
+              {subtitleError}
+            </span>
+          ) : subtitleText ? (
+            <span className="max-w-[min(52rem,92vw)] whitespace-pre-line rounded bg-black/75 px-3 py-1.5 text-base font-medium leading-snug text-white shadow-lg sm:text-lg">
+              {subtitleText}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Back + title — always above error/retry overlay */}
       <div className="pointer-events-none absolute left-0 right-0 top-0 z-50 flex items-center gap-3 p-4 pt-[max(1rem,env(safe-area-inset-top))]">
         <button
@@ -1537,35 +1842,16 @@ export function VideoPlayer({
         {!error ? (
           <div className="absolute bottom-0 left-0 right-0 flex flex-col gap-3 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
             <div className="flex items-center gap-3">
-              <span className="w-12 shrink-0 text-right font-mono text-[11px] text-white/70">
+              <span className="w-14 shrink-0 text-right font-mono text-[11px] text-white/70">
                 {formatClock(timelineValue)}
               </span>
-              <div
-                className="relative h-5 flex-1"
-                onMouseMove={(e) => {
-                  if (!controlsEnabled || timelineMax <= 1) return;
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const ratio = Math.min(
-                    1,
-                    Math.max(0, (e.clientX - rect.left) / rect.width),
-                  );
-                  setHoverPct(ratio * 100);
-                  setHoverTime(ratio * timelineMax);
-                }}
-                onMouseLeave={() => {
-                  if (!scrubbingRef.current) setHoverTime(null);
-                }}
-              >
-                {(hoverTime != null || scrubbing) && timelineMax > 1 ? (
+              <div className="relative h-5 flex-1">
+                {showSeekTooltip ? (
                   <div
-                    className="pointer-events-none absolute -top-8 z-20 -translate-x-1/2 rounded-md bg-black/85 px-2 py-1 font-mono text-[11px] text-white shadow-lg ring-1 ring-white/15"
-                    style={{
-                      left: `${scrubbing
-                        ? (Math.min(scrubValue, timelineMax) / timelineMax) * 100
-                        : hoverPct}%`,
-                    }}
+                    className="pointer-events-none absolute bottom-full z-20 mb-2 -translate-x-1/2 rounded-md bg-black/90 px-2 py-1 font-mono text-[11px] font-medium text-white shadow-lg"
+                    style={{ left: `${tooltipPct}%` }}
                   >
-                    {formatClock(scrubbing ? scrubValue : (hoverTime ?? 0))}
+                    {formatClock(tooltipTime ?? 0)}
                   </div>
                 ) : null}
                 <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-white/20">
@@ -1602,6 +1888,20 @@ export function VideoPlayer({
                     scrubbingRef.current = true;
                     setScrubbing(true);
                     setScrubValue(timelineValue);
+                  }}
+                  onPointerMove={(e) => {
+                    if (!controlsEnabled || timelineMax <= 1) return;
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    if (rect.width <= 0) return;
+                    const pct = Math.max(
+                      0,
+                      Math.min(1, (e.clientX - rect.left) / rect.width),
+                    );
+                    setHoverPct(pct * 100);
+                    setHoverTime(pct * timelineMax);
+                  }}
+                  onPointerLeave={() => {
+                    if (!scrubbingRef.current) setHoverTime(null);
                   }}
                   onChange={(e) => {
                     if (!controlsEnabled) return;
@@ -1647,7 +1947,7 @@ export function VideoPlayer({
                   className="absolute inset-0 z-10 m-0 h-full w-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-not-allowed disabled:opacity-0"
                 />
               </div>
-              <span className="w-12 shrink-0 font-mono text-[11px] text-white/70">
+              <span className="w-14 shrink-0 font-mono text-[11px] text-white/70">
                 {formatClock(duration)}
               </span>
             </div>
@@ -1665,8 +1965,8 @@ export function VideoPlayer({
                   <Play className="h-5 w-5 fill-current" />
                 )}
               </button>
-              <div className="relative flex items-center gap-1.5 sm:gap-2">
-                {audioOptions.length > 0 ? (
+              <div className="relative flex items-center gap-2">
+                {hasSettings ? (
                   <>
                     <button
                       type="button"
@@ -1674,155 +1974,93 @@ export function VideoPlayer({
                       onClick={(e) => {
                         e.stopPropagation();
                         if (!controlsEnabled) return;
-                        setShowAudio((v) => !v);
-                        setShowSubs(false);
-                        setShowQuality(false);
-                        bumpChrome();
-                      }}
-                      className="flex h-11 items-center gap-1.5 rounded-full bg-white/10 px-2.5 text-xs font-medium text-white disabled:opacity-40 sm:px-3"
-                      aria-label={t("playerAudio")}
-                    >
-                      <Languages className="h-4 w-4" />
-                      <span className="hidden max-w-[5.5rem] truncate sm:inline">
-                        {audioOptions.find((a) => a.id === audioId)?.label ||
-                          t("playerAudio")}
-                      </span>
-                    </button>
-                    {showAudio ? (
-                      <div className="absolute bottom-14 right-0 z-50 max-h-56 min-w-[11rem] overflow-y-auto rounded-xl border border-white/15 bg-black/90 py-1 shadow-xl backdrop-blur">
-                        <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/45">
-                          {t("playerAudio")}
-                        </p>
-                        {audioOptions.map((a) => (
-                          <button
-                            key={`a-${a.id}`}
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              applyAudio(a.id);
-                            }}
-                            className={`block w-full px-3 py-2 text-left text-xs ${
-                              a.id === audioId
-                                ? "bg-white/15 text-[var(--xp-accent)]"
-                                : "text-white/85"
-                            }`}
-                          >
-                            {a.label}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </>
-                ) : null}
-                {subOptions.length > 0 ? (
-                  <>
-                    <button
-                      type="button"
-                      disabled={!controlsEnabled}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (!controlsEnabled) return;
-                        setShowSubs((v) => !v);
-                        setShowAudio(false);
-                        setShowQuality(false);
-                        bumpChrome();
-                      }}
-                      className={`flex h-11 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium disabled:opacity-40 sm:px-3 ${
-                        subId >= 0
-                          ? "bg-[var(--xp-accent)] text-[var(--xp-ink)]"
-                          : "bg-white/10 text-white"
-                      }`}
-                      aria-label={t("playerSubtitles")}
-                    >
-                      <Captions className="h-4 w-4" />
-                      <span className="hidden sm:inline">
-                        {t("playerSubtitles")}
-                      </span>
-                    </button>
-                    {showSubs ? (
-                      <div className="absolute bottom-14 right-0 z-50 max-h-56 min-w-[11rem] overflow-y-auto rounded-xl border border-white/15 bg-black/90 py-1 shadow-xl backdrop-blur">
-                        <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/45">
-                          {t("playerSubtitles")}
-                        </p>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void applySubtitles(-1);
-                          }}
-                          className={`block w-full px-3 py-2 text-left text-xs ${
-                            subId < 0
-                              ? "bg-white/15 text-[var(--xp-accent)]"
-                              : "text-white/85"
-                          }`}
-                        >
-                          {t("playerTrackOff")}
-                        </button>
-                        {subOptions.map((s) => (
-                          <button
-                            key={`s-${s.id}`}
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void applySubtitles(s.id);
-                            }}
-                            className={`block w-full px-3 py-2 text-left text-xs ${
-                              s.id === subId
-                                ? "bg-white/15 text-[var(--xp-accent)]"
-                                : "text-white/85"
-                            }`}
-                          >
-                            {s.label}
-                            {s.text === false ? " · PGS" : ""}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </>
-                ) : null}
-                {qualityOptions.length > 0 ? (
-                  <>
-                    <button
-                      type="button"
-                      disabled={!controlsEnabled}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (!controlsEnabled) return;
-                        setShowQuality((v) => !v);
-                        setShowAudio(false);
-                        setShowSubs(false);
+                        setShowSettings((v) => !v);
                         bumpChrome();
                       }}
                       className="flex h-11 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-medium text-white disabled:opacity-40"
-                      aria-label={t("playerQuality")}
+                      aria-label={t("playerSettings")}
                     >
                       <Settings2 className="h-4 w-4" />
-                      {qualityOptions.find((q) => q.id === qualityId)?.label ||
-                        t("playerQuality")}
+                      {t("playerSettings")}
                     </button>
-                    {showQuality ? (
-                      <div className="absolute bottom-14 right-0 z-50 min-w-[9rem] overflow-hidden rounded-xl border border-white/15 bg-black/90 py-1 shadow-xl backdrop-blur">
-                        {qualityOptions.map((q) => (
-                          <button
-                            key={q.id}
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              applyQuality(q.id);
-                            }}
-                            className={`block w-full px-3 py-2 text-left text-xs ${
-                              q.id === qualityId
-                                ? "bg-white/15 text-[var(--xp-accent)]"
-                                : "text-white/85"
-                            }`}
-                          >
-                            {q.label}
-                          </button>
-                        ))}
-                        {!qualityIsHls ? (
-                          <p className="border-t border-white/10 px-3 py-2 text-[10px] text-white/50">
-                            {t("playerQualityRemuxHint")}
-                          </p>
+                    {showSettings ? (
+                      <div className="absolute bottom-14 right-0 z-50 max-h-[min(50dvh,22rem)] w-[12.5rem] overflow-y-auto rounded-xl border border-white/15 bg-black/90 py-1 shadow-xl backdrop-blur">
+                        {qualityOptions.length > 0 ? (
+                          <div className="border-b border-white/10 pb-1">
+                            <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/45">
+                              {t("playerQuality")}
+                            </p>
+                            {qualityOptions.map((q) => (
+                              <button
+                                key={`q-${q.id}`}
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  applyQuality(q.id);
+                                }}
+                                className={`block w-full px-3 py-2 text-left text-xs ${
+                                  q.id === qualityId
+                                    ? "bg-white/15 text-[var(--xp-accent)]"
+                                    : "text-white/85"
+                                }`}
+                              >
+                                {q.label}
+                              </button>
+                            ))}
+                            {!qualityIsHls ? (
+                              <p className="px-3 py-2 text-[10px] text-white/50">
+                                {t("playerQualityRemuxHint")}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {audioOptions.length > 0 ? (
+                          <div className="border-b border-white/10 py-1">
+                            <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/45">
+                              {t("playerAudio")}
+                            </p>
+                            {audioOptions.map((option) => (
+                              <button
+                                key={`a-${option.id}`}
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  applyAudio(option.id);
+                                }}
+                                className={`block w-full px-3 py-2 text-left text-xs ${
+                                  option.id === audioId
+                                    ? "bg-white/15 text-[var(--xp-accent)]"
+                                    : "text-white/85"
+                                }`}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                        {subtitleOptions.length > 0 ? (
+                          <div className="py-1">
+                            <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/45">
+                              {t("playerSubtitles")}
+                            </p>
+                            {subtitleOptions.map((option) => (
+                              <button
+                                key={`s-${option.id}`}
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  applySubtitle(option.id);
+                                }}
+                                className={`block w-full px-3 py-2 text-left text-xs ${
+                                  option.id === subtitleId
+                                    ? "bg-white/15 text-[var(--xp-accent)]"
+                                    : "text-white/85"
+                                }`}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
                         ) : null}
                       </div>
                     ) : null}

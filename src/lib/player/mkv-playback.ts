@@ -176,10 +176,18 @@ function appendChunk(
   });
 }
 
+export type RemuxAudioTrack = {
+  id: number;
+  label: string;
+  language: string;
+};
+
 export type RemuxHandle = {
   stop: () => void;
   /** Restart remux from `seconds` (lightweight seek for MKV). */
   seek: (seconds: number) => Promise<void>;
+  /** Switch audio language (restarts remux from the current playhead). */
+  setAudioTrack: (id: number) => Promise<void>;
   objectUrl: string;
 };
 
@@ -195,6 +203,8 @@ type RemuxOpts = {
   onDuration?: (seconds: number) => void;
   /** Fired when MSE buffered ranges change (for the dual progress bar). */
   onBuffer?: (ranges: BufferRange[], currentTime: number) => void;
+  /** Fired once audio tracks are known (multi-audio MKV). */
+  onAudioTracks?: (tracks: RemuxAudioTrack[], selectedId: number) => void;
 };
 
 /**
@@ -255,6 +265,9 @@ export async function startRemuxedPlayback(
   let refillPaused = false;
   let userPaused = false;
   let audioTranscoding = false;
+  let selectedAudioId = 0;
+  let audioTrackMeta: RemuxAudioTrack[] = [];
+  let selectedAudioNumber: number | null = null;
 
   const releaseDrain = () => {
     if (drainResolve) {
@@ -485,6 +498,46 @@ export async function startRemuxedPlayback(
       formats: ALL_FORMATS,
     });
 
+    const inputAudioTracks = await input.getAudioTracks();
+    if (audioTrackMeta.length === 0 && inputAudioTracks.length > 0) {
+      const langNames: Record<string, string> = {
+        jpn: "Japanese",
+        eng: "English",
+        spa: "Spanish",
+        por: "Portuguese",
+        fre: "French",
+        fra: "French",
+        ger: "German",
+        deu: "German",
+        ita: "Italian",
+        chi: "Chinese",
+        zho: "Chinese",
+        kor: "Korean",
+        rus: "Russian",
+      };
+      audioTrackMeta = await Promise.all(
+        inputAudioTracks.map(async (track, index) => {
+          const language = ((await track.getLanguageCode()) || "und").toLowerCase();
+          const name = ((await track.getName()) || "").trim();
+          const label =
+            name ||
+            langNames[language] ||
+            (language !== "und" ? language.toUpperCase() : `Audio ${index + 1}`);
+          return { id: index, label, language };
+        }),
+      );
+      if (selectedAudioId >= audioTrackMeta.length) selectedAudioId = 0;
+      opts?.onAudioTracks?.(audioTrackMeta, selectedAudioId);
+      log(
+        `remux · audio tracks · ${audioTrackMeta.map((t) => t.label).join(" | ") || "none"}`,
+      );
+    }
+    const chosen =
+      inputAudioTracks[
+        Math.max(0, Math.min(selectedAudioId, inputAudioTracks.length - 1))
+      ] || null;
+    selectedAudioNumber = chosen ? chosen.number : null;
+
     const output = new Output({
       format: new Mp4OutputFormat({
         fastStart: "fragmented",
@@ -498,11 +551,17 @@ export async function startRemuxedPlayback(
     conversion = await Conversion.init({
       input,
       output,
-      // One video + one audio. Extra MKV tracks (2nd audio / subs) break a
-      // single MSE SourceBuffer. Do NOT discard via `n > 0` — mediabunny's `n`
-      // is 1-based and that wrongly drops the primary tracks too.
-      tracks: "primary",
+      // Keep all tracks eligible, then discard extras — MSE only wants one
+      // video + one audio. Softsubs aren't readable by mediabunny yet.
+      tracks: "all",
+      video: async (_track, n) => (n > 1 ? { discard: true } : undefined),
       audio: async (track) => {
+        if (
+          selectedAudioNumber != null &&
+          track.number !== selectedAudioNumber
+        ) {
+          return { discard: true };
+        }
         // Chrome MSE rarely accepts AC3/EAC3 in fMP4; transmux to AAC.
         const codec = await track.getCodec();
         if (codec === "ac3" || codec === "eac3") {
@@ -843,9 +902,21 @@ export async function startRemuxedPlayback(
     await startSession(target);
   };
 
+  const setAudioTrack = async (id: number) => {
+    if (closed) return;
+    if (!Number.isFinite(id) || id < 0 || id === selectedAudioId) return;
+    if (audioTrackMeta.length && id >= audioTrackMeta.length) return;
+    selectedAudioId = id;
+    const t = Math.max(0, video.currentTime || baseTime || 0);
+    log(`remux · audio → ${audioTrackMeta[id]?.label || id} @ ${t.toFixed(1)}s`);
+    userPaused = false;
+    await startSession(t);
+  };
+
   return {
     stop,
     seek,
+    setAudioTrack,
     get objectUrl() {
       return objectUrl;
     },

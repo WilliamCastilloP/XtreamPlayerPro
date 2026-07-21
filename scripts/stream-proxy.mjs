@@ -3,7 +3,9 @@
  * Standalone media proxy for XTREAM.
  *
  * - GET /api/stream?url=...  → byte-proxy (Range, HLS rewrite)
- * - GET /api/hls?url=...     → MKV/AVI/MOV → HLS via ffmpeg (Netflix-like)
+ * - GET /api/hls?url=...&start=&audio= → MKV/AVI/MOV → HLS via ffmpeg
+ * - GET /api/hls/tracks?url=... → list audio + subtitle tracks (like Smarters)
+ * - GET /api/hls/sub?url=...&index=&from=&duration= → WebVTT window (fast)
  * - GET /api/hls/session/:id/:file → HLS segments / playlist
  * - GET /health
  *
@@ -133,122 +135,72 @@ const sessions = new Map();
  * }} HlsSession
  */
 
+/**
+ * @typedef {{
+ *   id: number,
+ *   language: string,
+ *   codec: string,
+ *   title: string,
+ *   label: string,
+ *   default?: boolean,
+ * }} ProxyTrack
+ */
+
+/**
+ * @typedef {{
+ *   durationSec: number | null,
+ *   audio: ProxyTrack[],
+ *   subtitles: ProxyTrack[],
+ * }} ProbedTracks
+ */
+
+const LANG_LABELS = {
+  jpn: "Japanese",
+  ja: "Japanese",
+  eng: "English",
+  en: "English",
+  spa: "Spanish",
+  es: "Spanish",
+  por: "Portuguese",
+  pt: "Portuguese",
+  fre: "French",
+  fra: "French",
+  fr: "French",
+  ger: "German",
+  deu: "German",
+  de: "German",
+  ita: "Italian",
+  it: "Italian",
+  chi: "Chinese",
+  zho: "Chinese",
+  zh: "Chinese",
+  kor: "Korean",
+  ko: "Korean",
+  rus: "Russian",
+  ru: "Russian",
+  ara: "Arabic",
+  ar: "Arabic",
+  hin: "Hindi",
+  hi: "Hindi",
+  und: "Unknown",
+};
+
+const TEXT_SUB_CODECS =
+  /subrip|ass|ssa|webvtt|mov_text|text|srt|utf8|microdvd|mpl2|jacosub|sami|realtext|subviewer|vplayer/i;
+
 function sessionIdFor(url, startSec = 0, audioIndex = 0) {
-  const key = `${url}|${Math.max(0, Math.floor(startSec))}|a${Math.max(0, Math.floor(audioIndex))}`;
+  const key = `${url}|${Math.max(0, Math.floor(startSec))}|a${Math.max(0, audioIndex | 0)}`;
   return createHash("sha1").update(key).digest("hex").slice(0, 16);
 }
 
-/** @type {Map<string, { audio: Array<{id:number,lang:string,label:string}>, subs: Array<{id:number,lang:string,label:string,text:boolean}> }>} */
-const tracksBySource = new Map();
-/** @type {Map<string, string>} cacheKey → vtt path */
-const subsFileByKey = new Map();
-
-/**
- * @param {string} text
- */
-function parseStreamsFromFfmpeg(text) {
-  const audio = [];
-  const subs = [];
-  const re =
-    /Stream #\d+:\d+(?:\(([^)]*)\))?:\s*(Audio|Subtitle):\s*([^\r\n,]+)/gi;
-  let m;
-  let aIdx = 0;
-  let sIdx = 0;
-  while ((m = re.exec(text))) {
-    const lang = (m[1] || "").trim();
-    const kind = m[2].toLowerCase();
-    const codec = (m[3] || "").trim();
-    const langBit = lang ? lang.toUpperCase() : "";
-    if (kind === "audio") {
-      audio.push({
-        id: aIdx,
-        lang,
-        label: [langBit, codec].filter(Boolean).join(" · ") || `Audio ${aIdx + 1}`,
-      });
-      aIdx += 1;
-    } else {
-      const imageBased = /hdmv_pgs|dvd_subtitle|dvb_subtitle|pgssub/i.test(
-        codec,
-      );
-      subs.push({
-        id: sIdx,
-        lang,
-        label: [langBit, codec].filter(Boolean).join(" · ") || `Sub ${sIdx + 1}`,
-        text: !imageBased,
-      });
-      sIdx += 1;
-    }
-  }
-  return { audio, subs };
-}
-
-/**
- * @param {Array<{id:number,lang:string,label:string,text?:boolean}>} tracks
- */
-function encodeTrackList(tracks) {
-  return tracks
-    .map((t) => {
-      const label = String(t.label || "")
-        .replace(/[|,]/g, " ")
-        .slice(0, 48);
-      const flags = t.text === false ? "img" : "txt";
-      return `${t.id}|${t.lang || ""}|${label}|${flags}`;
-    })
-    .join(",");
-}
-
-/**
- * @param {string} mediaUrl
- * @returns {Promise<{ audio: Array<{id:number,lang:string,label:string}>, subs: Array<{id:number,lang:string,label:string,text:boolean}> }>}
- */
-function probeMediaTracks(mediaUrl) {
-  return new Promise((resolve) => {
-    if (!FFMPEG_BIN) {
-      resolve({ audio: [], subs: [] });
-      return;
-    }
-    const proc = spawn(
-      FFMPEG_BIN,
-      ["-hide_banner", "-user_agent", UPSTREAM_UA, "-i", mediaUrl],
-      { stdio: ["ignore", "ignore", "pipe"] },
-    );
-    let err = "";
-    const timer = setTimeout(() => {
-      try {
-        proc.kill("SIGKILL");
-      } catch {
-        /* ignore */
-      }
-    }, 25000);
-    proc.stderr?.on("data", (c) => {
-      err = (err + String(c)).slice(-100000);
-    });
-    proc.on("close", () => {
-      clearTimeout(timer);
-      resolve(parseStreamsFromFfmpeg(err));
-    });
-    proc.on("error", () => {
-      clearTimeout(timer);
-      resolve({ audio: [], subs: [] });
-    });
-  });
-}
-
-/**
- * @param {string} sourceUrl
- */
-async function ensureTracks(sourceUrl) {
-  const cached = tracksBySource.get(sourceUrl);
-  if (cached) return cached;
-  const localProxy = `http://127.0.0.1:${PORT}/api/stream?url=${encodeURIComponent(sourceUrl)}`;
-  const tracks = await probeMediaTracks(localProxy);
-  tracksBySource.set(sourceUrl, tracks);
-  if (tracks.audio.length || tracks.subs.length) {
-    console.log(
-      `[hls] tracks audio=${tracks.audio.length} subs=${tracks.subs.length} · ${sourceUrl.slice(0, 64)}…`,
-    );
-  }
-  return tracks;
+function trackLabel(language, title, kind, index) {
+  const named = (title || "").trim();
+  if (named) return named;
+  const lang = (language || "und").toLowerCase();
+  const pretty = LANG_LABELS[lang];
+  if (pretty && lang !== "und") return pretty;
+  if (lang && lang !== "und") return lang.toUpperCase();
+  return `${kind} ${index + 1}`;
 }
 
 function rewriteUpstreamPlaylist(body, playlistUrl) {
@@ -280,33 +232,20 @@ function rewriteUpstreamPlaylist(body, playlistUrl) {
     .join("\n");
 }
 
-/**
- * @param {string} body
- * @param {string} sessionId
- * @param {number|null} durationSec
- * @param {{ audio?: Array<{id:number,lang:string,label:string}>, subs?: Array<{id:number,lang:string,label:string,text:boolean}> } | null} [tracks]
- */
-function rewriteLocalHlsPlaylist(body, sessionId, durationSec, tracks = null) {
+function rewriteLocalHlsPlaylist(body, sessionId, durationSec) {
   const lines = body.split(/\r?\n/).map((line) => {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) return line;
     const file = path.basename(trimmed.split("?")[0] || trimmed);
     return `/api/hls/session/${sessionId}/${file}`;
   });
-  const inject = [];
   if (durationSec && durationSec > 0 && !body.includes("#XTREAM-DURATION:")) {
-    inject.push(`#XTREAM-DURATION:${Math.round(durationSec)}`);
-  }
-  if (tracks?.audio?.length && !body.includes("#XTREAM-AUDIO:")) {
-    inject.push(`#XTREAM-AUDIO:${encodeTrackList(tracks.audio)}`);
-  }
-  if (tracks?.subs?.length && !body.includes("#XTREAM-SUBS:")) {
-    inject.push(`#XTREAM-SUBS:${encodeTrackList(tracks.subs)}`);
-  }
-  if (inject.length) {
+    // Inject after #EXTM3U so the player can show the real runtime while the
+    // event playlist is still growing (only a few minutes of segments yet).
     const idx = lines.findIndex((l) => l.trim() === "#EXTM3U");
-    if (idx >= 0) lines.splice(idx + 1, 0, ...inject);
-    else lines.unshift("#EXTM3U", ...inject);
+    const tag = `#XTREAM-DURATION:${Math.round(durationSec)}`;
+    if (idx >= 0) lines.splice(idx + 1, 0, tag);
+    else lines.unshift("#EXTM3U", tag);
   }
   return lines.join("\n");
 }
@@ -539,19 +478,304 @@ function probeDurationSeconds(mediaUrl) {
 const audioCodecBySource = new Map();
 /** @type {Map<string, number>} sourceUrl → duration seconds */
 const durationBySource = new Map();
+/** @type {Map<string, ProbedTracks>} sourceUrl → probed tracks */
+const tracksBySource = new Map();
+/** @type {Map<string, Promise<string>>} cacheKey → in-flight VTT extract */
+const subtitleJobs = new Map();
+
+/**
+ * Probe duration + audio/subtitle tracks from ffmpeg -i banner.
+ * @param {string} mediaUrl
+ * @returns {Promise<ProbedTracks>}
+ */
+function probeMediaInfo(mediaUrl) {
+  const cached = tracksBySource.get(mediaUrl);
+  if (cached) return Promise.resolve(cached);
+
+  return new Promise((resolve) => {
+    if (!FFMPEG_BIN) {
+      resolve({ durationSec: null, audio: [], subtitles: [] });
+      return;
+    }
+    const proc = spawn(
+      FFMPEG_BIN,
+      [
+        "-hide_banner",
+        "-user_agent",
+        UPSTREAM_UA,
+        "-i",
+        mediaUrl,
+        "-f",
+        "null",
+        "-t",
+        "0",
+        "-",
+      ],
+      { stdio: ["ignore", "ignore", "pipe"] },
+    );
+    let err = "";
+    const timer = setTimeout(() => {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        /* ignore */
+      }
+    }, 45000);
+    proc.stderr?.on("data", (c) => {
+      err += String(c);
+      if (err.length > 24000) err = err.slice(-24000);
+    });
+    proc.on("close", () => {
+      clearTimeout(timer);
+      /** @type {ProxyTrack[]} */
+      const audio = [];
+      /** @type {ProxyTrack[]} */
+      const subtitles = [];
+      let audioTypeIndex = 0;
+      let subtitleTypeIndex = 0;
+      const streamRe =
+        /Stream #\d+:\d+(?:\(([^)]*)\))?:\s*(Audio|Subtitle):\s*([a-z0-9_]+)/gi;
+      let match;
+      while ((match = streamRe.exec(err))) {
+        const language = (match[1] || "und").trim() || "und";
+        const kind = match[2].toLowerCase();
+        const codec = (match[3] || "").toLowerCase();
+        const slice = err.slice(Math.max(0, match.index), match.index + 220);
+        const isDefault = /\(default\)/i.test(slice);
+        if (kind === "audio") {
+          const id = audioTypeIndex;
+          audioTypeIndex += 1;
+          audio.push({
+            id,
+            language,
+            codec,
+            title: "",
+            label: trackLabel(language, "", "Audio", id),
+            default: isDefault,
+          });
+          if (id === 0 && !audioCodecBySource.has(mediaUrl)) {
+            audioCodecBySource.set(mediaUrl, codec);
+          }
+        } else if (kind === "subtitle") {
+          // id must match ffmpeg `-map 0:s:N` (includes image PGS we skip in UI).
+          const id = subtitleTypeIndex;
+          subtitleTypeIndex += 1;
+          if (!TEXT_SUB_CODECS.test(codec)) continue;
+          subtitles.push({
+            id,
+            language,
+            codec,
+            title: "",
+            label: trackLabel(language, "", "Subtitles", subtitles.length),
+            default: isDefault,
+          });
+        }
+      }
+      let durationSec = null;
+      const dur = err.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+      if (dur) {
+        const sec =
+          Number(dur[1]) * 3600 + Number(dur[2]) * 60 + Number(dur[3]);
+        if (sec > 1) durationSec = sec;
+      }
+      /** @type {ProbedTracks} */
+      const probed = { durationSec, audio, subtitles };
+      tracksBySource.set(mediaUrl, probed);
+      if (durationSec) durationBySource.set(mediaUrl, durationSec);
+      console.log(
+        `[hls] tracks · audio=${audio.length} subs=${subtitles.length} · ${mediaUrl.slice(0, 56)}…`,
+      );
+      resolve(probed);
+    });
+  });
+}
+
+/**
+ * @param {string[]} args
+ * @param {number} timeoutMs
+ * @returns {Promise<{ code: number, stderr: string }>}
+ */
+function runFfmpeg(args, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    if (!FFMPEG_BIN) {
+      reject(new Error("ffmpeg not available"));
+      return;
+    }
+    const proc = spawn(FFMPEG_BIN, args, {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let err = "";
+    const timer = setTimeout(() => {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        /* ignore */
+      }
+      reject(new Error("ffmpeg timed out"));
+    }, timeoutMs);
+    proc.stderr?.on("data", (c) => {
+      err += String(c);
+      if (err.length > 8000) err = err.slice(-8000);
+    });
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code: code ?? 1, stderr: err });
+    });
+  });
+}
+
+function formatVttTimestamp(totalSeconds) {
+  const msTotal = Math.max(0, Math.round(totalSeconds * 1000));
+  const hours = Math.floor(msTotal / 3600000);
+  const minutes = Math.floor((msTotal % 3600000) / 60000);
+  const seconds = Math.floor((msTotal % 60000) / 1000);
+  const ms = msTotal % 1000;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(ms).padStart(3, "0")}`;
+}
+
+function parseVttTimestamp(value) {
+  const parts = value.trim().split(":");
+  if (parts.length < 2 || parts.length > 3) return null;
+  const secPart = parts[parts.length - 1];
+  const minutes = Number(parts[parts.length - 2]);
+  const hours = parts.length === 3 ? Number(parts[0]) : 0;
+  const seconds = Number(String(secPart).replace(",", "."));
+  if (![hours, minutes, seconds].every((n) => Number.isFinite(n))) return null;
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+/** Shift relative WebVTT cues into absolute movie time. */
+function shiftVttTimestamps(vtt, offsetSec) {
+  if (!offsetSec || offsetSec < 0.05) return vtt;
+  return vtt.replace(
+    /(\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?)\s*-->\s*(\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?)/g,
+    (_full, startRaw, endRaw) => {
+      const start = parseVttTimestamp(startRaw.split(/\s+/)[0]);
+      const end = parseVttTimestamp(endRaw.split(/\s+/)[0]);
+      if (start == null || end == null) return _full;
+      return `${formatVttTimestamp(start + offsetSec)} --> ${formatVttTimestamp(end + offsetSec)}`;
+    },
+  );
+}
+
+/**
+ * Windowed softsub extract aligned with server-HLS `-ss` (same fast seek).
+ * Returns WebVTT with timestamps RELATIVE to `from` (like video.currentTime
+ * after an HLS restart). The player must NOT mix these with absolute times.
+ *
+ * @param {string} sourceUrl
+ * @param {number} subIndex
+ * @param {number} fromSec
+ * @param {number} durationSec
+ * @returns {Promise<string>} WebVTT text (relative timestamps)
+ */
+async function extractSubtitleVttWindow(
+  sourceUrl,
+  subIndex,
+  fromSec = 0,
+  durationSec = 300,
+) {
+  const index = Math.max(0, subIndex | 0);
+  // Match HLS session snapping (2s) so video + subs share the same seek base.
+  const from = Math.max(0, Math.floor((fromSec || 0) / 2) * 2);
+  const duration = Math.max(60, Math.min(900, Math.floor(durationSec || 300)));
+  const cacheKey = `${createHash("sha1").update(sourceUrl).digest("hex").slice(0, 16)}-s${index}-f${from}-d${duration}-rel`;
+  const existingJob = subtitleJobs.get(cacheKey);
+  if (existingJob) return existingJob;
+
+  const job = (async () => {
+    await ensureHlsDir();
+    const dir = path.join(HLS_ROOT, "subs");
+    await fsp.mkdir(dir, { recursive: true });
+    const outPath = path.join(dir, `${cacheKey}.vtt`);
+    try {
+      const st = await fsp.stat(outPath);
+      if (st.size > 16) {
+        console.log(
+          `[hls] sub window cache · s:${index} · from=${from}s · ${duration}s`,
+        );
+        return fsp.readFile(outPath, "utf8");
+      }
+    } catch {
+      /* extract */
+    }
+
+    // Same input path + -ss style as HLS video → same keyframe base → sync.
+    const localProxy = `http://127.0.0.1:${PORT}/api/stream?url=${encodeURIComponent(sourceUrl)}`;
+    console.log(
+      `[hls] sub window start · s:${index} · from=${from}s · ${duration}s`,
+    );
+    const started = Date.now();
+    const args = [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-nostdin",
+      "-reconnect",
+      "1",
+      "-reconnect_streamed",
+      "1",
+      "-reconnect_delay_max",
+      "5",
+      "-user_agent",
+      UPSTREAM_UA,
+    ];
+    if (from > 0) {
+      args.push(
+        "-ss",
+        String(from),
+        "-noaccurate_seek",
+        "-fflags",
+        "+fastseek",
+      );
+    }
+    args.push(
+      "-i",
+      localProxy,
+      "-t",
+      String(duration),
+      "-map",
+      `0:s:${index}`,
+      "-f",
+      "webvtt",
+      "-y",
+      outPath,
+    );
+
+    const result = await runFfmpeg(args, 90000);
+    if (result.code !== 0) {
+      throw new Error(
+        result.stderr.trim().slice(0, 240) || "subtitle window extract failed",
+      );
+    }
+    // Keep relative timestamps (do NOT shift to absolute) — matches video.currentTime.
+    const text = await fsp.readFile(outPath, "utf8");
+    console.log(
+      `[hls] sub window done · s:${index} · from=${from}s · ${((Date.now() - started) / 1000).toFixed(1)}s · bytes=${text.length}`,
+    );
+    return text;
+  })();
+
+  subtitleJobs.set(cacheKey, job);
+  try {
+    return await job;
+  } finally {
+    subtitleJobs.delete(cacheKey);
+  }
+}
 
 /**
  * @param {string} sourceUrl
  * @param {number} [startSec]
- * @param {{ warm?: boolean }} [opts]
+ * @param {{ warm?: boolean, audioIndex?: number }} [opts]
  * @returns {Promise<HlsSession>}
  */
 async function getOrStartSession(sourceUrl, startSec = 0, opts = {}) {
   const warm = !!opts.warm;
-  const audioIndex = Math.max(0, Math.floor(Number(opts.audioIndex) || 0));
+  const audio = Math.max(0, Math.floor(Number(opts.audioIndex) || 0));
   // Snap to 2s buckets so nearby scrubs reuse the same ffmpeg session.
   const start = Math.max(0, Math.floor((startSec || 0) / 2) * 2);
-  const id = sessionIdFor(sourceUrl, start, audioIndex);
+  const id = sessionIdFor(sourceUrl, start, audio);
   const existing = sessions.get(id);
   if (existing && !existing.error && !existing.stopping) {
     existing.lastAccess = Date.now();
@@ -574,11 +798,7 @@ async function getOrStartSession(sourceUrl, startSec = 0, opts = {}) {
   } else {
     // Prefetch only: keep the playing session; replace other warm seeks.
     for (const other of [...sessions.values()]) {
-      if (
-        other.sourceUrl === sourceUrl &&
-        other.id !== id &&
-        other.warm
-      ) {
+      if (other.sourceUrl === sourceUrl && other.id !== id && other.warm) {
         console.log(`[hls] stop ${other.id} (warm → ${id})`);
         await destroySession(other);
       }
@@ -591,11 +811,6 @@ async function getOrStartSession(sourceUrl, startSec = 0, opts = {}) {
   await fsp.mkdir(dir, { recursive: true });
 
   const localProxy = `http://127.0.0.1:${PORT}/api/stream?url=${encodeURIComponent(sourceUrl)}`;
-
-  // Discover audio/subs early (cached per source).
-  if (!warm) {
-    void ensureTracks(sourceUrl);
-  }
 
   /** @type {HlsSession} */
   const session = {
@@ -611,24 +826,29 @@ async function getOrStartSession(sourceUrl, startSec = 0, opts = {}) {
     startSec: start,
     warm,
     stopping: false,
-    audioIndex,
+    audioIndex: audio,
   };
   sessions.set(id, session);
 
-  // Only probe duration on the primary (start=0) session — seeks skip this.
-  if (start === 0 && audioIndex === 0 && !session.durationSec) {
-    void probeDurationSeconds(localProxy).then((sec) => {
-      if (sec && sessions.get(id) === session) {
-        session.durationSec = sec;
-        durationBySource.set(sourceUrl, sec);
-        console.log(`[hls] duration ${id} = ${Math.round(sec)}s`);
+  // Probe tracks/duration on the primary (start=0) session — seeks/warm skip this.
+  if (start === 0 && !warm) {
+    void probeMediaInfo(localProxy).then((probed) => {
+      if (sessions.get(id) !== session) return;
+      if (probed.durationSec) {
+        session.durationSec = probed.durationSec;
+        durationBySource.set(sourceUrl, probed.durationSec);
+        console.log(`[hls] duration ${id} = ${Math.round(probed.durationSec)}s`);
       }
+      // Re-key cache under the upstream URL too (player queries by that).
+      tracksBySource.set(sourceUrl, probed);
     });
   }
 
   const playlist = path.join(dir, "index.m3u8");
   const segmentPattern = path.join(dir, "seg_%05d.ts");
-  const knownAudio = audioCodecBySource.get(sourceUrl) || "";
+  const probedAudio = tracksBySource.get(sourceUrl)?.audio?.[audio];
+  const knownAudio =
+    probedAudio?.codec || audioCodecBySource.get(sourceUrl) || "";
   const canCopyAudio = /^(aac|mp3|mp4a)/i.test(knownAudio);
   // Shorter segments after a scrub → first playable chunk arrives sooner.
   const hlsTime = start > 0 ? "2" : "3";
@@ -668,7 +888,7 @@ async function getOrStartSession(sourceUrl, startSec = 0, opts = {}) {
     "-map",
     "0:v:0",
     "-map",
-    `0:a:${audioIndex}?`,
+    `0:a:${audio}?`,
     "-c:v",
     "copy",
   );
@@ -706,7 +926,7 @@ async function getOrStartSession(sourceUrl, startSec = 0, opts = {}) {
   );
 
   console.log(
-    `[hls] start ${id} ← from=${start}s · a${audioIndex} · ${warm ? "warm · " : ""}codec=${canCopyAudio ? "copy" : "aac"} · ${sourceUrl.slice(0, 56)}…`,
+    `[hls] start ${id} ← from=${start}s · a:${audio} · ${warm ? "warm · " : ""}audio=${canCopyAudio ? "copy" : "aac"} · ${sourceUrl.slice(0, 64)}…`,
   );
   const proc = spawn(FFMPEG_BIN || "ffmpeg", args, {
     stdio: ["ignore", "ignore", "pipe"],
@@ -824,14 +1044,108 @@ setInterval(() => {
   void cleanupSessions();
 }, 60_000).unref();
 
-/**
- * @param {import('node:http').IncomingMessage} req
- * @param {import('node:http').ServerResponse} res
- * @param {string} sourceUrl
- * @param {number} [startSec]
- * @param {{ warm?: boolean }} [opts]
- */
-async function handleHlsPlaylist(req, res, sourceUrl, startSec = 0, opts = {}) {
+async function handleHlsTracks(req, res, sourceUrl) {
+  if (!FFMPEG_OK) {
+    sendJson(res, 503, {
+      error: "ffmpeg not available on this proxy",
+      hint: "Run npm install (includes ffmpeg-static), then restart npm run proxy",
+    });
+    return;
+  }
+  let parsed;
+  try {
+    parsed = new URL(sourceUrl);
+  } catch {
+    sendJson(res, 400, { error: "Invalid url" });
+    return;
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    sendJson(res, 400, { error: "Unsupported protocol" });
+    return;
+  }
+
+  try {
+    const localProxy = `http://127.0.0.1:${PORT}/api/stream?url=${encodeURIComponent(sourceUrl)}`;
+    const probed =
+      tracksBySource.get(sourceUrl) ||
+      tracksBySource.get(localProxy) ||
+      (await probeMediaInfo(localProxy));
+    tracksBySource.set(sourceUrl, probed);
+    tracksBySource.set(localProxy, probed);
+    sendJson(res, 200, {
+      audio: probed.audio,
+      subtitles: probed.subtitles,
+      duration: probed.durationSec,
+    });
+  } catch (error) {
+    sendJson(res, 502, {
+      error: error instanceof Error ? error.message : "Track probe failed",
+    });
+  }
+}
+
+async function handleHlsSubtitle(
+  req,
+  res,
+  sourceUrl,
+  subIndex,
+  fromSec = 0,
+  durationSec = 600,
+) {
+  if (!FFMPEG_OK) {
+    sendJson(res, 503, {
+      error: "ffmpeg not available on this proxy",
+      hint: "Run npm install (includes ffmpeg-static), then restart npm run proxy",
+    });
+    return;
+  }
+  let parsed;
+  try {
+    parsed = new URL(sourceUrl);
+  } catch {
+    sendJson(res, 400, { error: "Invalid url" });
+    return;
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    sendJson(res, 400, { error: "Unsupported protocol" });
+    return;
+  }
+
+  try {
+    const text = await extractSubtitleVttWindow(
+      sourceUrl,
+      subIndex,
+      fromSec,
+      durationSec,
+    );
+    res.writeHead(
+      200,
+      corsHeaders({
+        "Content-Type": "text/vtt; charset=utf-8",
+        "Cache-Control": "public, max-age=300",
+      }),
+    );
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    res.end(text);
+  } catch (error) {
+    sendJson(res, 502, {
+      error: error instanceof Error ? error.message : "Subtitle extract failed",
+    });
+  }
+}
+
+async function handleHlsPlaylist(
+  req,
+  res,
+  sourceUrl,
+  startSec = 0,
+  opts = {},
+) {
+  const audioIndex = Math.max(0, Math.floor(Number(opts.audioIndex) || 0));
+  const warm = !!opts.warm;
   if (!FFMPEG_OK) {
     sendJson(res, 503, {
       error: "ffmpeg not available on this proxy",
@@ -861,9 +1175,8 @@ async function handleHlsPlaylist(req, res, sourceUrl, startSec = 0, opts = {}) {
   }
 
   try {
-    const audioIndex = Math.max(0, Math.floor(Number(opts.audioIndex) || 0));
     const session = await getOrStartSession(sourceUrl, startSec, {
-      ...opts,
+      warm,
       audioIndex,
     });
     const text = await waitUntilReady(session);
@@ -874,14 +1187,10 @@ async function handleHlsPlaylist(req, res, sourceUrl, startSec = 0, opts = {}) {
     if (!session.durationSec && durationBySource.has(sourceUrl)) {
       session.durationSec = durationBySource.get(sourceUrl) || null;
     }
-    const tracks =
-      tracksBySource.get(sourceUrl) ||
-      (!opts.warm ? await ensureTracks(sourceUrl) : null);
     const rewritten = rewriteLocalHlsPlaylist(
       text,
       session.id,
       session.durationSec,
-      tracks,
     );
     const headers = corsHeaders({
       "Content-Type": "application/vnd.apple.mpegurl",
@@ -898,107 +1207,6 @@ async function handleHlsPlaylist(req, res, sourceUrl, startSec = 0, opts = {}) {
     sendJson(res, 502, {
       error: error instanceof Error ? error.message : "HLS remux failed",
     });
-  }
-}
-
-/**
- * Extract a text subtitle track to WebVTT (cached).
- * @param {import('node:http').IncomingMessage} req
- * @param {import('node:http').ServerResponse} res
- * @param {string} sourceUrl
- * @param {number} trackIdx
- */
-async function handleHlsSubs(req, res, sourceUrl, trackIdx) {
-  if (!FFMPEG_OK) {
-    sendJson(res, 503, { error: "ffmpeg not available on this proxy" });
-    return;
-  }
-  const idx = Math.max(0, Math.floor(trackIdx));
-  const cacheKey = createHash("sha1")
-    .update(`${sourceUrl}|s${idx}`)
-    .digest("hex")
-    .slice(0, 20);
-  await ensureHlsDir();
-  const outPath = path.join(HLS_ROOT, `subs-${cacheKey}.vtt`);
-
-  if (!subsFileByKey.has(cacheKey)) {
-    const tracks = await ensureTracks(sourceUrl);
-    const meta = tracks.subs.find((s) => s.id === idx);
-    if (meta && meta.text === false) {
-      sendJson(res, 415, {
-        error: "Image-based subtitles are not supported in the browser player",
-        track: meta,
-      });
-      return;
-    }
-    const localProxy = `http://127.0.0.1:${PORT}/api/stream?url=${encodeURIComponent(sourceUrl)}`;
-    const ok = await new Promise((resolve) => {
-      const proc = spawn(
-        FFMPEG_BIN,
-        [
-          "-hide_banner",
-          "-loglevel",
-          "error",
-          "-user_agent",
-          UPSTREAM_UA,
-          "-i",
-          localProxy,
-          "-map",
-          `0:s:${idx}`,
-          "-f",
-          "webvtt",
-          outPath,
-        ],
-        { stdio: ["ignore", "ignore", "pipe"] },
-      );
-      let err = "";
-      const timer = setTimeout(() => {
-        try {
-          proc.kill("SIGKILL");
-        } catch {
-          /* ignore */
-        }
-      }, 120000);
-      proc.stderr?.on("data", (c) => {
-        err = (err + String(c)).slice(-2000);
-      });
-      proc.on("close", (code) => {
-        clearTimeout(timer);
-        if (code === 0 && fs.existsSync(outPath)) {
-          subsFileByKey.set(cacheKey, outPath);
-          resolve(true);
-        } else {
-          console.warn(`[hls] subs extract failed s${idx}:`, err.slice(0, 200));
-          resolve(false);
-        }
-      });
-      proc.on("error", () => {
-        clearTimeout(timer);
-        resolve(false);
-      });
-    });
-    if (!ok) {
-      sendJson(res, 502, { error: "Could not extract subtitles" });
-      return;
-    }
-  }
-
-  try {
-    const text = await fsp.readFile(outPath, "utf8");
-    res.writeHead(
-      200,
-      corsHeaders({
-        "Content-Type": "text/vtt; charset=utf-8",
-        "Cache-Control": "public, max-age=3600",
-      }),
-    );
-    if (req.method === "HEAD") {
-      res.end();
-      return;
-    }
-    res.end(text);
-  } catch {
-    sendJson(res, 404, { error: "Subtitle file missing" });
   }
 }
 
@@ -1033,7 +1241,6 @@ async function handleHlsFile(req, res, sessionId, fileName) {
         text,
         sessionId,
         session.durationSec,
-        tracksBySource.get(session.sourceUrl) || null,
       );
       const headers = corsHeaders({
         "Content-Type": "application/vnd.apple.mpegurl",
@@ -1114,7 +1321,9 @@ const server = http.createServer(async (req, res) => {
       ffmpeg: FFMPEG_OK,
       ffmpegPath: FFMPEG_BIN,
       stream: "/api/stream?url=...",
-      hls: "/api/hls?url=... (MKV/AVI/MOV → HLS)",
+      hls: "/api/hls?url=...&start=&audio= (MKV/AVI/MOV → HLS)",
+      tracks: "/api/hls/tracks?url=...",
+      subtitles: "/api/hls/sub?url=...&index=",
       sessions: sessions.size,
     });
     return;
@@ -1133,14 +1342,26 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname === "/api/hls/subs") {
+  if (url.pathname === "/api/hls/tracks") {
     const target = url.searchParams.get("url");
     if (!target) {
       sendJson(res, 400, { error: "Missing url" });
       return;
     }
-    const track = Number(url.searchParams.get("track") || 0);
-    await handleHlsSubs(req, res, target, track);
+    await handleHlsTracks(req, res, target);
+    return;
+  }
+
+  if (url.pathname === "/api/hls/sub") {
+    const target = url.searchParams.get("url");
+    if (!target) {
+      sendJson(res, 400, { error: "Missing url" });
+      return;
+    }
+    const index = Number(url.searchParams.get("index") || 0);
+    const from = Number(url.searchParams.get("from") || 0);
+    const duration = Number(url.searchParams.get("duration") || 240);
+    await handleHlsSubtitle(req, res, target, index, from, duration);
     return;
   }
 

@@ -5,7 +5,9 @@ import Hls from "hls.js";
 import {
   ArrowLeft,
   Bug,
+  Captions,
   Copy,
+  Languages,
   Maximize,
   Minimize,
   Pause,
@@ -30,6 +32,11 @@ import {
   type BufferRange,
   type RemuxHandle,
 } from "@/lib/player/mkv-playback";
+import {
+  buildServerHlsSubsUrl,
+  parseXtreamTracksFromPlaylist,
+  type MediaTrackOption,
+} from "@/lib/player/tracks";
 
 const CONNECT_READY_SEC = 2.5;
 const CONNECT_READY_SEEK_SEC = 1.2;
@@ -59,7 +66,7 @@ function captureFreezeFrame(video: HTMLVideoElement): string | null {
 function withServerHlsStart(
   url: string,
   startSec: number,
-  opts?: { warm?: boolean },
+  opts?: { warm?: boolean; audio?: number },
 ): string {
   if (!url.includes("/api/hls")) return url;
   try {
@@ -71,6 +78,9 @@ function withServerHlsStart(
     else absolute.searchParams.delete("start");
     if (opts?.warm) absolute.searchParams.set("warm", "1");
     else absolute.searchParams.delete("warm");
+    const audio = Math.max(0, Math.floor(opts?.audio ?? 0));
+    if (audio > 0) absolute.searchParams.set("audio", String(audio));
+    else absolute.searchParams.delete("audio");
     if (url.startsWith("http")) return absolute.toString();
     return `${absolute.pathname}?${absolute.searchParams.toString()}`;
   } catch {
@@ -238,9 +248,19 @@ export function VideoPlayer({
   const [qualityId, setQualityId] = useState(-1);
   const [showQuality, setShowQuality] = useState(false);
   const [qualityIsHls, setQualityIsHls] = useState(false);
+  const [audioOptions, setAudioOptions] = useState<MediaTrackOption[]>([]);
+  const [subOptions, setSubOptions] = useState<MediaTrackOption[]>([]);
+  const [audioId, setAudioId] = useState(0);
+  const [subId, setSubId] = useState(-1);
+  const [showAudio, setShowAudio] = useState(false);
+  const [showSubs, setShowSubs] = useState(false);
+  const [serverHlsAudio, setServerHlsAudio] = useState(0);
+  const [hoverTime, setHoverTime] = useState<number | null>(null);
+  const [hoverPct, setHoverPct] = useState(0);
   const scrubbingRef = useRef(false);
   const prefetchTimer = useRef<number | null>(null);
   const seekingReloadRef = useRef(false);
+  const subTrackElRef = useRef<HTMLTrackElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sourcesKey = sources.map((s) => s.url).join("|");
   const [seenSourcesKey, setSeenSourcesKey] = useState(sourcesKey);
@@ -256,6 +276,14 @@ export function VideoPlayer({
     setQualityOptions([]);
     setQualityId(-1);
     setQualityIsHls(false);
+    setAudioOptions([]);
+    setSubOptions([]);
+    setAudioId(0);
+    setSubId(-1);
+    setShowAudio(false);
+    setShowSubs(false);
+    setShowQuality(false);
+    setServerHlsAudio(0);
     setNeedsUnmute(false);
     setAwaitingTap(false);
     setHasStarted(false);
@@ -263,11 +291,14 @@ export function VideoPlayer({
     setSeekingUi(false);
     seekingReloadRef.current = false;
     setHoldPoster(poster);
+    setHoverTime(null);
   }
 
   const candidate = sources[sourceIndex];
   const src = candidate?.url || "";
-  const playSrc = withServerHlsStart(src, serverHlsOffset);
+  const playSrc = withServerHlsStart(src, serverHlsOffset, {
+    audio: serverHlsAudio,
+  });
   const isServerHls = src.includes("/api/hls");
 
   const pushDebug = useCallback((text: string) => {
@@ -697,6 +728,21 @@ export function VideoPlayer({
               setDuration((prev) => Math.max(prev, best));
               pushDebug(`hls · duration hint ${Math.round(best)}s`);
             }
+            const tracks = parseXtreamTracksFromPlaylist(text);
+            if (!disposed) {
+              if (tracks.audio.length) {
+                setAudioOptions(tracks.audio);
+                setAudioId(serverHlsAudio);
+              }
+              if (tracks.subs.length) {
+                setSubOptions(tracks.subs);
+              }
+              if (tracks.audio.length || tracks.subs.length) {
+                pushDebug(
+                  `hls · tracks audio=${tracks.audio.length} subs=${tracks.subs.length}`,
+                );
+              }
+            }
           } catch {
             /* ignore */
           }
@@ -746,6 +792,32 @@ export function VideoPlayer({
         }
       };
 
+      const syncHlsJsTracks = () => {
+        if (disposed || playSrc.includes("/api/hls")) return;
+        const audios = (hls.audioTracks || []).map((track, index) => ({
+          id: index,
+          lang: track.lang || "",
+          label:
+            track.name ||
+            track.lang ||
+            `${t("playerAudio")} ${index + 1}`,
+        }));
+        const subs = (hls.subtitleTracks || []).map((track, index) => ({
+          id: index,
+          lang: track.lang || "",
+          label:
+            track.name ||
+            track.lang ||
+            `${t("playerSubtitles")} ${index + 1}`,
+          text: true,
+        }));
+        if (audios.length) {
+          setAudioOptions(audios);
+          setAudioId(hls.audioTrack >= 0 ? hls.audioTrack : 0);
+        }
+        if (subs.length) setSubOptions(subs);
+      };
+
       hls.on(Hls.Events.MANIFEST_PARSED, (_ev, data) => {
         if (disposed) return;
         fragTotal = Math.max(1, data.levels?.[0]?.details?.fragments?.length || 8);
@@ -765,9 +837,13 @@ export function VideoPlayer({
           setQualityOptions([]);
           setQualityIsHls(false);
         }
+        syncHlsJsTracks();
         pushDebug(`manifest ok · levels=${data.levels?.length || 0}`);
         void waitAndPlay();
       });
+
+      hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, syncHlsJsTracks);
+      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, syncHlsJsTracks);
 
       hls.on(Hls.Events.LEVEL_LOADED, (_ev, data) => {
         if (disposed) return;
@@ -857,6 +933,15 @@ export function VideoPlayer({
         remuxRef.current.stop();
         remuxRef.current = null;
       }
+      const subEl = subTrackElRef.current;
+      if (subEl) {
+        try {
+          subEl.remove();
+        } catch {
+          /* ignore */
+        }
+        subTrackElRef.current = null;
+      }
       video.removeAttribute("src");
       video.load();
     };
@@ -876,6 +961,7 @@ export function VideoPlayer({
     extension,
     durationHint,
     serverHlsOffset,
+    serverHlsAudio,
   ]);
 
   useEffect(
@@ -989,11 +1075,131 @@ export function VideoPlayer({
   const applyQuality = (id: number) => {
     setQualityId(id);
     setShowQuality(false);
+    setShowAudio(false);
+    setShowSubs(false);
     const hls = hlsRef.current;
     if (!hls) return;
     hls.currentLevel = id; // -1 = auto
     pushDebug(`quality · ${id < 0 ? "auto" : id}`);
     bumpChrome();
+  };
+
+  const clearSideSubtitles = () => {
+    const video = videoRef.current;
+    const el = subTrackElRef.current;
+    if (el) {
+      try {
+        el.remove();
+      } catch {
+        /* ignore */
+      }
+      subTrackElRef.current = null;
+    }
+    if (!video) return;
+    for (let i = 0; i < video.textTracks.length; i += 1) {
+      video.textTracks[i].mode = "disabled";
+    }
+  };
+
+  const applyAudio = (id: number) => {
+    setShowAudio(false);
+    setShowQuality(false);
+    setShowSubs(false);
+    bumpChrome();
+    if (isServerHls) {
+      if (id === serverHlsAudio) {
+        setAudioId(id);
+        return;
+      }
+      const video = videoRef.current;
+      if (video) {
+        const frame = captureFreezeFrame(video);
+        if (frame) setHoldPoster(frame);
+      }
+      seekingReloadRef.current = true;
+      setSeekingUi(true);
+      setHasStarted(false);
+      setLoadPercent(0);
+      setStatusText(t("playerConnecting"));
+      setAudioId(id);
+      setServerHlsAudio(id);
+      pushDebug(`audio · server track ${id}`);
+      return;
+    }
+    const hls = hlsRef.current;
+    if (hls && hls.audioTracks?.length) {
+      hls.audioTrack = id;
+      setAudioId(id);
+      pushDebug(`audio · hls track ${id}`);
+      return;
+    }
+    setAudioId(id);
+  };
+
+  const applySubtitles = async (id: number) => {
+    setShowSubs(false);
+    setShowQuality(false);
+    setShowAudio(false);
+    bumpChrome();
+    setSubId(id);
+
+    if (id < 0) {
+      clearSideSubtitles();
+      const hls = hlsRef.current;
+      if (hls) hls.subtitleTrack = -1;
+      pushDebug("subs · off");
+      return;
+    }
+
+    if (isServerHls) {
+      const opt = subOptions.find((s) => s.id === id);
+      if (opt && opt.text === false) {
+        setStatusText(t("playerSubsUnsupported"));
+        pushDebug(`subs · unsupported image track ${id}`);
+        window.setTimeout(() => {
+          if (hasStarted) setStatusText(t("playerPlaying"));
+        }, 2200);
+        setSubId(-1);
+        return;
+      }
+      const subsUrl = buildServerHlsSubsUrl(src, id);
+      if (!subsUrl) return;
+      clearSideSubtitles();
+      const video = videoRef.current;
+      if (!video) return;
+      setStatusText(t("playerSubsLoading"));
+      pushDebug(`subs · load track ${id}`);
+      const trackEl = document.createElement("track");
+      trackEl.kind = "subtitles";
+      trackEl.label = opt?.label || `Sub ${id + 1}`;
+      if (opt?.lang) trackEl.srclang = opt.lang;
+      trackEl.src = subsUrl;
+      trackEl.default = true;
+      trackEl.addEventListener("load", () => {
+        for (let i = 0; i < video.textTracks.length; i += 1) {
+          video.textTracks[i].mode =
+            video.textTracks[i].label === trackEl.label ? "showing" : "disabled";
+        }
+        if (hasStarted) setStatusText(t("playerPlaying"));
+      });
+      trackEl.addEventListener("error", () => {
+        pushDebug("subs · failed to load VTT");
+        setStatusText(t("playerSubsUnsupported"));
+        setSubId(-1);
+        window.setTimeout(() => {
+          if (hasStarted) setStatusText(t("playerPlaying"));
+        }, 2200);
+      });
+      video.appendChild(trackEl);
+      subTrackElRef.current = trackEl;
+      return;
+    }
+
+    const hls = hlsRef.current;
+    if (hls && hls.subtitleTracks?.length) {
+      hls.subtitleTrack = id;
+      pushDebug(`subs · hls track ${id}`);
+    }
   };
 
   const seekTo = async (seconds: number) => {
@@ -1062,6 +1268,12 @@ export function VideoPlayer({
     setAwaitingTap(false);
     setHasStarted(false);
     setServerHlsOffset(0);
+    setServerHlsAudio(0);
+    setAudioId(0);
+    setSubId(-1);
+    setAudioOptions([]);
+    setSubOptions([]);
+    clearSideSubtitles();
     setLoadPercent(0);
     setSourceIndex(0);
     setSeekingUi(false);
@@ -1080,10 +1292,13 @@ export function VideoPlayer({
       const start = snapHlsStart(absoluteSec);
       if (start <= 0) return;
       // warm=1: start ffmpeg without killing the session currently playing.
-      const warmUrl = withServerHlsStart(src, start, { warm: true });
+      const warmUrl = withServerHlsStart(src, start, {
+        warm: true,
+        audio: serverHlsAudio,
+      });
       void fetch(warmUrl, { cache: "no-store" }).catch(() => undefined);
     },
-    [isServerHls, src],
+    [isServerHls, src, serverHlsAudio],
   );
 
   const schedulePrefetch = useCallback(
@@ -1325,7 +1540,34 @@ export function VideoPlayer({
               <span className="w-12 shrink-0 text-right font-mono text-[11px] text-white/70">
                 {formatClock(timelineValue)}
               </span>
-              <div className="relative h-5 flex-1">
+              <div
+                className="relative h-5 flex-1"
+                onMouseMove={(e) => {
+                  if (!controlsEnabled || timelineMax <= 1) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const ratio = Math.min(
+                    1,
+                    Math.max(0, (e.clientX - rect.left) / rect.width),
+                  );
+                  setHoverPct(ratio * 100);
+                  setHoverTime(ratio * timelineMax);
+                }}
+                onMouseLeave={() => {
+                  if (!scrubbingRef.current) setHoverTime(null);
+                }}
+              >
+                {(hoverTime != null || scrubbing) && timelineMax > 1 ? (
+                  <div
+                    className="pointer-events-none absolute -top-8 z-20 -translate-x-1/2 rounded-md bg-black/85 px-2 py-1 font-mono text-[11px] text-white shadow-lg ring-1 ring-white/15"
+                    style={{
+                      left: `${scrubbing
+                        ? (Math.min(scrubValue, timelineMax) / timelineMax) * 100
+                        : hoverPct}%`,
+                    }}
+                  >
+                    {formatClock(scrubbing ? scrubValue : (hoverTime ?? 0))}
+                  </div>
+                ) : null}
                 <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-white/20">
                   {timelineMax > 0
                     ? displayBufferRanges.map((range, i) => (
@@ -1365,6 +1607,12 @@ export function VideoPlayer({
                     if (!controlsEnabled) return;
                     const next = Number(e.target.value);
                     setScrubValue(next);
+                    setHoverTime(next);
+                    setHoverPct(
+                      timelineMax > 0
+                        ? (Math.min(next, timelineMax) / timelineMax) * 100
+                        : 0,
+                    );
                     schedulePrefetch(next);
                   }}
                   onPointerUp={(e) => {
@@ -1379,6 +1627,7 @@ export function VideoPlayer({
                     prefetchServerHls(next);
                     scrubbingRef.current = false;
                     setScrubbing(false);
+                    setHoverTime(null);
                     void seekTo(next);
                   }}
                   onTouchEnd={(e) => {
@@ -1392,6 +1641,7 @@ export function VideoPlayer({
                     prefetchServerHls(next);
                     scrubbingRef.current = false;
                     setScrubbing(false);
+                    setHoverTime(null);
                     void seekTo(next);
                   }}
                   className="absolute inset-0 z-10 m-0 h-full w-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-not-allowed disabled:opacity-0"
@@ -1415,7 +1665,121 @@ export function VideoPlayer({
                   <Play className="h-5 w-5 fill-current" />
                 )}
               </button>
-              <div className="relative flex items-center gap-2">
+              <div className="relative flex items-center gap-1.5 sm:gap-2">
+                {audioOptions.length > 0 ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={!controlsEnabled}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!controlsEnabled) return;
+                        setShowAudio((v) => !v);
+                        setShowSubs(false);
+                        setShowQuality(false);
+                        bumpChrome();
+                      }}
+                      className="flex h-11 items-center gap-1.5 rounded-full bg-white/10 px-2.5 text-xs font-medium text-white disabled:opacity-40 sm:px-3"
+                      aria-label={t("playerAudio")}
+                    >
+                      <Languages className="h-4 w-4" />
+                      <span className="hidden max-w-[5.5rem] truncate sm:inline">
+                        {audioOptions.find((a) => a.id === audioId)?.label ||
+                          t("playerAudio")}
+                      </span>
+                    </button>
+                    {showAudio ? (
+                      <div className="absolute bottom-14 right-0 z-50 max-h-56 min-w-[11rem] overflow-y-auto rounded-xl border border-white/15 bg-black/90 py-1 shadow-xl backdrop-blur">
+                        <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/45">
+                          {t("playerAudio")}
+                        </p>
+                        {audioOptions.map((a) => (
+                          <button
+                            key={`a-${a.id}`}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              applyAudio(a.id);
+                            }}
+                            className={`block w-full px-3 py-2 text-left text-xs ${
+                              a.id === audioId
+                                ? "bg-white/15 text-[var(--xp-accent)]"
+                                : "text-white/85"
+                            }`}
+                          >
+                            {a.label}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+                {subOptions.length > 0 ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={!controlsEnabled}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!controlsEnabled) return;
+                        setShowSubs((v) => !v);
+                        setShowAudio(false);
+                        setShowQuality(false);
+                        bumpChrome();
+                      }}
+                      className={`flex h-11 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium disabled:opacity-40 sm:px-3 ${
+                        subId >= 0
+                          ? "bg-[var(--xp-accent)] text-[var(--xp-ink)]"
+                          : "bg-white/10 text-white"
+                      }`}
+                      aria-label={t("playerSubtitles")}
+                    >
+                      <Captions className="h-4 w-4" />
+                      <span className="hidden sm:inline">
+                        {t("playerSubtitles")}
+                      </span>
+                    </button>
+                    {showSubs ? (
+                      <div className="absolute bottom-14 right-0 z-50 max-h-56 min-w-[11rem] overflow-y-auto rounded-xl border border-white/15 bg-black/90 py-1 shadow-xl backdrop-blur">
+                        <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/45">
+                          {t("playerSubtitles")}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void applySubtitles(-1);
+                          }}
+                          className={`block w-full px-3 py-2 text-left text-xs ${
+                            subId < 0
+                              ? "bg-white/15 text-[var(--xp-accent)]"
+                              : "text-white/85"
+                          }`}
+                        >
+                          {t("playerTrackOff")}
+                        </button>
+                        {subOptions.map((s) => (
+                          <button
+                            key={`s-${s.id}`}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void applySubtitles(s.id);
+                            }}
+                            className={`block w-full px-3 py-2 text-left text-xs ${
+                              s.id === subId
+                                ? "bg-white/15 text-[var(--xp-accent)]"
+                                : "text-white/85"
+                            }`}
+                          >
+                            {s.label}
+                            {s.text === false ? " · PGS" : ""}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
                 {qualityOptions.length > 0 ? (
                   <>
                     <button
@@ -1425,6 +1789,8 @@ export function VideoPlayer({
                         e.stopPropagation();
                         if (!controlsEnabled) return;
                         setShowQuality((v) => !v);
+                        setShowAudio(false);
+                        setShowSubs(false);
                         bumpChrome();
                       }}
                       className="flex h-11 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-medium text-white disabled:opacity-40"

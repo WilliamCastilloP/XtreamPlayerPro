@@ -23,10 +23,13 @@ Modern Xtream Codes PWA — Live TV, Movies, and Series.
 
 ```bash
 npm install
-npm run dev
+npm run proxy   # terminal A — MKV→HLS on :8080
+npm run dev     # terminal B — binds 0.0.0.0 for LAN
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000) on this PC.
+
+**Phone on the same Wi‑Fi:** run `npm run lan:ready` to print your LAN URL (e.g. `http://192.168.x.x:3000`) and open firewall ports. Use that IP on the phone — never `localhost`. Keep `NEXT_PUBLIC_STREAM_PROXY_BASE=http://127.0.0.1:8080`; the client rewrites it to the PC IP automatically.
 
 ## Production build
 

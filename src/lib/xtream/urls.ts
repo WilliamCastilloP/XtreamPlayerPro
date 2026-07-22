@@ -58,7 +58,24 @@ export function buildDirectStreamUrl(
 export function getStreamProxyBase(): string {
   const raw = (process.env.NEXT_PUBLIC_STREAM_PROXY_BASE || "").trim();
   if (!raw) return "";
-  return raw.replace(/\/+$/, "");
+  const base = raw.replace(/\/+$/, "");
+  // Phone / LAN: env often says 127.0.0.1, but that is the phone itself.
+  // When the page is opened via the PC's LAN IP, point the proxy at that host.
+  if (typeof window !== "undefined") {
+    const pageHost = window.location.hostname;
+    if (pageHost && pageHost !== "localhost" && pageHost !== "127.0.0.1") {
+      try {
+        const parsed = new URL(base);
+        if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
+          parsed.hostname = pageHost;
+          return parsed.origin;
+        }
+      } catch {
+        /* keep base */
+      }
+    }
+  }
+  return base;
 }
 
 export function buildProxiedStreamUrl(directUrl: string): string {

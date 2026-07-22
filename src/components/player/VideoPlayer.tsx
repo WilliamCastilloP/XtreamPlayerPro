@@ -2094,14 +2094,14 @@ export function VideoPlayer({
                       onToggleFavorite();
                       bumpChrome();
                     }}
-                    className="flex h-11 cursor-pointer items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-medium text-white"
+                    className="flex h-11 w-11 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-white/10 text-xs font-medium text-white lg:w-auto lg:px-3"
                     aria-label={t("favorite")}
                     aria-pressed={favorited}
                   >
                     <Heart
                       className={`h-4 w-4 ${favorited ? "fill-[var(--xp-accent)] text-[var(--xp-accent)]" : ""}`}
                     />
-                    {t("favorite")}
+                    <span className="hidden lg:inline">{t("favorite")}</span>
                   </button>
                 ) : null}
                 {hasSettings ? (
@@ -2115,11 +2115,11 @@ export function VideoPlayer({
                         setShowSettings((v) => !v);
                         bumpChrome();
                       }}
-                      className="flex h-11 cursor-pointer items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
+                      className="flex h-11 w-11 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-white/10 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-40 lg:w-auto lg:px-3"
                       aria-label={t("playerSettings")}
                     >
                       <Settings2 className="h-4 w-4" />
-                      {t("playerSettings")}
+                      <span className="hidden lg:inline">{t("playerSettings")}</span>
                     </button>
                     {showSettings ? (
                       <div className="absolute bottom-14 right-0 z-50 max-h-[min(50dvh,22rem)] w-[12.5rem] overflow-y-auto rounded-xl border border-white/15 bg-black/90 py-1 shadow-xl backdrop-blur">

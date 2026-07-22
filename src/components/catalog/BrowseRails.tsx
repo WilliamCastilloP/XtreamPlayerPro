@@ -52,7 +52,7 @@ function categoryHref(kind: BrowseKind, categoryId: string, name: string) {
 function mapLiveItems(streams: LiveStream[]): MediaRowItem[] {
   return streams.map((s) => ({
     key: `live-${s.stream_id}`,
-    href: watchPath("live", s.stream_id, { title: s.name }),
+    href: `/live/${s.stream_id}`,
     title: s.name,
     image: s.stream_icon || undefined,
     aspect: "live" as const,
@@ -189,11 +189,11 @@ export function BrowseRails({
 
   return (
     <div
-      className={`space-y-6 pb-8 ${embedded ? "pt-2" : "pt-3 md:pt-5"} md:space-y-8`}
+      className={`space-y-6 pb-8 ${embedded ? "pt-0" : "pt-3 lg:pt-5"} lg:space-y-8`}
     >
       {!embedded ? (
-        <div className="px-4 md:px-6">
-          <h1 className="font-[family-name:var(--xp-font-display)] text-2xl font-bold md:text-3xl">
+        <div className="px-4 lg:px-6">
+          <h1 className="font-[family-name:var(--xp-font-display)] text-2xl font-bold lg:text-3xl">
             {title}
           </h1>
           <p className="text-sm text-[var(--xp-muted)]">{subtitle}</p>
@@ -201,13 +201,13 @@ export function BrowseRails({
       ) : null}
 
       {error ? (
-        <p className="px-4 text-sm text-[var(--xp-danger)] md:px-6">{error}</p>
+        <p className="px-4 text-sm text-[var(--xp-danger)] lg:px-6">{error}</p>
       ) : null}
 
       {loading && !rails.length ? (
         <div className="space-y-8">
-          <div className="xp-shimmer mx-4 h-48 rounded-2xl md:mx-6 md:h-64" />
-          <p className="px-4 text-sm text-[var(--xp-muted)] md:px-6">
+          <div className="xp-shimmer mx-4 h-48 rounded-2xl lg:mx-6 lg:h-64" />
+          <p className="px-4 text-sm text-[var(--xp-muted)] lg:px-6">
             {t("loadingCatalog", { kind: kindLabel.toLowerCase() })}
           </p>
           <PosterSkeletonRow />
@@ -216,7 +216,7 @@ export function BrowseRails({
       ) : (
         <>
           {rails.length > 0 ? (
-            <p className="px-4 text-xs text-[var(--xp-muted)] md:px-6">
+            <p className="px-4 text-xs text-[var(--xp-muted)] lg:px-6">
               {t("categoriesPreview", {
                 shown: String(rails.length),
                 total:
@@ -239,7 +239,10 @@ export function BrowseRails({
               image={hero.image}
               playHref={
                 isLive
-                  ? hero.href
+                  ? watchPath("live", hero.href.split("/").pop() || "", {
+                      title: hero.title,
+                      image: hero.image || "",
+                    })
                   : kind === "movies"
                     ? watchPath("movie", hero.href.split("/").pop() || "", {
                         title: hero.title,
@@ -247,7 +250,7 @@ export function BrowseRails({
                       })
                     : hero.href
               }
-              infoHref={isLive ? undefined : hero.href}
+              infoHref={hero.href}
             />
           ) : null}
 

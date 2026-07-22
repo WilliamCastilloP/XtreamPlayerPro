@@ -13,7 +13,6 @@ import {
   loadSeriesByCategory,
   loadVodByCategory,
 } from "@/lib/xtream/catalog-cache";
-import { watchPath } from "@/lib/xtream/client";
 
 type GridItem = {
   key: string;
@@ -68,7 +67,7 @@ function CategoryBrowseInner() {
           const streams = await loadLiveByCategory(credentials!, categoryId);
           next = streams.map((s) => ({
             key: `live-${s.stream_id}`,
-            href: watchPath("live", s.stream_id, { title: s.name }),
+            href: `/live/${s.stream_id}`,
             title: s.name,
             image: s.stream_icon || undefined,
             aspect: "live" as const,

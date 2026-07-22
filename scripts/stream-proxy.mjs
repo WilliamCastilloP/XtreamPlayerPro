@@ -203,8 +203,18 @@ function trackLabel(language, title, kind, index) {
   return `${kind} ${index + 1}`;
 }
 
-function rewriteUpstreamPlaylist(body, playlistUrl) {
+/**
+ * Rewrite HLS segment / URI lines through this proxy.
+ * Prefer absolute proxy URLs so hls.js never resolves `/api/stream` against
+ * the app origin (e.g. :3000) when the playlist came from :8080.
+ */
+function rewriteUpstreamPlaylist(body, playlistUrl, proxyOrigin = "") {
   const base = new URL(playlistUrl);
+  const origin = String(proxyOrigin || "").replace(/\/+$/, "");
+  const wrap = (absolute) => {
+    const path = `/api/stream?url=${encodeURIComponent(absolute)}`;
+    return origin ? `${origin}${path}` : path;
+  };
   return body
     .split(/\r?\n/)
     .map((line) => {
@@ -214,7 +224,7 @@ function rewriteUpstreamPlaylist(body, playlistUrl) {
           return line.replace(/URI="([^"]+)"/g, (_match, uri) => {
             try {
               const absolute = new URL(uri, base).toString();
-              return `URI="/api/stream?url=${encodeURIComponent(absolute)}"`;
+              return `URI="${wrap(absolute)}"`;
             } catch {
               return `URI="${uri}"`;
             }
@@ -224,7 +234,7 @@ function rewriteUpstreamPlaylist(body, playlistUrl) {
       }
       try {
         const absolute = new URL(trimmed, base).toString();
-        return `/api/stream?url=${encodeURIComponent(absolute)}`;
+        return wrap(absolute);
       } catch {
         return line;
       }
@@ -311,8 +321,13 @@ async function handleStream(req, res, target) {
     Referer: `${parsed.origin}/`,
     Origin: parsed.origin,
   };
+  // Never forward Range onto playlist probes — partial m3u8 breaks live HLS.
+  const likelyPlaylist =
+    parsed.pathname.endsWith(".m3u8") ||
+    /\/live\/[^/]+\/[^/]+\/[^/.]+$/i.test(parsed.pathname) ||
+    /\/auth\//i.test(parsed.pathname);
   const range = req.headers.range;
-  if (range) forwardHeaders.Range = range;
+  if (range && !likelyPlaylist) forwardHeaders.Range = range;
 
   let upstream;
   try {
@@ -340,11 +355,17 @@ async function handleStream(req, res, target) {
   const contentType = upstream.headers.get("content-type") || "";
   const finalUrl = upstream.url || parsed.toString();
   const finalPath = new URL(finalUrl).pathname;
+  const host = req.headers.host || `127.0.0.1:${PORT}`;
+  const proto =
+    (req.headers["x-forwarded-proto"] || "").split(",")[0].trim() || "http";
+  const proxyOrigin =
+    (process.env.PUBLIC_STREAM_PROXY_BASE || "").replace(/\/+$/, "") ||
+    `${proto}://${host}`;
 
   if (req.method !== "HEAD" && shouldBufferAsPlaylist(contentType, finalPath)) {
     const text = await upstream.text();
     if (text.includes("#EXTM3U")) {
-      const rewritten = rewriteUpstreamPlaylist(text, finalUrl);
+      const rewritten = rewriteUpstreamPlaylist(text, finalUrl, proxyOrigin);
       const headers = corsHeaders({
         "Content-Type": "application/vnd.apple.mpegurl",
       });
@@ -480,19 +501,33 @@ const audioCodecBySource = new Map();
 const durationBySource = new Map();
 /** @type {Map<string, ProbedTracks>} sourceUrl → probed tracks */
 const tracksBySource = new Map();
+/** @type {Map<string, Promise<ProbedTracks>>} in-flight probes (dedupe) */
+const tracksProbeJobs = new Map();
 /** @type {Map<string, Promise<string>>} cacheKey → in-flight VTT extract */
 const subtitleJobs = new Map();
 
+function isUsefulProbe(probed) {
+  return (
+    (probed.audio && probed.audio.length > 0) ||
+    (probed.subtitles && probed.subtitles.length > 0) ||
+    (probed.durationSec != null && probed.durationSec > 1)
+  );
+}
+
 /**
  * Probe duration + audio/subtitle tracks from ffmpeg -i banner.
+ * Empty probes (panel HTML / transient errors) are NOT cached so we retry.
  * @param {string} mediaUrl
  * @returns {Promise<ProbedTracks>}
  */
 function probeMediaInfo(mediaUrl) {
   const cached = tracksBySource.get(mediaUrl);
-  if (cached) return Promise.resolve(cached);
+  if (cached && isUsefulProbe(cached)) return Promise.resolve(cached);
 
-  return new Promise((resolve) => {
+  const inflight = tracksProbeJobs.get(mediaUrl);
+  if (inflight) return inflight;
+
+  const job = new Promise((resolve) => {
     if (!FFMPEG_BIN) {
       resolve({ durationSec: null, audio: [], subtitles: [] });
       return;
@@ -503,6 +538,12 @@ function probeMediaInfo(mediaUrl) {
         "-hide_banner",
         "-user_agent",
         UPSTREAM_UA,
+        "-reconnect",
+        "1",
+        "-reconnect_streamed",
+        "1",
+        "-reconnect_delay_max",
+        "5",
         "-i",
         mediaUrl,
         "-f",
@@ -580,14 +621,28 @@ function probeMediaInfo(mediaUrl) {
       }
       /** @type {ProbedTracks} */
       const probed = { durationSec, audio, subtitles };
-      tracksBySource.set(mediaUrl, probed);
-      if (durationSec) durationBySource.set(mediaUrl, durationSec);
+      // Only cache successful probes — empty results are usually HTML/502
+      // from the panel and would permanently hide audio/subs until restart.
+      if (isUsefulProbe(probed)) {
+        tracksBySource.set(mediaUrl, probed);
+        if (durationSec) durationBySource.set(mediaUrl, durationSec);
+      } else {
+        tracksBySource.delete(mediaUrl);
+        console.warn(
+          `[hls] tracks empty (not cached) · ${mediaUrl.slice(0, 56)}…`,
+        );
+      }
       console.log(
         `[hls] tracks · audio=${audio.length} subs=${subtitles.length} · ${mediaUrl.slice(0, 56)}…`,
       );
       resolve(probed);
     });
+  }).finally(() => {
+    tracksProbeJobs.delete(mediaUrl);
   });
+
+  tracksProbeJobs.set(mediaUrl, job);
+  return job;
 }
 
 /**
@@ -840,7 +895,9 @@ async function getOrStartSession(sourceUrl, startSec = 0, opts = {}) {
         console.log(`[hls] duration ${id} = ${Math.round(probed.durationSec)}s`);
       }
       // Re-key cache under the upstream URL too (player queries by that).
-      tracksBySource.set(sourceUrl, probed);
+      if (isUsefulProbe(probed)) {
+        tracksBySource.set(sourceUrl, probed);
+      }
     });
   }
 
@@ -1070,8 +1127,10 @@ async function handleHlsTracks(req, res, sourceUrl) {
       tracksBySource.get(sourceUrl) ||
       tracksBySource.get(localProxy) ||
       (await probeMediaInfo(localProxy));
-    tracksBySource.set(sourceUrl, probed);
-    tracksBySource.set(localProxy, probed);
+    if (isUsefulProbe(probed)) {
+      tracksBySource.set(sourceUrl, probed);
+      tracksBySource.set(localProxy, probed);
+    }
     sendJson(res, 200, {
       audio: probed.audio,
       subtitles: probed.subtitles,

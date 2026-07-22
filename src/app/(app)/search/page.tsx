@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { PosterCard } from "@/components/catalog/PosterCard";
 import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
@@ -9,23 +10,60 @@ import {
   loadAllSeries,
   loadAllVodStreams,
 } from "@/lib/xtream/catalog-cache";
-import { watchPath } from "@/lib/xtream/client";
 import type { LiveStream, SeriesItem, VodStream } from "@/lib/xtream/types";
 
 type Filter = "live" | "movies" | "series";
 
-export default function SearchPage() {
+function parseFilter(value: string | null): Filter | null {
+  if (value === "live" || value === "movies" || value === "series") return value;
+  return null;
+}
+
+function searchHref(query: string, filter: Filter | null): string {
+  const params = new URLSearchParams();
+  const q = query.trim();
+  if (q) params.set("q", q);
+  if (filter) params.set("f", filter);
+  const qs = params.toString();
+  return qs ? `/search?${qs}` : "/search";
+}
+
+function withBack(href: string, back: string): string {
+  const sep = href.includes("?") ? "&" : "?";
+  return `${href}${sep}back=${encodeURIComponent(back)}`;
+}
+
+function SearchInner() {
   const { credentials } = usePlaylists();
   const { t } = useLocale();
-  const [query, setQuery] = useState("");
-  /** null = no chip selected → show all types */
-  const [filter, setFilter] = useState<Filter | null>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const qParam = searchParams.get("q") || "";
+  const fParam = parseFilter(searchParams.get("f"));
+
+  const [query, setQuery] = useState(qParam);
+  const [filter, setFilter] = useState<Filter | null>(fParam);
   const [live, setLive] = useState<LiveStream[]>([]);
   const [movies, setMovies] = useState<VodStream[]>([]);
   const [series, setSeries] = useState<SeriesItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [readyCatalog, setReadyCatalog] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Restore from URL (e.g. browser back / shared link).
+  useEffect(() => {
+    setQuery(qParam);
+    setFilter(fParam);
+  }, [qParam, fParam]);
+
+  // Keep the address bar in sync so history preserves the results.
+  useEffect(() => {
+    const next = searchHref(query, filter);
+    const current = searchHref(qParam, fParam);
+    if (next === current) return;
+    router.replace(next, { scroll: false });
+  }, [query, filter, qParam, fParam, router]);
 
   useEffect(() => {
     if (!credentials) return;
@@ -61,6 +99,8 @@ export default function SearchPage() {
     };
   }, [credentials, query, readyCatalog]);
 
+  const backTarget = searchHref(query, filter);
+
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (q.length < 2) return [];
@@ -72,7 +112,7 @@ export default function SearchPage() {
             .slice(0, 80)
             .map((s) => ({
               key: `live-${s.stream_id}`,
-              href: watchPath("live", s.stream_id, { title: s.name }),
+              href: withBack(`/live/${s.stream_id}`, backTarget),
               title: s.name,
               image: s.stream_icon || undefined,
               kind: "Live",
@@ -87,7 +127,7 @@ export default function SearchPage() {
             .slice(0, 80)
             .map((s) => ({
               key: `vod-${s.stream_id}`,
-              href: `/movies/${s.stream_id}`,
+              href: withBack(`/movies/${s.stream_id}`, backTarget),
               title: s.name,
               image: s.stream_icon || undefined,
               kind: "Movie",
@@ -102,7 +142,7 @@ export default function SearchPage() {
             .slice(0, 80)
             .map((s) => ({
               key: `series-${s.series_id}`,
-              href: `/series/${s.series_id}`,
+              href: withBack(`/series/${s.series_id}`, backTarget),
               title: s.name,
               image: s.cover || undefined,
               kind: "Series",
@@ -111,7 +151,7 @@ export default function SearchPage() {
         : [];
 
     return [...liveHits, ...movieHits, ...seriesHits];
-  }, [query, filter, live, movies, series]);
+  }, [query, filter, live, movies, series, backTarget]);
 
   const chips: { id: Filter; label: string }[] = [
     { id: "live", label: t("liveTv") },
@@ -144,7 +184,7 @@ export default function SearchPage() {
             onClick={() =>
               setFilter((current) => (current === chip.id ? null : chip.id))
             }
-            className={`shrink-0 rounded-full px-4 py-2 text-sm ${
+            className={`shrink-0 cursor-pointer rounded-full px-4 py-2 text-sm ${
               filter === chip.id
                 ? "bg-[var(--xp-accent)] text-[var(--xp-ink)]"
                 : "bg-[var(--xp-surface)] text-[var(--xp-muted)]"
@@ -183,5 +223,19 @@ export default function SearchPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function SearchPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="space-y-4 px-4 py-5 md:px-6">
+          <p className="text-sm text-[var(--xp-muted)]">Loading…</p>
+        </div>
+      }
+    >
+      <SearchInner />
+    </Suspense>
   );
 }

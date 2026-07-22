@@ -44,9 +44,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-dvh">
       <SideRail />
-      <div className="flex min-w-0 flex-1 flex-col pb-20 md:pb-0">
+      <div className="flex min-w-0 flex-1 flex-col pb-20 lg:pb-0">
         <header
-          className={`sticky top-0 z-30 px-4 py-3 transition-[background,box-shadow] duration-300 md:hidden ${
+          className={`sticky top-0 z-30 px-4 py-3 transition-[background,box-shadow] duration-300 lg:hidden ${
             scrolled
               ? "bg-[rgba(11,15,20,0.92)] shadow-[0_12px_28px_rgba(0,0,0,0.55)] backdrop-blur-xl"
               : "bg-transparent"

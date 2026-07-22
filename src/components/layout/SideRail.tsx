@@ -17,7 +17,7 @@ export function SideRail() {
   ];
 
   return (
-    <aside className="hidden w-56 shrink-0 border-r border-[var(--xp-border)] bg-[rgba(11,15,20,0.7)] px-3 py-6 md:flex md:flex-col">
+    <aside className="hidden w-56 shrink-0 border-r border-[var(--xp-border)] bg-[rgba(11,15,20,0.7)] px-3 py-6 lg:flex lg:flex-col">
       <div className="mb-8 px-3">
         <BrandMark size="md" />
       </div>
@@ -35,7 +35,7 @@ export function SideRail() {
             <Link
               key={href}
               href={href}
-              className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
+              className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition cursor-pointer ${
                 active
                   ? "bg-[var(--xp-accent-dim)] text-[var(--xp-accent)]"
                   : "text-[var(--xp-muted)] hover:bg-[var(--xp-surface)] hover:text-[var(--xp-text)]"

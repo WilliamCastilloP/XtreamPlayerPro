@@ -21,11 +21,7 @@ import { watchPath } from "@/lib/xtream/client";
 
 type Section = BrowseKind;
 
-const FILTERS: { id: Section; label: string }[] = [
-  { id: "live", label: "LIVE" },
-  { id: "movies", label: "MOVIES" },
-  { id: "series", label: "SERIES" },
-];
+const FILTER_IDS: Section[] = ["live", "movies", "series"];
 
 function parseSection(value: string | null): Section | null {
   if (value === "live" || value === "movies" || value === "series") return value;
@@ -66,7 +62,7 @@ function HomeInner() {
                 ? `/series/${item.seriesId ?? item.streamId}`
                 : item.kind === "movie"
                   ? `/movies/${item.streamId}`
-                  : watchPath("live", item.streamId, { title: item.title }),
+                  : `/live/${item.streamId}`,
             title: item.title,
             image: item.image,
             aspect:
@@ -79,7 +75,7 @@ function HomeInner() {
           .slice(0, 18)
           .map((f) => ({
             key: f.id,
-            href: watchPath("live", f.streamId, { title: f.title }),
+            href: `/live/${f.streamId}`,
             title: f.title,
             image: f.image,
             aspect: "live" as const,
@@ -131,7 +127,7 @@ function HomeInner() {
         setFeaturedLive(
           liveSlice.slice(0, 16).map((s) => ({
             key: `feat-live-${s.stream_id}`,
-            href: watchPath("live", s.stream_id, { title: s.name }),
+            href: `/live/${s.stream_id}`,
             title: s.name,
             image: s.stream_icon || undefined,
             aspect: "live" as const,
@@ -170,6 +166,62 @@ function HomeInner() {
     };
   }, [credentials, activePlaylist]);
 
+  // Re-read local library when switching sections so new favorites appear immediately.
+  useEffect(() => {
+    if (!activePlaylist) return;
+    const cont = listContinue(activePlaylist.id)
+      .slice(0, 16)
+      .map((item) => ({
+        key: item.id,
+        href:
+          item.kind === "series"
+            ? `/series/${item.seriesId ?? item.streamId}`
+            : item.kind === "movie"
+              ? `/movies/${item.streamId}`
+              : `/live/${item.streamId}`,
+        title: item.title,
+        image: item.image,
+        aspect:
+          item.kind === "live" ? ("live" as const) : ("poster" as const),
+      }));
+    const favorites = listFavorites(activePlaylist.id);
+    setContinueItems(cont);
+    setFavLive(
+      favorites
+        .filter((f) => f.kind === "live")
+        .slice(0, 18)
+        .map((f) => ({
+          key: f.id,
+          href: `/live/${f.streamId}`,
+          title: f.title,
+          image: f.image,
+          aspect: "live" as const,
+        })),
+    );
+    setFavMovies(
+      favorites
+        .filter((f) => f.kind === "movie")
+        .slice(0, 18)
+        .map((f) => ({
+          key: f.id,
+          href: `/movies/${f.streamId}`,
+          title: f.title,
+          image: f.image,
+        })),
+    );
+    setFavSeries(
+      favorites
+        .filter((f) => f.kind === "series")
+        .slice(0, 18)
+        .map((f) => ({
+          key: f.id,
+          href: `/series/${f.streamId}`,
+          title: f.title,
+          image: f.image,
+        })),
+    );
+  }, [section, activePlaylist]);
+
   const hero =
     continueItems[0] ||
     favMovies[0] ||
@@ -180,59 +232,111 @@ function HomeInner() {
     featuredLive[0] ||
     null;
 
+  const sectionContinue =
+    section === "live"
+      ? continueItems.filter((item) => item.href.startsWith("/live/"))
+      : section === "movies"
+        ? continueItems.filter((item) => item.href.startsWith("/movies/"))
+        : section === "series"
+          ? continueItems.filter((item) => item.href.startsWith("/series/"))
+          : [];
+
+  const sectionFavorites =
+    section === "live"
+      ? favLive
+      : section === "movies"
+        ? favMovies
+        : section === "series"
+          ? favSeries
+          : [];
+
+  const sectionFavTitle =
+    section === "live"
+      ? t("favoriteChannels")
+      : section === "movies"
+        ? t("favoriteMovies")
+        : t("favoriteSeries");
+
+  const sectionFavEmpty =
+    section === "live"
+      ? t("favoriteChannelsEmpty")
+      : section === "movies"
+        ? t("favoriteMoviesEmpty")
+        : t("favoriteSeriesEmpty");
+
   return (
     <div className="pb-8">
-      <div className="sticky top-[52px] z-20 space-y-3 bg-gradient-to-b from-[rgba(11,15,20,0.96)] via-[rgba(11,15,20,0.88)] to-transparent px-4 pb-3 pt-2 md:static md:bg-transparent md:px-6 md:pt-5">
+      <div className="sticky top-[52px] z-20 space-y-3 bg-gradient-to-b from-[rgba(11,15,20,0.96)] via-[rgba(11,15,20,0.88)] to-transparent px-4 pb-3 pt-2 lg:static lg:bg-transparent lg:px-6 lg:pt-5">
         <div className="flex gap-2 overflow-x-auto scrollbar-none">
-          {FILTERS.map((filter) => (
-            <button
-              key={filter.id}
-              type="button"
-              onClick={() => {
-                const next = section === filter.id ? null : filter.id;
-                if (next) {
-                  router.replace(`/?section=${next}`, { scroll: false });
-                } else {
-                  router.replace("/", { scroll: false });
-                }
-              }}
-              className={`shrink-0 rounded-full px-4 py-2 text-xs font-bold tracking-wide transition ${
-                section === filter.id
-                  ? "bg-[var(--xp-accent)] text-[var(--xp-ink)]"
-                  : "bg-[var(--xp-surface)] text-[var(--xp-muted)]"
-              }`}
-            >
-              {filter.label}
-            </button>
-          ))}
+          {FILTER_IDS.map((id) => {
+            const label =
+              id === "live"
+                ? t("liveTv")
+                : id === "movies"
+                  ? t("movies")
+                  : t("series");
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => {
+                  const next = section === id ? null : id;
+                  if (next) {
+                    router.replace(`/?section=${next}`, { scroll: false });
+                  } else {
+                    router.replace("/", { scroll: false });
+                  }
+                }}
+                className={`shrink-0 cursor-pointer rounded-full px-4 py-2 text-xs font-bold tracking-wide transition ${
+                  section === id
+                    ? "bg-[var(--xp-accent)] text-[var(--xp-ink)]"
+                    : "bg-[var(--xp-surface)] text-[var(--xp-muted)]"
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {error ? (
-        <p className="px-4 text-sm text-[var(--xp-danger)] md:px-6">{error}</p>
+        <p className="px-4 text-sm text-[var(--xp-danger)] lg:px-6">{error}</p>
       ) : null}
 
       {/* Filtered catalog — only mounts when user picks LIVE/MOVIES/SERIES */}
       {section ? (
-        <BrowseRails
-          kind={section}
-          title={
-            section === "live"
-              ? t("liveTv")
-              : section === "movies"
-                ? t("movies")
-                : t("series")
-          }
-          subtitle={t("browseByCategory")}
-          embedded
-        />
+        <div className="space-y-6 pt-2">
+          <MediaRow
+            title={t("continueWatching")}
+            items={sectionContinue}
+            emptyLabel={t("continueEmpty")}
+          />
+          <MediaRow
+            title={sectionFavTitle}
+            items={sectionFavorites}
+            emptyLabel={sectionFavEmpty}
+          />
+          <BrowseRails
+            kind={section}
+            title={
+              section === "live"
+                ? t("liveTv")
+                : section === "movies"
+                  ? t("movies")
+                  : t("series")
+            }
+            subtitle={t("browseByCategory")}
+            embedded
+          />
+        </div>
       ) : loadingHighlights ? (
         <div className="space-y-8 pt-4">
-          <div className="xp-shimmer mx-4 h-48 rounded-2xl md:mx-6" />
+          <div className="xp-shimmer mx-4 h-48 rounded-2xl lg:mx-6" />
           <PosterSkeletonRow />
         </div>
       ) : (
-        <div className="space-y-6 pt-2 md:space-y-8">
+        <div className="space-y-6 pt-2 lg:space-y-8">
           {hero ? (
             <HeroBanner
               eyebrow={t("homeForYou")}
@@ -289,7 +393,7 @@ export default function HomePage() {
   return (
     <Suspense
       fallback={
-        <div className="space-y-8 px-4 pb-8 pt-4 md:px-6">
+        <div className="space-y-8 px-4 pb-8 pt-4 lg:px-6">
           <div className="xp-shimmer h-10 w-40 rounded" />
           <div className="xp-shimmer h-48 rounded-2xl" />
           <PosterSkeletonRow />

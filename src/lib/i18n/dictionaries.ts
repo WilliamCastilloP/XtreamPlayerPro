@@ -34,7 +34,7 @@ const en = {
   loadingCatalog: "Loading {kind} catalog…",
   noTitlesCatalog: "No titles in this catalog yet.",
   browseByCategory: "Browse by category",
-  liveTv: "Live TV",
+  liveTv: "Live",
   movies: "Movies",
   series: "Series",
   tapPlayRotate: "Tap Play — rotate your phone for fullscreen",
@@ -42,7 +42,7 @@ const en = {
 
   homeForYou: "For you",
   homeHeroSubtitle:
-    "A mix of favorites and highlights — pick LIVE, MOVIES or SERIES to browse all",
+    "A mix of favorites and highlights — pick Live, Movies or Series to browse all",
   continueWatching: "Continue watching",
   continueEmpty: "Start watching to build this list.",
   favoriteChannels: "Favorite channels",
@@ -95,6 +95,7 @@ const en = {
   playerSubtitlesOff: "Off",
   playerSubtitlesLoading: "Loading subtitles…",
   playerSubtitlesFailed: "Couldn't load subtitles",
+  playerChangingAudio: "Changing audio track…",
   favorite: "Favorite",
   play: "Play",
   back: "Back",
@@ -136,7 +137,7 @@ const es: Record<MessageKey, string> = {
   loadingCatalog: "Cargando catálogo de {kind}…",
   noTitlesCatalog: "Aún no hay títulos en este catálogo.",
   browseByCategory: "Explorar por categoría",
-  liveTv: "TV en vivo",
+  liveTv: "En vivo",
   movies: "Películas",
   series: "Series",
   tapPlayRotate: "Toca Play — gira el teléfono para pantalla completa",
@@ -144,7 +145,7 @@ const es: Record<MessageKey, string> = {
 
   homeForYou: "Para ti",
   homeHeroSubtitle:
-    "Favoritos y destacados — elige LIVE, MOVIES o SERIES para ver todo",
+    "Favoritos y destacados — elige En vivo, Películas o Series para ver todo",
   continueWatching: "Seguir viendo",
   continueEmpty: "Empieza a ver algo para llenar esta lista.",
   favoriteChannels: "Canales favoritos",
@@ -197,6 +198,7 @@ const es: Record<MessageKey, string> = {
   playerSubtitlesOff: "Desactivados",
   playerSubtitlesLoading: "Cargando subtítulos…",
   playerSubtitlesFailed: "No se pudieron cargar los subtítulos",
+  playerChangingAudio: "Cambiando pista de audio…",
   favorite: "Favorito",
   play: "Play",
   back: "Atrás",

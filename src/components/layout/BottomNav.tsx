@@ -16,7 +16,7 @@ export function BottomNav() {
   ];
 
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--xp-border)] bg-[rgba(11,15,20,0.94)] backdrop-blur-xl md:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--xp-border)] bg-[rgba(11,15,20,0.94)] backdrop-blur-xl lg:hidden">
       <ul className="mx-auto flex max-w-lg items-stretch justify-between px-2 pb-[env(safe-area-inset-bottom)] pt-1">
         {items.map(({ href, label, icon: Icon }) => {
           const active =
@@ -32,7 +32,7 @@ export function BottomNav() {
             <li key={href} className="flex-1">
               <Link
                 href={href}
-                className={`flex flex-col items-center gap-0.5 px-1 py-2.5 text-[11px] ${
+                className={`flex cursor-pointer flex-col items-center gap-0.5 px-1 py-2.5 text-[11px] ${
                   active
                     ? "text-[var(--xp-accent)]"
                     : "text-[var(--xp-muted)]"

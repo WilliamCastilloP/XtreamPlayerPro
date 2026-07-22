@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Hls from "hls.js";
 import {
   ArrowLeft,
   Bug,
   Copy,
+  Heart,
   Maximize,
   Minimize,
   Pause,
@@ -18,6 +19,12 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useLocale } from "@/components/providers/LocaleProvider";
+import { usePlaylists } from "@/components/providers/PlaylistProvider";
+import {
+  isFavorite,
+  toggleFavorite,
+  type FavoriteItem,
+} from "@/lib/library/storage";
 import {
   isProxiedStreamUrl,
   looksLikeHlsUrl,
@@ -34,6 +41,8 @@ import { cueTextAt, parseWebVtt, type VttCue } from "@/lib/player/vtt";
 
 const CONNECT_READY_SEC = 2.5;
 const CONNECT_READY_SEEK_SEC = 1.2;
+/** Live edge usually only has ~1–2s ahead — don't wait like VOD. */
+const CONNECT_READY_LIVE_SEC = 0.8;
 
 function snapHlsStart(seconds: number): number {
   return Math.max(0, Math.floor(seconds / 2) * 2);
@@ -143,6 +152,8 @@ type Props = {
   poster?: string;
   kind?: string;
   streamId?: string;
+  /** Series catalog id (favorite the show, not the episode). */
+  seriesId?: string;
   extension?: string;
   /** Known full duration in seconds (catalog / probe). Beats under-reported HLS event playlists. */
   durationHint?: number;
@@ -249,6 +260,7 @@ export function VideoPlayer({
   poster,
   kind,
   streamId,
+  seriesId,
   extension,
   durationHint,
   onProgress,
@@ -256,9 +268,12 @@ export function VideoPlayer({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const router = useRouter();
   const { t } = useLocale();
+  const { activePlaylist } = usePlaylists();
   const [sourceIndex, setSourceIndex] = useState(0);
+  const [favTick, setFavTick] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [volume, setVolume] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [showChrome, setShowChrome] = useState(true);
   const [reloadToken, setReloadToken] = useState(0);
@@ -286,6 +301,8 @@ export function VideoPlayer({
   const [scrubbing, setScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState(0);
   const [seekingUi, setSeekingUi] = useState(false);
+  /** Mid-playback rebuffer (small non-blocking spinner). Distinct from initial/seek loader. */
+  const [buffering, setBuffering] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   /** Cover art, or a freeze-frame data URL held across seek reloads. */
   const [holdPoster, setHoldPoster] = useState<string | undefined>(poster);
@@ -304,6 +321,9 @@ export function VideoPlayer({
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverPct, setHoverPct] = useState(0);
   const scrubbingRef = useRef(false);
+  /** Status text to show when the next seekingReload fires (set by restartServerHlsAt). */
+  const seekStatusOverrideRef = useRef<string>("");
+  const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const subtitleAbortRef = useRef<AbortController | null>(null);
   const subtitleCacheRef = useRef<Map<string, VttCue[]>>(new Map());
   const subtitleWindowRef = useRef<{
@@ -504,7 +524,8 @@ export function VideoPlayer({
     setLoadPercent(0);
     if (seekingReloadRef.current) {
       setSeekingUi(true);
-      setStatusText(t("playerSeeking"));
+      setStatusText(seekStatusOverrideRef.current || t("playerSeeking"));
+      seekStatusOverrideRef.current = "";
     } else {
       setStatusText(t("playerConnecting"));
     }
@@ -571,7 +592,11 @@ export function VideoPlayer({
     };
 
     const readySec =
-      serverHlsOffset > 0 ? CONNECT_READY_SEEK_SEC : CONNECT_READY_SEC;
+      kind === "live"
+        ? CONNECT_READY_LIVE_SEC
+        : serverHlsOffset > 0
+          ? CONNECT_READY_SEEK_SEC
+          : CONNECT_READY_SEC;
 
     const updateNativeBuffer = () => {
       if (disposed) return;
@@ -635,7 +660,16 @@ export function VideoPlayer({
       }
     };
     const onWaiting = () => {
-      if (!disposed) setStatusText(t("playerBuffering"));
+      if (!disposed) {
+        setBuffering(true);
+        setStatusText(t("playerBuffering"));
+      }
+    };
+    const onCanPlay = () => {
+      if (!disposed) setBuffering(false);
+    };
+    const onStalled = () => {
+      if (!disposed) setBuffering(true);
     };
     const onPlayingEvt = () => {
       if (!disposed) {
@@ -643,6 +677,7 @@ export function VideoPlayer({
         setStatusText(t("playerPlaying"));
         setHasStarted(true);
         setSeekingUi(false);
+        setBuffering(false);
         seekingReloadRef.current = false;
         pushDebug(`playing · ${candidate.label}`);
       }
@@ -653,7 +688,19 @@ export function VideoPlayer({
     video.addEventListener("timeupdate", onTime);
     video.addEventListener("progress", updateNativeBuffer);
     video.addEventListener("waiting", onWaiting);
+    video.addEventListener("canplay", onCanPlay);
+    video.addEventListener("stalled", onStalled);
     video.addEventListener("playing", onPlayingEvt);
+    const detachPlaybackListeners = () => {
+      video.removeEventListener("play", onPlay);
+      video.removeEventListener("pause", onPause);
+      video.removeEventListener("timeupdate", onTime);
+      video.removeEventListener("progress", updateNativeBuffer);
+      video.removeEventListener("waiting", onWaiting);
+      video.removeEventListener("canplay", onCanPlay);
+      video.removeEventListener("stalled", onStalled);
+      video.removeEventListener("playing", onPlayingEvt);
+    };
 
     // Decide remux from THIS candidate's own URL (not the title's extension),
     // otherwise HLS/MP4 fallbacks get wrongly routed through the remuxer.
@@ -748,12 +795,7 @@ export function VideoPlayer({
 
       return () => {
         disposed = true;
-        video.removeEventListener("play", onPlay);
-        video.removeEventListener("pause", onPause);
-        video.removeEventListener("timeupdate", onTime);
-        video.removeEventListener("progress", updateNativeBuffer);
-        video.removeEventListener("waiting", onWaiting);
-        video.removeEventListener("playing", onPlayingEvt);
+        detachPlaybackListeners();
         if (remuxRef.current) {
           remuxRef.current.stop();
           remuxRef.current = null;
@@ -769,12 +811,7 @@ export function VideoPlayer({
       queueMicrotask(() => failOver("browser cannot play this container natively"));
       return () => {
         disposed = true;
-        video.removeEventListener("play", onPlay);
-        video.removeEventListener("pause", onPause);
-        video.removeEventListener("timeupdate", onTime);
-        video.removeEventListener("progress", updateNativeBuffer);
-        video.removeEventListener("waiting", onWaiting);
-        video.removeEventListener("playing", onPlayingEvt);
+        detachPlaybackListeners();
       };
     }
 
@@ -1026,12 +1063,7 @@ export function VideoPlayer({
     return () => {
       disposed = true;
       cleanupNativeTracks?.();
-      video.removeEventListener("play", onPlay);
-      video.removeEventListener("pause", onPause);
-      video.removeEventListener("timeupdate", onTime);
-      video.removeEventListener("progress", updateNativeBuffer);
-      video.removeEventListener("waiting", onWaiting);
-      video.removeEventListener("playing", onPlayingEvt);
+      detachPlaybackListeners();
       video.removeEventListener("loadedmetadata", onLoaded);
       video.removeEventListener("error", onNativeError);
       if (hlsRef.current) {
@@ -1061,6 +1093,7 @@ export function VideoPlayer({
     extension,
     durationHint,
     serverHlsOffset,
+    kind,
   ]);
 
   useEffect(
@@ -1083,6 +1116,22 @@ export function VideoPlayer({
     if (!video) return;
     video.muted = !video.muted;
     setMuted(video.muted);
+    bumpChrome();
+  };
+
+  const changeVolume = (v: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    const clamped = Math.max(0, Math.min(1, v));
+    video.volume = clamped;
+    setVolume(clamped);
+    if (clamped === 0) {
+      video.muted = true;
+      setMuted(true);
+    } else if (video.muted) {
+      video.muted = false;
+      setMuted(false);
+    }
     bumpChrome();
   };
 
@@ -1181,16 +1230,21 @@ export function VideoPlayer({
     bumpChrome();
   };
 
-  const restartServerHlsAt = (absoluteSec: number, nextAudio: number) => {
+  const restartServerHlsAt = (
+    absoluteSec: number,
+    nextAudio: number,
+    statusMsg?: string,
+  ) => {
     const video = videoRef.current;
     const snapped = snapHlsStart(absoluteSec);
     const frame = video ? captureFreezeFrame(video) : null;
     if (frame) setHoldPoster(frame);
     seekingReloadRef.current = true;
+    seekStatusOverrideRef.current = statusMsg ?? t("playerSeeking");
     setHasStarted(false);
     setLoadPercent(0);
     setSeekingUi(true);
-    setStatusText(t("playerSeeking"));
+    setStatusText(seekStatusOverrideRef.current);
     setServerHlsAudio(nextAudio);
     setServerHlsOffset(snapped);
     setCurrentTime(0);
@@ -1206,7 +1260,7 @@ export function VideoPlayer({
     if (isServerHls) {
       const absolute = serverHlsOffset + (videoRef.current?.currentTime || 0);
       pushDebug(`audio · server HLS · ${id}`);
-      restartServerHlsAt(absolute, id);
+      restartServerHlsAt(absolute, id, t("playerChangingAudio"));
       bumpChrome();
       return;
     }
@@ -1600,6 +1654,39 @@ export function VideoPlayer({
     qualityOptions.length > 0 ||
     audioOptions.length > 0 ||
     subtitleOptions.length > 0;
+  const favoriteKind: FavoriteItem["kind"] | null =
+    kind === "live" || kind === "movie" || kind === "series" ? kind : null;
+  const favoriteStreamId =
+    favoriteKind === "series" && seriesId ? seriesId : streamId;
+  const canFavorite = !!(
+    activePlaylist &&
+    favoriteKind &&
+    favoriteStreamId
+  );
+  const favorited = useMemo(() => {
+    if (!canFavorite || !activePlaylist || !favoriteKind || !favoriteStreamId) {
+      return false;
+    }
+    return isFavorite(activePlaylist.id, favoriteKind, favoriteStreamId);
+  }, [
+    activePlaylist,
+    canFavorite,
+    favoriteKind,
+    favoriteStreamId,
+    favTick,
+  ]);
+  const onToggleFavorite = () => {
+    if (!canFavorite || !activePlaylist || !favoriteKind || !favoriteStreamId) {
+      return;
+    }
+    toggleFavorite(activePlaylist.id, {
+      kind: favoriteKind,
+      title,
+      image: poster,
+      streamId: favoriteStreamId,
+    });
+    setFavTick((n) => n + 1);
+  };
   const tooltipTime = scrubbing ? scrubValue : hoverTime;
   const tooltipPct = scrubbing
     ? timelineMax > 0
@@ -1620,10 +1707,28 @@ export function VideoPlayer({
   // Seek / audio switch restarts HLS at a new offset — drop stale cues.
   useEffect(() => {
     if (!isServerHls || subtitleId < 0) return;
+    subtitleAbortRef.current?.abort();
+    subtitleAbortRef.current = null;
     subtitleWindowRef.current = null;
     subtitleCacheRef.current = new Map();
     setSubtitleCues([]);
+    setSubtitleLoading(false);
+    setSubtitleError(null);
   }, [serverHlsOffset, serverHlsAudio, isServerHls, subtitleId]);
+
+  // Close settings when clicking / tapping outside the menu.
+  useEffect(() => {
+    if (!showSettings) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const el = settingsMenuRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && !el.contains(e.target)) {
+        setShowSettings(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [showSettings]);
 
   // Reload when the playhead leaves the current relative window.
   useEffect(() => {
@@ -1672,34 +1777,29 @@ export function VideoPlayer({
             freezeHold ? "bg-black/35" : "bg-black/55"
           }`}
         >
-          <div className="relative h-20 w-20">
-            <svg className="h-20 w-20 -rotate-90" viewBox="0 0 64 64">
+          <div className="relative h-16 w-16">
+            <svg
+              className="h-16 w-16 animate-spin"
+              viewBox="0 0 64 64"
+              fill="none"
+            >
               <circle
                 cx="32"
                 cy="32"
                 r="28"
-                fill="none"
                 stroke="rgba(255,255,255,0.15)"
-                strokeWidth="4"
+                strokeWidth="5"
               />
-              <circle
-                cx="32"
-                cy="32"
-                r="28"
-                fill="none"
+              <path
+                d="M32 4a28 28 0 0 1 28 28"
                 stroke="var(--xp-accent)"
-                strokeWidth="4"
+                strokeWidth="5"
                 strokeLinecap="round"
-                strokeDasharray={`${Math.max(6, (loadPercent || 8) * 1.76)} 176`}
-                className={loadPercent < 5 ? "animate-pulse" : undefined}
               />
             </svg>
-            <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-white">
-              {Math.max(loadPercent, 1)}%
-            </span>
           </div>
           <p className="text-center text-sm text-white/85">{statusText}</p>
-          <p className="text-center text-xs text-white/55">{t("playerRotate")}</p>
+          <p className="text-center text-xs text-white/55 md:hidden">{t("playerRotate")}</p>
           {sources.length > 1 ? (
             <p className="text-xs text-white/50">
               {t("playerSource", {
@@ -1709,6 +1809,26 @@ export function VideoPlayer({
               {candidate ? ` · ${candidate.label}` : ""}
             </p>
           ) : null}
+        </div>
+      ) : null}
+
+      {buffering && !showLoader && !error && hasStarted ? (
+        <div className="pointer-events-none absolute right-4 top-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-black/55 backdrop-blur">
+          <svg className="h-6 w-6 animate-spin" viewBox="0 0 64 64" fill="none">
+            <circle
+              cx="32"
+              cy="32"
+              r="28"
+              stroke="rgba(255,255,255,0.2)"
+              strokeWidth="6"
+            />
+            <path
+              d="M32 4a28 28 0 0 1 28 28"
+              stroke="var(--xp-accent)"
+              strokeWidth="6"
+              strokeLinecap="round"
+            />
+          </svg>
         </div>
       ) : null}
 
@@ -1727,7 +1847,7 @@ export function VideoPlayer({
           <span className="text-base font-semibold text-white">
             {t("playerTapToPlay")}
           </span>
-          <span className="text-xs text-white/60">{t("playerRotate")}</span>
+          <span className="text-xs text-white/60 md:hidden">{t("playerRotate")}</span>
         </button>
       ) : null}
 
@@ -1774,7 +1894,7 @@ export function VideoPlayer({
             e.stopPropagation();
             goBack();
           }}
-          className="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur"
+          className="pointer-events-auto flex h-11 w-11 cursor-pointer items-center justify-center rounded-full bg-black/55 text-white backdrop-blur"
           aria-label={t("back")}
         >
           <ArrowLeft className="h-5 w-5" />
@@ -1956,7 +2076,7 @@ export function VideoPlayer({
                 type="button"
                 onClick={togglePlay}
                 disabled={!controlsEnabled}
-                className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--xp-accent)] text-[var(--xp-ink)] disabled:opacity-40"
+                className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full bg-[var(--xp-accent)] text-[var(--xp-ink)] disabled:cursor-not-allowed disabled:opacity-40"
                 aria-label={playing ? "Pause" : "Play"}
               >
                 {playing ? (
@@ -1965,7 +2085,25 @@ export function VideoPlayer({
                   <Play className="h-5 w-5 fill-current" />
                 )}
               </button>
-              <div className="relative flex items-center gap-2">
+              <div className="relative flex items-center gap-2" ref={settingsMenuRef}>
+                {canFavorite ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleFavorite();
+                      bumpChrome();
+                    }}
+                    className="flex h-11 cursor-pointer items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-medium text-white"
+                    aria-label={t("favorite")}
+                    aria-pressed={favorited}
+                  >
+                    <Heart
+                      className={`h-4 w-4 ${favorited ? "fill-[var(--xp-accent)] text-[var(--xp-accent)]" : ""}`}
+                    />
+                    {t("favorite")}
+                  </button>
+                ) : null}
                 {hasSettings ? (
                   <>
                     <button
@@ -1977,7 +2115,7 @@ export function VideoPlayer({
                         setShowSettings((v) => !v);
                         bumpChrome();
                       }}
-                      className="flex h-11 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-medium text-white disabled:opacity-40"
+                      className="flex h-11 cursor-pointer items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
                       aria-label={t("playerSettings")}
                     >
                       <Settings2 className="h-4 w-4" />
@@ -1998,7 +2136,7 @@ export function VideoPlayer({
                                   e.stopPropagation();
                                   applyQuality(q.id);
                                 }}
-                                className={`block w-full px-3 py-2 text-left text-xs ${
+                                className={`block w-full cursor-pointer px-3 py-2 text-left text-xs ${
                                   q.id === qualityId
                                     ? "bg-white/15 text-[var(--xp-accent)]"
                                     : "text-white/85"
@@ -2027,7 +2165,7 @@ export function VideoPlayer({
                                   e.stopPropagation();
                                   applyAudio(option.id);
                                 }}
-                                className={`block w-full px-3 py-2 text-left text-xs ${
+                                className={`block w-full cursor-pointer px-3 py-2 text-left text-xs ${
                                   option.id === audioId
                                     ? "bg-white/15 text-[var(--xp-accent)]"
                                     : "text-white/85"
@@ -2051,7 +2189,7 @@ export function VideoPlayer({
                                   e.stopPropagation();
                                   applySubtitle(option.id);
                                 }}
-                                className={`block w-full px-3 py-2 text-left text-xs ${
+                                className={`block w-full cursor-pointer px-3 py-2 text-left text-xs ${
                                   option.id === subtitleId
                                     ? "bg-white/15 text-[var(--xp-accent)]"
                                     : "text-white/85"
@@ -2066,19 +2204,38 @@ export function VideoPlayer({
                     ) : null}
                   </>
                 ) : null}
-                <button
-                  type="button"
-                  disabled={!controlsEnabled}
-                  onClick={toggleMute}
-                  className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white disabled:opacity-40"
-                  aria-label={muted ? "Unmute" : "Mute"}
-                >
-                  {muted ? (
-                    <VolumeX className="h-5 w-5" />
-                  ) : (
-                    <Volume2 className="h-5 w-5" />
-                  )}
-                </button>
+                <div className="group flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={!controlsEnabled}
+                    onClick={toggleMute}
+                    className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full bg-white/10 text-white disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label={muted ? "Unmute" : "Mute"}
+                  >
+                    {muted || volume === 0 ? (
+                      <VolumeX className="h-5 w-5" />
+                    ) : (
+                      <Volume2 className="h-5 w-5" />
+                    )}
+                  </button>
+                  <div className="hidden w-0 items-center overflow-hidden transition-all duration-200 group-hover:flex group-hover:w-20">
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={muted ? 0 : volume}
+                      disabled={!controlsEnabled}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        changeVolume(Number(e.target.value));
+                      }}
+                      className="w-full cursor-pointer accent-[var(--xp-accent)] disabled:cursor-not-allowed"
+                      aria-label="Volume"
+                    />
+                  </div>
+                </div>
                 <button
                   type="button"
                   disabled={!controlsEnabled}
@@ -2087,7 +2244,7 @@ export function VideoPlayer({
                     if (!controlsEnabled) return;
                     void toggleFullscreen();
                   }}
-                  className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white disabled:opacity-40"
+                  className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full bg-white/10 text-white disabled:cursor-not-allowed disabled:opacity-40"
                   aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
                 >
                   {isFullscreen ? (

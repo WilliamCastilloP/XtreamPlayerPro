@@ -8,23 +8,20 @@ import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import { isFavorite, toggleFavorite } from "@/lib/library/storage";
 import { safeInternalPath } from "@/lib/navigation/back";
-import { getVodInfo, watchPath } from "@/lib/xtream/client";
-import { parseMediaDuration } from "@/lib/player/duration";
-import type { VodInfo } from "@/lib/xtream/types";
+import { loadAllLiveStreams } from "@/lib/xtream/catalog-cache";
+import { watchPath } from "@/lib/xtream/client";
+import type { LiveStream } from "@/lib/xtream/types";
 
-function MovieDetailInner() {
+function LiveDetailInner() {
   const params = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const { credentials, activePlaylist } = usePlaylists();
   const { t } = useLocale();
-  const [info, setInfo] = useState<VodInfo | null>(null);
+  const [stream, setStream] = useState<LiveStream | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [favTick, setFavTick] = useState(0);
-  const backHref = safeInternalPath(
-    searchParams.get("back"),
-    "/?section=movies",
-  );
+  const backHref = safeInternalPath(searchParams.get("back"), "/?section=live");
   const backLabel = backHref.startsWith("/search")
     ? t("searchTitle")
     : t("navHome");
@@ -36,11 +33,16 @@ function MovieDetailInner() {
       setLoading(true);
       setError(null);
       try {
-        const data = await getVodInfo(credentials!, params.id);
-        if (!cancelled) setInfo(data);
+        const all = await loadAllLiveStreams(credentials!);
+        const found =
+          all.find((s) => String(s.stream_id) === String(params.id)) || null;
+        if (!cancelled) {
+          if (!found) setError("Channel not found");
+          else setStream(found);
+        }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load movie");
+          setError(err instanceof Error ? err.message : "Failed to load channel");
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -52,24 +54,17 @@ function MovieDetailInner() {
     };
   }, [credentials, params.id]);
 
-  const title =
-    info?.info?.name || info?.movie_data?.name || `Movie ${params.id}`;
-  const image = info?.info?.movie_image;
-  const extension = info?.movie_data?.container_extension || "mp4";
-  const streamId = info?.movie_data?.stream_id || params.id;
-  const meta = [
-    info?.info?.genre,
-    info?.info?.releasedate,
-    info?.info?.rating,
-    info?.info?.duration,
-  ]
+  const title = stream?.name || `Channel ${params.id}`;
+  const image = stream?.stream_icon || undefined;
+  const streamId = stream?.stream_id ?? params.id;
+  const meta = [t("liveTv"), stream?.epg_channel_id || undefined]
     .filter(Boolean)
     .join(" · ");
 
   const fav = useMemo(() => {
     if (!activePlaylist) return false;
     void favTick;
-    return isFavorite(activePlaylist.id, "movie", streamId);
+    return isFavorite(activePlaylist.id, "live", streamId);
   }, [activePlaylist, streamId, favTick]);
 
   if (loading) {
@@ -90,43 +85,28 @@ function MovieDetailInner() {
       backLabel={backLabel}
       title={title}
       meta={meta}
-      plot={info?.info?.plot || undefined}
       image={image}
-      playHref={watchPath("movie", streamId, {
+      playHref={watchPath("live", streamId, {
         title,
-        ext: extension,
         image: image || "",
-        ...(parseMediaDuration(info?.info?.duration)
-          ? {
-              duration: String(parseMediaDuration(info?.info?.duration)),
-            }
-          : {}),
       })}
       playLabel={t("play")}
       favorited={fav}
       onToggleFavorite={() => {
         if (!activePlaylist) return;
         toggleFavorite(activePlaylist.id, {
-          kind: "movie",
+          kind: "live",
           title,
           image,
           streamId,
         });
         setFavTick((n) => n + 1);
       }}
-    >
-      {info?.info?.cast ? (
-        <div className="px-4 py-5 md:px-8">
-          <p className="max-w-3xl text-sm leading-relaxed text-[var(--xp-muted)]">
-            Cast: {info.info.cast}
-          </p>
-        </div>
-      ) : null}
-    </TitleHero>
+    />
   );
 }
 
-export default function MovieDetailPage() {
+export default function LiveDetailPage() {
   return (
     <Suspense
       fallback={
@@ -135,7 +115,7 @@ export default function MovieDetailPage() {
         </div>
       }
     >
-      <MovieDetailInner />
+      <LiveDetailInner />
     </Suspense>
   );
 }

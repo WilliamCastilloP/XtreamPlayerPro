@@ -3,7 +3,6 @@
 import { PosterCard } from "@/components/catalog/PosterCard";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import { listFavorites } from "@/lib/library/storage";
-import { watchPath } from "@/lib/xtream/client";
 
 export default function FavoritesPage() {
   const { activePlaylist, ready } = usePlaylists();
@@ -29,7 +28,7 @@ export default function FavoritesPage() {
           {items.map((item) => {
             const href =
               item.kind === "live"
-                ? watchPath("live", item.streamId, { title: item.title })
+                ? `/live/${item.streamId}`
                 : item.kind === "movie"
                   ? `/movies/${item.streamId}`
                   : `/series/${item.streamId}`;

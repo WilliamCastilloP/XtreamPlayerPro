@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, Heart, Play } from "lucide-react";
 import { PosterPlaceholder } from "@/components/brand/BrandMark";
 import { useLocale } from "@/components/providers/LocaleProvider";
@@ -38,9 +38,16 @@ export function TitleHero({
   const [imgFailed, setImgFailed] = useState(false);
   const showImage = Boolean(image?.trim()) && !imgFailed;
 
+  // Landing from the player often restores mid-scroll; pin to the top.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [backHref, title]);
+
   return (
     <div className="xp-fade-in">
-      <section className="relative isolate min-h-[100dvh] w-full overflow-hidden bg-[var(--xp-ink)]">
+      {/* Mobile header (~3.5rem) sits above this; size hero to the remaining viewport
+          so Back + Play stay on-screen without scrolling under the sticky header. */}
+      <section className="relative isolate min-h-[calc(100dvh-3.5rem)] w-full overflow-hidden bg-[var(--xp-ink)] lg:min-h-dvh">
         {showImage ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -59,14 +66,14 @@ export function TitleHero({
 
         <Link
           href={backHref}
-          className="absolute left-4 top-[max(1rem,env(safe-area-inset-top))] z-20 inline-flex items-center gap-2 rounded-full bg-black/50 px-3 py-2 text-sm text-white backdrop-blur-md"
+          className="absolute left-4 top-3 z-20 inline-flex cursor-pointer items-center gap-2 rounded-full bg-black/55 px-3 py-2 text-sm text-white backdrop-blur-md"
         >
           <ArrowLeft className="h-4 w-4" />
           {backLabel}
         </Link>
 
-        <div className="absolute inset-x-0 bottom-0 z-10 space-y-4 px-4 pb-[max(5.75rem,calc(env(safe-area-inset-bottom)+4.75rem))] pt-24 md:px-8 md:pb-10">
-          <div className="max-w-2xl space-y-3">
+        <div className="absolute inset-x-0 bottom-0 z-10 space-y-3 px-4 pb-[max(5.5rem,calc(env(safe-area-inset-bottom)+4.5rem))] pt-20 md:px-8 md:pb-10 md:space-y-4">
+          <div className="max-w-2xl space-y-2 md:space-y-3">
             <h1
               className="font-[family-name:var(--xp-font-display)] text-3xl font-bold leading-tight text-white sm:text-4xl md:text-5xl"
               style={{ textShadow: "0 2px 24px rgba(0,0,0,0.85), 0 1px 2px rgba(0,0,0,0.9)" }}
@@ -83,7 +90,7 @@ export function TitleHero({
             ) : null}
             {plot ? (
               <p
-                className="max-w-xl text-sm leading-relaxed text-white/92 sm:text-[0.95rem]"
+                className="line-clamp-3 max-w-xl text-sm leading-relaxed text-white/92 sm:line-clamp-5 sm:text-[0.95rem]"
                 style={{
                   textShadow:
                     "0 2px 18px rgba(0,0,0,0.95), 0 0 2px rgba(0,0,0,0.8)",
@@ -102,7 +109,7 @@ export function TitleHero({
             {onToggleFavorite ? (
               <button
                 type="button"
-                className="xp-btn xp-btn-ghost"
+                className="xp-btn xp-btn-ghost cursor-pointer"
                 onClick={onToggleFavorite}
               >
                 <Heart

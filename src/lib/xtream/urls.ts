@@ -155,7 +155,8 @@ function isNativeProgressiveExt(ext: string): boolean {
 /**
  * Build playback candidates.
  *
- * Live: keep HLS proxy-first (small segments work through our API).
+ * Live: prefer DIRECT HLS first (panel→CDN redirect + CORS), like before
+ * the standalone proxy. Proxy is a CORS/rewrite fallback only.
  *
  * VOD/series:
  * - Prefer the panel's real extension only (don't spray .avi/.ts 404s).
@@ -195,23 +196,26 @@ export function buildStreamCandidates(
     const ts = buildDirectStreamUrl(credentials, kind, streamId, "ts");
     const bare = buildDirectStreamUrl(credentials, kind, streamId, "");
 
+    // Direct first — browser follows panel→CDN auth redirect and resolves
+    // relative /hls/ segments against the CDN (proxy-first broke this path).
+    push({ url: m3u8, transport: "direct", label: "HLS (direct)" });
     push({
       url: buildProxiedStreamUrl(m3u8),
       transport: "proxy",
       label: "HLS (proxy)",
     });
+    push({ url: bare, transport: "direct", label: "Live (direct)" });
     push({
       url: buildProxiedStreamUrl(bare),
       transport: "proxy",
       label: "Live (proxy)",
     });
-    push({ url: m3u8, transport: "direct", label: "HLS (direct)" });
+    push({ url: ts, transport: "direct", label: "MPEG-TS (direct)" });
     push({
       url: buildProxiedStreamUrl(ts),
       transport: "proxy",
       label: "MPEG-TS (proxy)",
     });
-    push({ url: ts, transport: "direct", label: "MPEG-TS (direct)" });
     return out;
   }
 

@@ -1,20 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import { Play } from "lucide-react";
 import { TitleHero } from "@/components/catalog/TitleHero";
 import { Shimmer } from "@/components/catalog/Skeleton";
 import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import { isFavorite, toggleFavorite } from "@/lib/library/storage";
+import { safeInternalPath } from "@/lib/navigation/back";
 import { getSeriesInfo, watchPath } from "@/lib/xtream/client";
 import { parseMediaDuration } from "@/lib/player/duration";
 import type { SeriesEpisode, SeriesInfo } from "@/lib/xtream/types";
 
-export default function SeriesDetailPage() {
+function SeriesDetailInner() {
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const { credentials, activePlaylist } = usePlaylists();
   const { t } = useLocale();
   const [info, setInfo] = useState<SeriesInfo | null>(null);
@@ -22,6 +24,13 @@ export default function SeriesDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [favTick, setFavTick] = useState(0);
+  const backHref = safeInternalPath(
+    searchParams.get("back"),
+    "/?section=series",
+  );
+  const backLabel = backHref.startsWith("/search")
+    ? t("searchTitle")
+    : t("navHome");
 
   useEffect(() => {
     if (!credentials) return;
@@ -89,8 +98,8 @@ export default function SeriesDetailPage() {
 
   return (
     <TitleHero
-      backHref="/?section=series"
-      backLabel={t("navHome")}
+      backHref={backHref}
+      backLabel={backLabel}
       title={title}
       meta={[info?.info?.genre, info?.info?.releaseDate, info?.info?.rating]
         .filter(Boolean)
@@ -178,5 +187,19 @@ export default function SeriesDetailPage() {
         </ul>
       </div>
     </TitleHero>
+  );
+}
+
+export default function SeriesDetailPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-dvh">
+          <Shimmer className="min-h-dvh w-full rounded-none" />
+        </div>
+      }
+    >
+      <SeriesDetailInner />
+    </Suspense>
   );
 }

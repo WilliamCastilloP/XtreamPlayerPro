@@ -103,8 +103,12 @@ async function proxy(request: NextRequest) {
     "Accept-Language": "en-US,en;q=0.9",
   };
 
+  const likelyPlaylist =
+    parsed.pathname.endsWith(".m3u8") ||
+    /\/live\/[^/]+\/[^/]+\/[^/.]+$/i.test(parsed.pathname) ||
+    /\/auth\//i.test(parsed.pathname);
   const range = request.headers.get("range");
-  if (range) forwardHeaders.Range = range;
+  if (range && !likelyPlaylist) forwardHeaders.Range = range;
 
   forwardHeaders.Referer = `${parsed.origin}/`;
   forwardHeaders.Origin = parsed.origin;

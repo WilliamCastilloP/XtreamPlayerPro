@@ -169,6 +169,7 @@ function WatchInner() {
       poster={image}
       kind={kind}
       streamId={params.id}
+      seriesId={seriesId}
       extension={resolvedExt}
       durationHint={durationHint}
       onProgress={onProgress}

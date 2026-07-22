@@ -213,26 +213,26 @@ export function buildStreamCandidates(
     const ts = buildDirectStreamUrl(credentials, kind, streamId, "ts");
     const bare = buildDirectStreamUrl(credentials, kind, streamId, "");
 
-    // Direct first — browser follows panel→CDN auth redirect and resolves
-    // relative /hls/ segments against the CDN (proxy-first broke this path).
-    push({ url: m3u8, transport: "direct", label: "HLS (direct)" });
+    // Proxy first: panel m3u8 redirects to CDN with relative /hls/ paths;
+    // browsers often fail CORS/direct manifest, while our proxy rewrites segments.
     push({
       url: buildProxiedStreamUrl(m3u8),
       transport: "proxy",
       label: "HLS (proxy)",
     });
-    push({ url: bare, transport: "direct", label: "Live (direct)" });
     push({
       url: buildProxiedStreamUrl(bare),
       transport: "proxy",
       label: "Live (proxy)",
     });
-    push({ url: ts, transport: "direct", label: "MPEG-TS (direct)" });
+    push({ url: m3u8, transport: "direct", label: "HLS (direct)" });
+    push({ url: bare, transport: "direct", label: "Live (direct)" });
     push({
       url: buildProxiedStreamUrl(ts),
       transport: "proxy",
       label: "MPEG-TS (proxy)",
     });
+    push({ url: ts, transport: "direct", label: "MPEG-TS (direct)" });
     return out;
   }
 

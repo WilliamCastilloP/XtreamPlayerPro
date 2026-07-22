@@ -845,9 +845,11 @@ export function VideoPlayer({
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
-        maxBufferLength: 30,
-        maxMaxBufferLength: 60,
-        backBufferLength: 30,
+        maxBufferLength: kind === "live" ? 12 : 30,
+        maxMaxBufferLength: kind === "live" ? 30 : 60,
+        backBufferLength: kind === "live" ? 10 : 30,
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 6,
         xhrSetup: (xhr) => {
           xhr.withCredentials = false;
         },
@@ -856,11 +858,43 @@ export function VideoPlayer({
       hls.loadSource(playSrc);
       hls.attachMedia(video);
 
+      let liveEdgeSynced = false;
+      const syncLiveEdge = (force = false) => {
+        if (kind !== "live" || !hlsRef.current) return;
+        if (liveEdgeSynced && !force) return;
+        const pos = hlsRef.current.liveSyncPosition;
+        if (typeof pos === "number" && Number.isFinite(pos) && pos > 0) {
+          try {
+            video.currentTime = pos;
+            liveEdgeSynced = true;
+            pushDebug(`live · sync edge ${pos.toFixed(1)}s`);
+          } catch {
+            /* ignore */
+          }
+        }
+      };
+
       const waitAndPlay = async () => {
         const startedAt = Date.now();
-        while (!disposed && Date.now() - startedAt < 90000) {
+        const maxWait = kind === "live" ? 10000 : 90000;
+        while (!disposed && Date.now() - startedAt < maxWait) {
+          // Live: jump to edge once, then stop seeking (reseeks kill playback).
+          if (kind === "live" && !liveEdgeSynced) syncLiveEdge();
           reportConnectProgress();
-          if (mediaBufferedAhead(video) >= readySec) break;
+          const ahead = mediaBufferedAhead(video);
+          if (kind === "live") {
+            if (
+              ahead >= 0.15 ||
+              (liveEdgeSynced && video.buffered.length > 0) ||
+              video.readyState >= 3
+            ) {
+              break;
+            }
+            // Don't stall forever waiting for buffer on live — play ASAP.
+            if (liveEdgeSynced && Date.now() - startedAt > 1200) break;
+          } else if (ahead >= readySec) {
+            break;
+          }
           await new Promise((r) => window.setTimeout(r, 150));
         }
         if (disposed) return;
@@ -956,6 +990,8 @@ export function VideoPlayer({
         if (disposed) return;
         const total = data.details?.fragments?.length;
         if (total) fragTotal = total;
+        // Only the first live edge sync — continuous seeks block playback.
+        if (kind === "live" && !liveEdgeSynced) syncLiveEdge();
         reportConnectProgress();
       });
 

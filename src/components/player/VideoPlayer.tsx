@@ -321,6 +321,7 @@ export function VideoPlayer({
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverPct, setHoverPct] = useState(0);
   const scrubbingRef = useRef(false);
+  const scrubValueRef = useRef(0);
   /** Status text to show when the next seekingReload fires (set by restartServerHlsAt). */
   const seekStatusOverrideRef = useRef<string>("");
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
@@ -488,6 +489,16 @@ export function VideoPlayer({
     hideTimer.current = window.setTimeout(() => {
       if (playing && !error && !showDebug && !showSettings) setShowChrome(false);
     }, 2800);
+  };
+
+  const toggleChrome = () => {
+    if (!hasStarted || error || awaitingTap) return;
+    if (showChrome) {
+      if (hideTimer.current) window.clearTimeout(hideTimer.current);
+      setShowChrome(false);
+      return;
+    }
+    bumpChrome();
   };
 
   const runProbes = useCallback(async () => {
@@ -1793,7 +1804,9 @@ export function VideoPlayer({
       ref={rootRef}
       className="relative flex h-dvh w-full items-center justify-center bg-black"
       onMouseMove={bumpChrome}
-      onTouchStart={bumpChrome}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) toggleChrome();
+      }}
     >
       <video
         ref={videoRef}
@@ -1802,8 +1815,9 @@ export function VideoPlayer({
         playsInline
         preload="auto"
         controls={false}
-        onClick={() => {
-          if (controlsEnabled) togglePlay();
+        onClick={(e) => {
+          e.stopPropagation();
+          toggleChrome();
         }}
       />
 
@@ -2040,10 +2054,25 @@ export function VideoPlayer({
                   disabled={!controlsEnabled || timelineMax <= 1}
                   onPointerDown={(e) => {
                     e.stopPropagation();
-                    if (!controlsEnabled) return;
+                    if (!controlsEnabled || timelineMax <= 1) return;
                     scrubbingRef.current = true;
                     setScrubbing(true);
-                    setScrubValue(timelineValue);
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    if (rect.width > 0) {
+                      const pct = Math.max(
+                        0,
+                        Math.min(1, (e.clientX - rect.left) / rect.width),
+                      );
+                      const next = pct * timelineMax;
+                      scrubValueRef.current = next;
+                      setScrubValue(next);
+                      setHoverTime(next);
+                      setHoverPct(pct * 100);
+                    } else {
+                      scrubValueRef.current = timelineValue;
+                      setScrubValue(timelineValue);
+                    }
+                    bumpChrome();
                   }}
                   onPointerMove={(e) => {
                     if (!controlsEnabled || timelineMax <= 1) return;
@@ -2053,8 +2082,13 @@ export function VideoPlayer({
                       0,
                       Math.min(1, (e.clientX - rect.left) / rect.width),
                     );
+                    const next = pct * timelineMax;
+                    if (scrubbingRef.current) {
+                      scrubValueRef.current = next;
+                      setScrubValue(next);
+                    }
                     setHoverPct(pct * 100);
-                    setHoverTime(pct * timelineMax);
+                    setHoverTime(next);
                   }}
                   onPointerLeave={() => {
                     if (!scrubbingRef.current) setHoverTime(null);
@@ -2062,6 +2096,7 @@ export function VideoPlayer({
                   onChange={(e) => {
                     if (!controlsEnabled) return;
                     const next = Number(e.target.value);
+                    scrubValueRef.current = next;
                     setScrubValue(next);
                     setHoverTime(next);
                     setHoverPct(
@@ -2074,7 +2109,9 @@ export function VideoPlayer({
                   onPointerUp={(e) => {
                     e.stopPropagation();
                     if (!controlsEnabled) return;
-                    const next = Number((e.target as HTMLInputElement).value);
+                    const next = scrubbingRef.current
+                      ? scrubValueRef.current
+                      : Number((e.target as HTMLInputElement).value);
                     if (prefetchTimer.current) {
                       window.clearTimeout(prefetchTimer.current);
                       prefetchTimer.current = null;
@@ -2089,7 +2126,9 @@ export function VideoPlayer({
                   onTouchEnd={(e) => {
                     e.stopPropagation();
                     if (!controlsEnabled) return;
-                    const next = Number((e.target as HTMLInputElement).value);
+                    const next = scrubbingRef.current
+                      ? scrubValueRef.current
+                      : Number((e.target as HTMLInputElement).value);
                     if (prefetchTimer.current) {
                       window.clearTimeout(prefetchTimer.current);
                       prefetchTimer.current = null;

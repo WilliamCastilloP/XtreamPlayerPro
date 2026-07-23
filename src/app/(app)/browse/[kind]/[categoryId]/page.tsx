@@ -4,15 +4,19 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { ArrowLeft } from "lucide-react";
+import { CatalogPager } from "@/components/catalog/CatalogPager";
 import { PosterCard } from "@/components/catalog/PosterCard";
 import { PosterSkeletonRow } from "@/components/catalog/Skeleton";
 import type { BrowseKind } from "@/components/catalog/BrowseRails";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
+import type { FavoriteItem } from "@/lib/library/storage";
 import {
   loadLiveByCategory,
-  loadSeriesByCategory,
-  loadVodByCategory,
+  loadSeriesByGenre,
+  loadVodByGenre,
 } from "@/lib/xtream/catalog-cache";
+import { formatRatingStar } from "@/lib/xtream/rating";
+import { catalogTitle } from "@/lib/xtream/title";
 
 type GridItem = {
   key: string;
@@ -21,6 +25,8 @@ type GridItem = {
   image?: string;
   subtitle?: string;
   aspect?: "poster" | "live";
+  kind: FavoriteItem["kind"];
+  streamId: number | string;
 };
 
 function isBrowseKind(value: string): value is BrowseKind {
@@ -36,9 +42,10 @@ function CategoryBrowseInner() {
   const [error, setError] = useState<string | null>(null);
 
   const kind = isBrowseKind(params.kind) ? params.kind : null;
-  const categoryId = decodeURIComponent(params.categoryId || "");
+  const filterKey = decodeURIComponent(params.categoryId || "");
   const categoryName =
     searchParams.get("name")?.trim() ||
+    filterKey ||
     (kind === "live"
       ? "Live"
       : kind === "movies"
@@ -55,7 +62,7 @@ function CategoryBrowseInner() {
   }, [kind]);
 
   useEffect(() => {
-    if (!credentials || !kind || !categoryId) return;
+    if (!credentials || !kind || !filterKey) return;
     let cancelled = false;
 
     async function load() {
@@ -64,31 +71,37 @@ function CategoryBrowseInner() {
       try {
         let next: GridItem[] = [];
         if (kind === "live") {
-          const streams = await loadLiveByCategory(credentials!, categoryId);
+          const streams = await loadLiveByCategory(credentials!, filterKey);
           next = streams.map((s) => ({
             key: `live-${s.stream_id}`,
             href: `/live/${s.stream_id}`,
-            title: s.name,
+            title: catalogTitle(s),
             image: s.stream_icon || undefined,
             aspect: "live" as const,
+            kind: "live" as const,
+            streamId: s.stream_id,
           }));
         } else if (kind === "movies") {
-          const streams = await loadVodByCategory(credentials!, categoryId);
+          const streams = await loadVodByGenre(credentials!, filterKey);
           next = streams.map((s) => ({
             key: `vod-${s.stream_id}`,
             href: `/movies/${s.stream_id}`,
-            title: s.name,
+            title: catalogTitle(s),
             image: s.stream_icon || undefined,
-            subtitle: s.rating ? `★ ${s.rating}` : undefined,
+            subtitle: formatRatingStar(s.rating),
+            kind: "movie" as const,
+            streamId: s.stream_id,
           }));
         } else {
-          const series = await loadSeriesByCategory(credentials!, categoryId);
+          const series = await loadSeriesByGenre(credentials!, filterKey);
           next = series.map((s) => ({
             key: `series-${s.series_id}`,
             href: `/series/${s.series_id}`,
-            title: s.name,
+            title: catalogTitle(s),
             image: s.cover || undefined,
-            subtitle: s.rating ? `★ ${s.rating}` : undefined,
+            subtitle: formatRatingStar(s.rating),
+            kind: "series" as const,
+            streamId: s.series_id,
           }));
         }
         if (!cancelled) setItems(next);
@@ -107,7 +120,7 @@ function CategoryBrowseInner() {
     return () => {
       cancelled = true;
     };
-  }, [credentials, kind, categoryId]);
+  }, [credentials, kind, filterKey]);
 
   if (!kind) {
     return (
@@ -156,18 +169,20 @@ function CategoryBrowseInner() {
           <PosterSkeletonRow />
         </div>
       ) : items.length ? (
-        <div className="grid grid-cols-3 gap-2.5 px-4 sm:grid-cols-4 md:grid-cols-5 md:gap-3 md:px-6 lg:grid-cols-6">
-          {items.map((item) => (
+        <CatalogPager
+          items={items}
+          renderItem={(item) => (
             <PosterCard
-              key={item.key}
               href={item.href}
               title={item.title}
               image={item.image}
               subtitle={item.subtitle}
               aspect={item.aspect}
+              kind={item.kind}
+              streamId={item.streamId}
             />
-          ))}
-        </div>
+          )}
+        />
       ) : (
         <p className="px-4 text-sm text-[var(--xp-muted)] md:px-6">
           No titles in this category.

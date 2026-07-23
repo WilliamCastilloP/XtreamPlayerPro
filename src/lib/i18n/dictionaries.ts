@@ -58,6 +58,9 @@ const en = {
 
   searchTitle: "Search",
   searchPlaceholder: "Search live, movies, series…",
+  searchTypeHint: "Type to search Live, Movies, and Series together.",
+  searchNoMatches: "No matches.",
+  searchLoadingCatalog: "Loading full catalog…",
 
   playerConnecting: "Connecting…",
   playerLoadingStream: "Connecting…",
@@ -99,6 +102,31 @@ const en = {
   favorite: "Favorite",
   play: "Play",
   back: "Back",
+
+  theme: "Theme",
+  themeSubtitle: "Choose how XTREAM looks on this device",
+  themeSystem: "System",
+  themeDark: "Dark",
+  themeLight: "Light",
+
+  categoryFilter: "Category",
+  categoryAll: "All categories",
+  genreFilter: "Genre",
+  genreAll: "All genres",
+
+  pagerShowing: "Showing {from}–{to} of {total}",
+  pagerPerPage: "Per page",
+  pagerPrev: "Previous",
+  pagerNext: "Next",
+  pagerPageOf: "Page {page} of {pages}",
+
+  metaCast: "Cast",
+  metaDirector: "Director",
+  metaGenre: "Genre",
+  metaRating: "Rating",
+  metaDuration: "Duration",
+  metaReleased: "Released",
+  metaTrailer: "Watch trailer",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -161,6 +189,9 @@ const es: Record<MessageKey, string> = {
 
   searchTitle: "Búsqueda",
   searchPlaceholder: "Buscar live, películas, series…",
+  searchTypeHint: "Escribe para buscar en En vivo, Películas y Series a la vez.",
+  searchNoMatches: "Sin resultados.",
+  searchLoadingCatalog: "Cargando catálogo completo…",
 
   playerConnecting: "Conectando…",
   playerLoadingStream: "Conectando…",
@@ -202,6 +233,31 @@ const es: Record<MessageKey, string> = {
   favorite: "Favorito",
   play: "Play",
   back: "Atrás",
+
+  theme: "Tema",
+  themeSubtitle: "Elige el aspecto de XTREAM en este dispositivo",
+  themeSystem: "Sistema",
+  themeDark: "Oscuro",
+  themeLight: "Claro",
+
+  categoryFilter: "Categoría",
+  categoryAll: "Todas las categorías",
+  genreFilter: "Género",
+  genreAll: "Todos los géneros",
+
+  pagerShowing: "Mostrando {from}–{to} de {total}",
+  pagerPerPage: "Por página",
+  pagerPrev: "Anterior",
+  pagerNext: "Siguiente",
+  pagerPageOf: "Página {page} de {pages}",
+
+  metaCast: "Reparto",
+  metaDirector: "Director",
+  metaGenre: "Género",
+  metaRating: "Valoración",
+  metaDuration: "Duración",
+  metaReleased: "Estreno",
+  metaTrailer: "Ver tráiler",
 };
 
 export const dictionaries: Record<Locale, Record<MessageKey, string>> = {

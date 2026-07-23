@@ -12,17 +12,18 @@ import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import {
   groupByCategory,
+  groupByGenre,
   loadAllLiveStreams,
   loadAllSeries,
   loadAllVodStreams,
   loadLiveCategories,
-  loadSeriesCategories,
-  loadVodCategories,
   type LiveStream,
   type SeriesItem,
   type VodStream,
 } from "@/lib/xtream/catalog-cache";
 import { watchPath } from "@/lib/xtream/client";
+import { formatRatingStar } from "@/lib/xtream/rating";
+import { catalogTitle } from "@/lib/xtream/title";
 
 export type BrowseKind = "live" | "movies" | "series";
 
@@ -31,6 +32,8 @@ type Props = {
   title: string;
   subtitle: string;
   embedded?: boolean;
+  /** Skip the featured hero (e.g. parent already shows one under the header) */
+  hideHero?: boolean;
 };
 
 type Rail = {
@@ -50,33 +53,60 @@ function categoryHref(kind: BrowseKind, categoryId: string, name: string) {
 }
 
 function mapLiveItems(streams: LiveStream[]): MediaRowItem[] {
-  return streams.map((s) => ({
-    key: `live-${s.stream_id}`,
-    href: `/live/${s.stream_id}`,
-    title: s.name,
-    image: s.stream_icon || undefined,
-    aspect: "live" as const,
-  }));
+  const seen = new Set<number | string>();
+  const out: MediaRowItem[] = [];
+  for (const s of streams) {
+    if (seen.has(s.stream_id)) continue;
+    seen.add(s.stream_id);
+    out.push({
+      key: `live-${s.stream_id}`,
+      href: `/live/${s.stream_id}`,
+      title: catalogTitle(s),
+      image: s.stream_icon || undefined,
+      aspect: "live" as const,
+      kind: "live" as const,
+      streamId: s.stream_id,
+    });
+  }
+  return out;
 }
 
 function mapVodItems(streams: VodStream[]): MediaRowItem[] {
-  return streams.map((s) => ({
-    key: `vod-${s.stream_id}`,
-    href: `/movies/${s.stream_id}`,
-    title: s.name,
-    image: s.stream_icon || undefined,
-    subtitle: s.rating ? `★ ${s.rating}` : undefined,
-  }));
+  const seen = new Set<number | string>();
+  const out: MediaRowItem[] = [];
+  for (const s of streams) {
+    if (seen.has(s.stream_id)) continue;
+    seen.add(s.stream_id);
+    out.push({
+      key: `vod-${s.stream_id}`,
+      href: `/movies/${s.stream_id}`,
+      title: catalogTitle(s),
+      image: s.stream_icon || undefined,
+      subtitle: formatRatingStar(s.rating),
+      kind: "movie" as const,
+      streamId: s.stream_id,
+    });
+  }
+  return out;
 }
 
 function mapSeriesItems(series: SeriesItem[]): MediaRowItem[] {
-  return series.map((s) => ({
-    key: `series-${s.series_id}`,
-    href: `/series/${s.series_id}`,
-    title: s.name,
-    image: s.cover || undefined,
-    subtitle: s.rating ? `★ ${s.rating}` : undefined,
-  }));
+  const seen = new Set<number | string>();
+  const out: MediaRowItem[] = [];
+  for (const s of series) {
+    if (seen.has(s.series_id)) continue;
+    seen.add(s.series_id);
+    out.push({
+      key: `series-${s.series_id}`,
+      href: `/series/${s.series_id}`,
+      title: catalogTitle(s),
+      image: s.cover || undefined,
+      subtitle: formatRatingStar(s.rating),
+      kind: "series" as const,
+      streamId: s.series_id,
+    });
+  }
+  return out;
 }
 
 export function BrowseRails({
@@ -84,6 +114,7 @@ export function BrowseRails({
   title,
   subtitle,
   embedded = false,
+  hideHero = false,
 }: Props) {
   const { credentials } = usePlaylists();
   const { t } = useLocale();
@@ -103,42 +134,16 @@ export function BrowseRails({
       setRails([]);
       setLoadingMore(false);
       try {
-        const [cats, streams] = await Promise.all(
-          kind === "live"
-            ? [
-                loadLiveCategories(credentials!),
-                loadAllLiveStreams(credentials!),
-              ]
-            : kind === "movies"
-              ? [
-                  loadVodCategories(credentials!),
-                  loadAllVodStreams(credentials!),
-                ]
-              : [
-                  loadSeriesCategories(credentials!),
-                  loadAllSeries(credentials!),
-                ],
-        );
+        let built: Rail[] = [];
 
-        if (cancelled) return;
-
-        const grouped =
-          kind === "live"
-            ? groupByCategory(cats, streams as LiveStream[])
-            : kind === "movies"
-              ? groupByCategory(cats, streams as VodStream[])
-              : groupByCategory(cats, streams as SeriesItem[]);
-
-        const built: Rail[] = grouped.map((rail) => {
-          const previewSource = rail.items.slice(0, PREVIEW_LIMIT);
-          const items =
-            kind === "live"
-              ? mapLiveItems(previewSource as LiveStream[])
-              : kind === "movies"
-                ? mapVodItems(previewSource as VodStream[])
-                : mapSeriesItems(previewSource as SeriesItem[]);
-
-          return {
+        if (kind === "live") {
+          const [cats, streams] = await Promise.all([
+            loadLiveCategories(credentials!),
+            loadAllLiveStreams(credentials!),
+          ]);
+          if (cancelled) return;
+          const grouped = groupByCategory(cats, streams);
+          built = grouped.map((rail) => ({
             id: rail.category.category_id,
             name: rail.category.category_name,
             totalCount: rail.items.length,
@@ -147,9 +152,35 @@ export function BrowseRails({
               rail.category.category_id,
               rail.category.category_name,
             ),
-            items,
-          };
-        });
+            items: mapLiveItems(rail.items.slice(0, PREVIEW_LIMIT)),
+          }));
+        } else {
+          const streams =
+            kind === "movies"
+              ? await loadAllVodStreams(credentials!)
+              : await loadAllSeries(credentials!);
+          if (cancelled) return;
+          const grouped =
+            kind === "movies"
+              ? groupByGenre(streams as VodStream[])
+              : groupByGenre(streams as SeriesItem[]);
+          built = grouped.map((rail) => ({
+            id: rail.genre,
+            name: rail.genre,
+            totalCount: rail.items.length,
+            href: categoryHref(kind, rail.genre, rail.genre),
+            items:
+              kind === "movies"
+                ? mapVodItems(
+                    (rail.items as VodStream[]).slice(0, PREVIEW_LIMIT),
+                  )
+                : mapSeriesItems(
+                    (rail.items as SeriesItem[]).slice(0, PREVIEW_LIMIT),
+                  ),
+          }));
+        }
+
+        if (cancelled) return;
 
         setTotalCategories(built.length);
 
@@ -192,7 +223,7 @@ export function BrowseRails({
       className={`space-y-6 pb-8 ${embedded ? "pt-0" : "pt-3 lg:pt-5"} lg:space-y-8`}
     >
       {!embedded ? (
-        <div className="px-4 lg:px-6">
+        <div className="px-4 md:px-6 lg:px-8 xl:px-12">
           <h1 className="font-[family-name:var(--xp-font-display)] text-2xl font-bold lg:text-3xl">
             {title}
           </h1>
@@ -201,13 +232,15 @@ export function BrowseRails({
       ) : null}
 
       {error ? (
-        <p className="px-4 text-sm text-[var(--xp-danger)] lg:px-6">{error}</p>
+        <p className="px-4 text-sm text-[var(--xp-danger)] md:px-6 lg:px-8 xl:px-12">
+          {error}
+        </p>
       ) : null}
 
       {loading && !rails.length ? (
         <div className="space-y-8">
-          <div className="xp-shimmer mx-4 h-48 rounded-2xl lg:mx-6 lg:h-64" />
-          <p className="px-4 text-sm text-[var(--xp-muted)] lg:px-6">
+          <div className="xp-shimmer mx-4 h-48 rounded-2xl md:mx-6 lg:mx-8 lg:h-64 xl:mx-12" />
+          <p className="px-4 text-sm text-[var(--xp-muted)] md:px-6 lg:px-8 xl:px-12">
             {t("loadingCatalog", { kind: kindLabel.toLowerCase() })}
           </p>
           <PosterSkeletonRow />
@@ -216,7 +249,7 @@ export function BrowseRails({
       ) : (
         <>
           {rails.length > 0 ? (
-            <p className="px-4 text-xs text-[var(--xp-muted)] lg:px-6">
+            <p className="px-4 text-xs text-[var(--xp-muted)] md:px-6 lg:px-8 xl:px-12">
               {t("categoriesPreview", {
                 shown: String(rails.length),
                 total:
@@ -229,8 +262,9 @@ export function BrowseRails({
             </p>
           ) : null}
 
-          {hero ? (
+          {hero && !hideHero ? (
             <HeroBanner
+              cropLetterbox={isLive}
               eyebrow={rails[0]?.name || title}
               title={hero.title}
               subtitle={
@@ -270,7 +304,7 @@ export function BrowseRails({
           ))}
 
           {!rails.length && !loading ? (
-            <p className="px-4 text-sm text-[var(--xp-muted)] md:px-6">
+            <p className="px-4 text-sm text-[var(--xp-muted)] md:px-6 lg:px-8 xl:px-12">
               {t("noTitlesCatalog")}
             </p>
           ) : null}

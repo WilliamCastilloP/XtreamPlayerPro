@@ -2,16 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { BrandMark } from "@/components/brand/BrandMark";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
-import { BottomNav } from "./BottomNav";
-import { SideRail } from "./SideRail";
+import { AppTopBar } from "./AppTopBar";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { ready, activePlaylist } = usePlaylists();
   const router = useRouter();
   const pathname = usePathname();
   const [scrolled, setScrolled] = useState(false);
+  const isHome = pathname === "/";
 
   useEffect(() => {
     if (!ready) return;
@@ -41,29 +40,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
 
+  // Home + title detail: hero sits under transparent header.
+  const underHeader =
+    isHome || /^\/(series|movies|live)\/[^/]+\/?$/.test(pathname);
+  const padTop = underHeader
+    ? "pt-0"
+    : "pt-[calc(env(safe-area-inset-top)+6.75rem)] md:pt-20";
+
   return (
-    <div className="flex min-h-dvh">
-      <SideRail />
-      <div className="flex min-w-0 flex-1 flex-col pb-20 lg:pb-0">
-        <header
-          className={`sticky top-0 z-30 px-4 py-3 transition-[background,box-shadow] duration-300 lg:hidden ${
-            scrolled
-              ? "bg-[rgba(11,15,20,0.92)] shadow-[0_12px_28px_rgba(0,0,0,0.55)] backdrop-blur-xl"
-              : "bg-transparent"
-          }`}
-        >
-          <div
-            className={`pointer-events-none absolute inset-x-0 top-full h-10 bg-gradient-to-b from-[rgba(11,15,20,0.9)] to-transparent transition-opacity duration-300 ${
-              scrolled ? "opacity-100" : "opacity-0"
-            }`}
-          />
-          <div className="relative flex items-center">
-            <BrandMark size="sm" />
-          </div>
-        </header>
-        <main className="flex-1">{children}</main>
-        <BottomNav />
-      </div>
+    <div className="flex min-h-dvh flex-col">
+      <AppTopBar scrolled={scrolled} />
+      <main className={`flex-1 ${padTop}`}>{children}</main>
     </div>
   );
 }

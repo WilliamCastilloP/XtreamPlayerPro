@@ -8,6 +8,7 @@ import { upsertContinue } from "@/lib/library/storage";
 import { parseMediaDuration } from "@/lib/player/duration";
 import { getSeriesInfo, getVodInfo } from "@/lib/xtream/client";
 import { buildStreamCandidates } from "@/lib/xtream/urls";
+import { catalogTitle } from "@/lib/xtream/title";
 import type { StreamKind } from "@/lib/xtream/types";
 
 function normalizeExt(value?: string | null): string {
@@ -121,7 +122,7 @@ function WatchInner() {
       if (position < 5) return;
       upsertContinue(activePlaylist.id, {
         kind,
-        title,
+        title: catalogTitle({ name: title }),
         image,
         streamId: params.id,
         seriesId,

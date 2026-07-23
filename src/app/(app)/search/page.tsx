@@ -11,6 +11,7 @@ import {
   loadAllVodStreams,
 } from "@/lib/xtream/catalog-cache";
 import type { LiveStream, SeriesItem, VodStream } from "@/lib/xtream/types";
+import { catalogTitle } from "@/lib/xtream/title";
 
 type Filter = "live" | "movies" | "series";
 
@@ -107,47 +108,124 @@ function SearchInner() {
 
     const liveHits =
       filter === null || filter === "live"
-        ? live
-            .filter((s) => s.name.toLowerCase().includes(q))
-            .slice(0, 80)
-            .map((s) => ({
-              key: `live-${s.stream_id}`,
-              href: withBack(`/live/${s.stream_id}`, backTarget),
-              title: s.name,
-              image: s.stream_icon || undefined,
-              kind: "Live",
-              aspect: "live" as const,
-            }))
+        ? (() => {
+            const seen = new Set<number | string>();
+            const out: {
+              key: string;
+              href: string;
+              title: string;
+              image?: string;
+              kind: string;
+              favKind: "live";
+              streamId: number | string;
+              aspect: "live";
+            }[] = [];
+            for (const s of live) {
+              const label = catalogTitle(s);
+              if (
+                !s.name.toLowerCase().includes(q) &&
+                !label.toLowerCase().includes(q)
+              ) {
+                continue;
+              }
+              if (seen.has(s.stream_id)) continue;
+              seen.add(s.stream_id);
+              out.push({
+                key: `live-${s.stream_id}`,
+                href: withBack(`/live/${s.stream_id}`, backTarget),
+                title: label,
+                image: s.stream_icon || undefined,
+                kind: "Live",
+                favKind: "live",
+                streamId: s.stream_id,
+                aspect: "live",
+              });
+              if (out.length >= 80) break;
+            }
+            return out;
+          })()
         : [];
 
     const movieHits =
       filter === null || filter === "movies"
-        ? movies
-            .filter((s) => s.name.toLowerCase().includes(q))
-            .slice(0, 80)
-            .map((s) => ({
-              key: `vod-${s.stream_id}`,
-              href: withBack(`/movies/${s.stream_id}`, backTarget),
-              title: s.name,
-              image: s.stream_icon || undefined,
-              kind: "Movie",
-              aspect: "poster" as const,
-            }))
+        ? (() => {
+            const seen = new Set<number | string>();
+            const out: {
+              key: string;
+              href: string;
+              title: string;
+              image?: string;
+              kind: string;
+              favKind: "movie";
+              streamId: number | string;
+              aspect: "poster";
+            }[] = [];
+            for (const s of movies) {
+              const label = catalogTitle(s);
+              if (
+                !s.name.toLowerCase().includes(q) &&
+                !(s.title || "").toLowerCase().includes(q) &&
+                !label.toLowerCase().includes(q)
+              ) {
+                continue;
+              }
+              if (seen.has(s.stream_id)) continue;
+              seen.add(s.stream_id);
+              out.push({
+                key: `vod-${s.stream_id}`,
+                href: withBack(`/movies/${s.stream_id}`, backTarget),
+                title: label,
+                image: s.stream_icon || undefined,
+                kind: "Movie",
+                favKind: "movie",
+                streamId: s.stream_id,
+                aspect: "poster",
+              });
+              if (out.length >= 80) break;
+            }
+            return out;
+          })()
         : [];
 
     const seriesHits =
       filter === null || filter === "series"
-        ? series
-            .filter((s) => s.name.toLowerCase().includes(q))
-            .slice(0, 80)
-            .map((s) => ({
-              key: `series-${s.series_id}`,
-              href: withBack(`/series/${s.series_id}`, backTarget),
-              title: s.name,
-              image: s.cover || undefined,
-              kind: "Series",
-              aspect: "poster" as const,
-            }))
+        ? (() => {
+            const seen = new Set<number | string>();
+            const out: {
+              key: string;
+              href: string;
+              title: string;
+              image?: string;
+              kind: string;
+              favKind: "series";
+              streamId: number | string;
+              aspect: "poster";
+            }[] = [];
+            for (const s of series) {
+              const label = catalogTitle(s);
+              if (
+                !s.name.toLowerCase().includes(q) &&
+                !(s.title || "").toLowerCase().includes(q) &&
+                !label.toLowerCase().includes(q)
+              ) {
+                continue;
+              }
+              if (seen.has(s.series_id)) continue;
+              seen.add(s.series_id);
+              out.push({
+                key: `series-${s.series_id}`,
+                href: withBack(`/series/${s.series_id}`, backTarget),
+                title: label,
+                image: s.cover || undefined,
+                kind: "Series",
+                favKind: "series",
+                streamId: s.series_id,
+                aspect: "poster",
+              });
+              if (out.length >= 80) break;
+            }
+            return out;
+          })()
         : [];
 
     return [...liveHits, ...movieHits, ...seriesHits];
@@ -199,15 +277,15 @@ function SearchInner() {
         <p className="text-sm text-[var(--xp-danger)]">{error}</p>
       ) : null}
       {loading ? (
-        <p className="text-sm text-[var(--xp-muted)]">Loading full catalog…</p>
+        <p className="text-sm text-[var(--xp-muted)]">
+          {t("searchLoadingCatalog")}
+        </p>
       ) : null}
 
       {query.trim().length < 2 ? (
-        <p className="text-sm text-[var(--xp-muted)]">
-          Type to search Live, Movies, and Series together.
-        </p>
+        <p className="text-sm text-[var(--xp-muted)]">{t("searchTypeHint")}</p>
       ) : results.length === 0 && !loading ? (
-        <p className="text-sm text-[var(--xp-muted)]">No matches.</p>
+        <p className="text-sm text-[var(--xp-muted)]">{t("searchNoMatches")}</p>
       ) : (
         <div className="xp-fade-in grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
           {results.map((item) => (
@@ -218,6 +296,8 @@ function SearchInner() {
               image={item.image}
               subtitle={item.kind}
               aspect={item.aspect}
+              kind={item.favKind}
+              streamId={item.streamId}
             />
           ))}
         </div>

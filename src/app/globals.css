@@ -86,6 +86,53 @@ select {
   transform: scale(0.97);
 }
 
+/*
+ * Row poster slot: resting portrait width; on hover grows to 16:9
+ * (same height) and pushes neighboring flex items instead of overlapping.
+ */
+.xp-poster-slot {
+  --xp-poster-w: clamp(6.5rem, 30vw, 9.5rem);
+  width: var(--xp-poster-w);
+  flex-shrink: 0;
+  transition: width 380ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (min-width: 640px) {
+  .xp-poster-slot {
+    --xp-poster-w: 9rem; /* sm:w-36 */
+  }
+}
+
+@media (min-width: 768px) {
+  .xp-poster-slot {
+    --xp-poster-w: 10rem; /* md:w-40 */
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .xp-poster-slot:hover {
+    /* Grow to 16:9 toward the right — only neighbors on the right shift */
+    width: calc(var(--xp-poster-w) * 8 / 3);
+  }
+
+  .xp-poster-slot:hover .xp-poster-face {
+    box-shadow:
+      0 18px 40px rgba(0, 0, 0, 0.45),
+      0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+}
+
+/* Face fills slot width; height locked to resting portrait height */
+.xp-poster-face {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+}
+
+.xp-poster-slot .xp-poster-face {
+  aspect-ratio: auto;
+  height: calc(var(--xp-poster-w) * 3 / 2);
+}
+
 .xp-shimmer {
   background: linear-gradient(
     90deg,

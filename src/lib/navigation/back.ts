@@ -16,3 +16,50 @@ export function safeInternalPath(
   if (decoded.includes("://")) return fallback;
   return decoded;
 }
+
+type BackLabels = {
+  home: string;
+  search: string;
+  live: string;
+  movies: string;
+  series: string;
+  favorites: string;
+};
+
+/** Label for the detail-page ← Back chip from a safe internal path. */
+export function backLabelForPath(
+  path: string,
+  labels: BackLabels,
+  fallback: "live" | "movies" | "series" | "home" = "home",
+): string {
+  const q = path.includes("?") ? path.slice(path.indexOf("?") + 1) : "";
+  const section = new URLSearchParams(q).get("section");
+
+  if (path.startsWith("/search")) return labels.search;
+  if (path.startsWith("/favorites")) return labels.favorites;
+  if (
+    section === "series" ||
+    path.startsWith("/browse/series") ||
+    path === "/series"
+  ) {
+    return labels.series;
+  }
+  if (
+    section === "movies" ||
+    path.startsWith("/browse/movies") ||
+    path === "/movies"
+  ) {
+    return labels.movies;
+  }
+  if (
+    section === "live" ||
+    path.startsWith("/browse/live") ||
+    path === "/live"
+  ) {
+    return labels.live;
+  }
+  if (fallback === "series") return labels.series;
+  if (fallback === "movies") return labels.movies;
+  if (fallback === "live") return labels.live;
+  return labels.home;
+}

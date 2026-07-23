@@ -1,8 +1,9 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { BrowseRails, type BrowseKind } from "@/components/catalog/BrowseRails";
+import { HomeGenreBar } from "@/components/catalog/HomeGenreBar";
 import { HeroBanner } from "@/components/catalog/HeroBanner";
 import { MediaRow, type MediaRowItem } from "@/components/catalog/MediaRow";
 import { PosterSkeletonRow } from "@/components/catalog/Skeleton";
@@ -18,10 +19,10 @@ import {
   loadVodCategories,
 } from "@/lib/xtream/catalog-cache";
 import { watchPath } from "@/lib/xtream/client";
+import { formatRatingStar } from "@/lib/xtream/rating";
+import { catalogTitle } from "@/lib/xtream/title";
 
 type Section = BrowseKind;
-
-const FILTER_IDS: Section[] = ["live", "movies", "series"];
 
 function parseSection(value: string | null): Section | null {
   if (value === "live" || value === "movies" || value === "series") return value;
@@ -32,7 +33,6 @@ function HomeInner() {
   const { credentials, activePlaylist } = usePlaylists();
   const { t } = useLocale();
   const searchParams = useSearchParams();
-  const router = useRouter();
   /** null = overview (a bit of everything). Driven by ?section= */
   const section = parseSection(searchParams.get("section"));
   const [continueItems, setContinueItems] = useState<MediaRowItem[]>([]);
@@ -63,10 +63,12 @@ function HomeInner() {
                 : item.kind === "movie"
                   ? `/movies/${item.streamId}`
                   : `/live/${item.streamId}`,
-            title: item.title,
+            title: catalogTitle({ name: item.title }),
             image: item.image,
             aspect:
               item.kind === "live" ? ("live" as const) : ("poster" as const),
+            kind: item.kind,
+            streamId: item.seriesId ?? item.streamId,
           }));
 
         const favorites = listFavorites(activePlaylist!.id);
@@ -76,9 +78,11 @@ function HomeInner() {
           .map((f) => ({
             key: f.id,
             href: `/live/${f.streamId}`,
-            title: f.title,
+            title: catalogTitle({ name: f.title }),
             image: f.image,
             aspect: "live" as const,
+            kind: "live" as const,
+            streamId: f.streamId,
           }));
         const movieFavs = favorites
           .filter((f) => f.kind === "movie")
@@ -86,8 +90,10 @@ function HomeInner() {
           .map((f) => ({
             key: f.id,
             href: `/movies/${f.streamId}`,
-            title: f.title,
+            title: catalogTitle({ name: f.title }),
             image: f.image,
+            kind: "movie" as const,
+            streamId: f.streamId,
           }));
         const seriesFavs = favorites
           .filter((f) => f.kind === "series")
@@ -95,8 +101,10 @@ function HomeInner() {
           .map((f) => ({
             key: f.id,
             href: `/series/${f.streamId}`,
-            title: f.title,
+            title: catalogTitle({ name: f.title }),
             image: f.image,
+            kind: "series" as const,
+            streamId: f.streamId,
           }));
 
         // Lightweight: only the FIRST category of each type for highlights
@@ -128,27 +136,33 @@ function HomeInner() {
           liveSlice.slice(0, 16).map((s) => ({
             key: `feat-live-${s.stream_id}`,
             href: `/live/${s.stream_id}`,
-            title: s.name,
+            title: catalogTitle(s),
             image: s.stream_icon || undefined,
             aspect: "live" as const,
+            kind: "live" as const,
+            streamId: s.stream_id,
           })),
         );
         setFeaturedMovies(
           vodSlice.slice(0, 16).map((s) => ({
             key: `feat-vod-${s.stream_id}`,
             href: `/movies/${s.stream_id}`,
-            title: s.name,
+            title: catalogTitle(s),
             image: s.stream_icon || undefined,
-            subtitle: s.rating ? `★ ${s.rating}` : undefined,
+            subtitle: formatRatingStar(s.rating),
+            kind: "movie" as const,
+            streamId: s.stream_id,
           })),
         );
         setFeaturedSeries(
           seriesSlice.slice(0, 16).map((s) => ({
             key: `feat-series-${s.series_id}`,
             href: `/series/${s.series_id}`,
-            title: s.name,
+            title: catalogTitle(s),
             image: s.cover || undefined,
-            subtitle: s.rating ? `★ ${s.rating}` : undefined,
+            subtitle: formatRatingStar(s.rating),
+            kind: "series" as const,
+            streamId: s.series_id,
           })),
         );
       } catch (err) {
@@ -179,10 +193,12 @@ function HomeInner() {
             : item.kind === "movie"
               ? `/movies/${item.streamId}`
               : `/live/${item.streamId}`,
-        title: item.title,
+        title: catalogTitle({ name: item.title }),
         image: item.image,
         aspect:
           item.kind === "live" ? ("live" as const) : ("poster" as const),
+        kind: item.kind,
+        streamId: item.seriesId ?? item.streamId,
       }));
     const favorites = listFavorites(activePlaylist.id);
     setContinueItems(cont);
@@ -193,9 +209,11 @@ function HomeInner() {
         .map((f) => ({
           key: f.id,
           href: `/live/${f.streamId}`,
-          title: f.title,
+          title: catalogTitle({ name: f.title }),
           image: f.image,
           aspect: "live" as const,
+          kind: "live" as const,
+          streamId: f.streamId,
         })),
     );
     setFavMovies(
@@ -205,8 +223,10 @@ function HomeInner() {
         .map((f) => ({
           key: f.id,
           href: `/movies/${f.streamId}`,
-          title: f.title,
+          title: catalogTitle({ name: f.title }),
           image: f.image,
+          kind: "movie" as const,
+          streamId: f.streamId,
         })),
     );
     setFavSeries(
@@ -216,8 +236,10 @@ function HomeInner() {
         .map((f) => ({
           key: f.id,
           href: `/series/${f.streamId}`,
-          title: f.title,
+          title: catalogTitle({ name: f.title }),
           image: f.image,
+          kind: "series" as const,
+          streamId: f.streamId,
         })),
     );
   }, [section, activePlaylist]);
@@ -250,6 +272,20 @@ function HomeInner() {
           ? favSeries
           : [];
 
+  const sectionHero =
+    section === "live"
+      ? sectionContinue[0] || sectionFavorites[0] || featuredLive[0] || null
+      : section === "movies"
+        ? sectionContinue[0] || sectionFavorites[0] || featuredMovies[0] || null
+        : section === "series"
+          ? sectionContinue[0] ||
+            sectionFavorites[0] ||
+            featuredSeries[0] ||
+            null
+          : null;
+
+  const activeHero = section ? sectionHero : hero;
+
   const sectionFavTitle =
     section === "live"
       ? t("favoriteChannels")
@@ -264,59 +300,54 @@ function HomeInner() {
         ? t("favoriteMoviesEmpty")
         : t("favoriteSeriesEmpty");
 
+  const renderHero = (item: MediaRowItem | null) => {
+    if (!item) return null;
+    return (
+      <HeroBanner
+        underHeader
+        cropLetterbox={section === "live" || item.aspect === "live"}
+        eyebrow={t("homeForYou")}
+        title={item.title}
+        subtitle={t("homeHeroSubtitle")}
+        image={item.image}
+        playHref={
+          item.href.startsWith("/movies/")
+            ? watchPath("movie", item.href.split("/").pop() || "", {
+                title: item.title,
+                image: item.image || "",
+              })
+            : item.href
+        }
+        infoHref={item.href.startsWith("/watch") ? undefined : item.href}
+      />
+    );
+  };
+
   return (
     <div className="pb-8">
-      <div className="sticky top-[52px] z-20 space-y-3 bg-gradient-to-b from-[rgba(11,15,20,0.96)] via-[rgba(11,15,20,0.88)] to-transparent px-4 pb-3 pt-2 lg:static lg:bg-transparent lg:px-6 lg:pt-5">
-        <div className="flex gap-2 overflow-x-auto scrollbar-none">
-          {FILTER_IDS.map((id) => {
-            const label =
-              id === "live"
-                ? t("liveTv")
-                : id === "movies"
-                  ? t("movies")
-                  : t("series");
-            return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => {
-                  const next = section === id ? null : id;
-                  if (next) {
-                    router.replace(`/?section=${next}`, { scroll: false });
-                  } else {
-                    router.replace("/", { scroll: false });
-                  }
-                }}
-                className={`shrink-0 cursor-pointer rounded-full px-4 py-2 text-xs font-bold tracking-wide transition ${
-                  section === id
-                    ? "bg-[var(--xp-accent)] text-[var(--xp-ink)]"
-                    : "bg-[var(--xp-surface)] text-[var(--xp-muted)]"
-                }`}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
       {error ? (
-        <p className="px-4 text-sm text-[var(--xp-danger)] lg:px-6">{error}</p>
+        <p className="px-4 text-sm text-[var(--xp-danger)] lg:px-8 xl:px-12">
+          {error}
+        </p>
       ) : null}
 
       {/* Filtered catalog — only mounts when user picks LIVE/MOVIES/SERIES */}
       {section ? (
-        <div className="space-y-6 pt-2">
-          <MediaRow
-            title={t("continueWatching")}
-            items={sectionContinue}
-            emptyLabel={t("continueEmpty")}
-          />
-          <MediaRow
-            title={sectionFavTitle}
-            items={sectionFavorites}
-            emptyLabel={sectionFavEmpty}
-          />
+        <div className="space-y-6">
+          {renderHero(activeHero)}
+          <div className="space-y-6 pt-4">
+            <HomeGenreBar kind={section} />
+            <MediaRow
+              title={t("continueWatching")}
+              items={sectionContinue}
+              emptyLabel={t("continueEmpty")}
+            />
+            <MediaRow
+              title={sectionFavTitle}
+              items={sectionFavorites}
+              emptyLabel={sectionFavEmpty}
+            />
+          </div>
           <BrowseRails
             kind={section}
             title={
@@ -328,61 +359,46 @@ function HomeInner() {
             }
             subtitle={t("browseByCategory")}
             embedded
+            hideHero
           />
         </div>
       ) : loadingHighlights ? (
         <div className="space-y-8 pt-4">
-          <div className="xp-shimmer mx-4 h-48 rounded-2xl lg:mx-6" />
+          <div className="xp-shimmer mx-4 h-48 rounded-2xl lg:mx-8 lg:h-64 xl:mx-12" />
           <PosterSkeletonRow />
         </div>
       ) : (
-        <div className="space-y-6 pt-2 lg:space-y-8">
-          {hero ? (
-            <HeroBanner
-              eyebrow={t("homeForYou")}
-              title={hero.title}
-              subtitle={t("homeHeroSubtitle")}
-              image={hero.image}
-              playHref={
-                hero.href.startsWith("/movies/")
-                  ? watchPath("movie", hero.href.split("/").pop() || "", {
-                      title: hero.title,
-                      image: hero.image || "",
-                    })
-                  : hero.href
-              }
-              infoHref={
-                hero.href.startsWith("/watch") ? undefined : hero.href
-              }
+        <div className="space-y-6 lg:space-y-8">
+          {renderHero(hero)}
+
+          <div className="space-y-6 pt-2 lg:space-y-8 lg:pt-4">
+            <MediaRow
+              title={t("continueWatching")}
+              items={continueItems}
+              emptyLabel={t("continueEmpty")}
             />
-          ) : null}
 
-          <MediaRow
-            title={t("continueWatching")}
-            items={continueItems}
-            emptyLabel={t("continueEmpty")}
-          />
+            <MediaRow
+              title={t("favoriteChannels")}
+              items={favLive}
+              emptyLabel={t("favoriteChannelsEmpty")}
+            />
+            <MediaRow title={t("liveHighlights")} items={featuredLive} />
 
-          <MediaRow
-            title={t("favoriteChannels")}
-            items={favLive}
-            emptyLabel={t("favoriteChannelsEmpty")}
-          />
-          <MediaRow title={t("liveHighlights")} items={featuredLive} />
+            <MediaRow
+              title={t("favoriteMovies")}
+              items={favMovies}
+              emptyLabel={t("favoriteMoviesEmpty")}
+            />
+            <MediaRow title={t("movieHighlights")} items={featuredMovies} />
 
-          <MediaRow
-            title={t("favoriteMovies")}
-            items={favMovies}
-            emptyLabel={t("favoriteMoviesEmpty")}
-          />
-          <MediaRow title={t("movieHighlights")} items={featuredMovies} />
-
-          <MediaRow
-            title={t("favoriteSeries")}
-            items={favSeries}
-            emptyLabel={t("favoriteSeriesEmpty")}
-          />
-          <MediaRow title={t("seriesHighlights")} items={featuredSeries} />
+            <MediaRow
+              title={t("favoriteSeries")}
+              items={favSeries}
+              emptyLabel={t("favoriteSeriesEmpty")}
+            />
+            <MediaRow title={t("seriesHighlights")} items={featuredSeries} />
+          </div>
         </div>
       )}
     </div>

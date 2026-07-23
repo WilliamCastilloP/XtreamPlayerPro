@@ -7,6 +7,7 @@ import {
   getVodCategories,
   getVodStreams,
 } from "./client";
+import { itemHasGenre } from "./genres";
 import type {
   LiveStream,
   SeriesItem,
@@ -126,6 +127,35 @@ export async function loadSeriesByCategory(
   );
 }
 
+/** Movies/series browse by genre field (not panel category_id). */
+export async function loadVodByGenre(
+  credentials: XtreamCredentials,
+  genre: string,
+) {
+  const all = await loadAllVodStreams(credentials);
+  const seen = new Set<number | string>();
+  return all.filter((item) => {
+    if (!itemHasGenre(item, genre)) return false;
+    if (seen.has(item.stream_id)) return false;
+    seen.add(item.stream_id);
+    return true;
+  });
+}
+
+export async function loadSeriesByGenre(
+  credentials: XtreamCredentials,
+  genre: string,
+) {
+  const all = await loadAllSeries(credentials);
+  const seen = new Set<number | string>();
+  return all.filter((item) => {
+    if (!itemHasGenre(item, genre)) return false;
+    if (seen.has(item.series_id)) return false;
+    seen.add(item.series_id);
+    return true;
+  });
+}
+
 export type GroupedRail<T> = {
   category: XtreamCategory;
   items: T[];
@@ -165,3 +195,9 @@ export function groupByCategory<T extends { category_id?: string }>(
 }
 
 export type { LiveStream, SeriesItem, VodStream };
+export {
+  collectGenres,
+  groupByGenre,
+  itemHasGenre,
+  parseGenres,
+} from "./genres";

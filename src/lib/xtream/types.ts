@@ -38,6 +38,7 @@ export type XtreamCategory = {
 export type LiveStream = {
   num?: number;
   name: string;
+  title?: string;
   stream_type?: string;
   stream_id: number;
   stream_icon?: string;
@@ -50,6 +51,8 @@ export type LiveStream = {
 export type VodStream = {
   num?: number;
   name: string;
+  /** Cleaner display name when the panel provides it */
+  title?: string;
   stream_type?: string;
   stream_id: number;
   stream_icon?: string;
@@ -59,17 +62,22 @@ export type VodStream = {
   container_extension?: string;
   added?: string;
   plot?: string;
+  /** Comma-separated string or array from the panel */
+  genre?: string | string[];
 };
 
 export type SeriesItem = {
   num?: number;
   name: string;
+  /** Cleaner display name when the panel provides it */
+  title?: string;
   series_id: number;
   cover?: string;
   plot?: string;
   cast?: string;
   director?: string;
-  genre?: string;
+  /** Comma-separated string or array from the panel */
+  genre?: string | string[];
   releaseDate?: string;
   rating?: string;
   rating_5based?: number;
@@ -83,7 +91,7 @@ export type VodInfo = {
     plot?: string;
     cast?: string;
     director?: string;
-    genre?: string;
+    genre?: string | string[];
     releasedate?: string;
     rating?: string;
     duration?: string;
@@ -127,7 +135,7 @@ export type SeriesInfo = {
     plot?: string;
     cast?: string;
     director?: string;
-    genre?: string;
+    genre?: string | string[];
     releaseDate?: string;
     rating?: string;
   };

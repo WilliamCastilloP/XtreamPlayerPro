@@ -5,6 +5,10 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
+import {
+  useTheme,
+  type ThemePreference,
+} from "@/components/providers/ThemeProvider";
 import type { Locale } from "@/lib/i18n/dictionaries";
 import { authenticate } from "@/lib/xtream/client";
 import type { XtreamAuthResponse } from "@/lib/xtream/types";
@@ -19,6 +23,7 @@ export default function AccountPage() {
     credentials,
   } = usePlaylists();
   const { locale, setLocale, t } = useLocale();
+  const { preference, setPreference } = useTheme();
   const router = useRouter();
   const [info, setInfo] = useState<XtreamAuthResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +54,12 @@ export default function AccountPage() {
     { id: "en", label: t("langEnglish") },
   ];
 
+  const themes: { id: ThemePreference; label: string }[] = [
+    { id: "system", label: t("themeSystem") },
+    { id: "dark", label: t("themeDark") },
+    { id: "light", label: t("themeLight") },
+  ];
+
   return (
     <div className="mx-auto max-w-2xl space-y-8 px-4 py-5 md:px-6 md:py-8">
       <div>
@@ -57,6 +68,32 @@ export default function AccountPage() {
         </h1>
         <p className="text-sm text-[var(--xp-muted)]">{t("accountSubtitle")}</p>
       </div>
+
+      <section className="xp-fade-in space-y-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--xp-muted)]">
+          {t("theme")}
+        </h2>
+        <p className="text-sm text-[var(--xp-muted)]">{t("themeSubtitle")}</p>
+        <div className="flex flex-wrap gap-2">
+          {themes.map((theme) => {
+            const active = preference === theme.id;
+            return (
+              <button
+                key={theme.id}
+                type="button"
+                onClick={() => setPreference(theme.id)}
+                className={`min-w-[7.5rem] cursor-pointer rounded-xl px-4 py-3 text-sm font-semibold transition ${
+                  active
+                    ? "bg-[var(--xp-accent)] text-[var(--xp-ink)]"
+                    : "border border-[var(--xp-border)] bg-[var(--xp-surface)] text-[var(--xp-muted)]"
+                }`}
+              >
+                {theme.label}
+              </button>
+            );
+          })}
+        </div>
+      </section>
 
       <section className="xp-fade-in space-y-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--xp-muted)]">
@@ -71,10 +108,10 @@ export default function AccountPage() {
                 key={lang.id}
                 type="button"
                 onClick={() => setLocale(lang.id)}
-                className={`min-w-[7.5rem] rounded-xl px-4 py-3 text-sm font-semibold transition ${
+                className={`min-w-[7.5rem] cursor-pointer rounded-xl px-4 py-3 text-sm font-semibold transition ${
                   active
                     ? "bg-[var(--xp-accent)] text-[var(--xp-ink)]"
-                    : "border border-[var(--xp-border)] bg-[rgba(18,24,32,0.7)] text-[var(--xp-muted)]"
+                    : "border border-[var(--xp-border)] bg-[var(--xp-surface)] text-[var(--xp-muted)]"
                 }`}
               >
                 {lang.label}
@@ -88,7 +125,7 @@ export default function AccountPage() {
         <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--xp-muted)]">
           {t("activePlaylist")}
         </h2>
-        <div className="rounded-2xl border border-[var(--xp-border)] bg-[rgba(18,24,32,0.7)] p-4">
+        <div className="rounded-2xl border border-[var(--xp-border)] bg-[var(--xp-surface)] p-4">
           <p className="text-lg font-semibold">{activePlaylist?.name}</p>
           <p className="text-sm text-[var(--xp-muted)]">
             {activePlaylist?.username}
@@ -147,7 +184,7 @@ export default function AccountPage() {
               >
                 <button
                   type="button"
-                  className="min-w-0 flex-1 text-left"
+                  className="min-w-0 flex-1 cursor-pointer text-left"
                   onClick={() => {
                     selectPlaylist(playlist.id);
                     router.push("/");
@@ -173,7 +210,7 @@ export default function AccountPage() {
                 </Link>
                 <button
                   type="button"
-                  className="text-xs text-[var(--xp-danger)]"
+                  className="cursor-pointer text-xs text-[var(--xp-danger)]"
                   onClick={() => {
                     if (
                       confirm(t("deleteConfirm", { name: playlist.name }))

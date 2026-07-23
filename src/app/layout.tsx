@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Figtree, Syne } from "next/font/google";
 import { LocaleProvider } from "@/components/providers/LocaleProvider";
 import { PlaylistProvider } from "@/components/providers/PlaylistProvider";
+import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import "./globals.css";
 
 const syne = Syne({
@@ -52,11 +53,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" className={`${syne.variable} ${figtree.variable} h-full`}>
+    <html
+      lang="es"
+      className={`${syne.variable} ${figtree.variable} h-full`}
+      suppressHydrationWarning
+    >
       <body className="min-h-dvh antialiased">
-        <LocaleProvider>
-          <PlaylistProvider>{children}</PlaylistProvider>
-        </LocaleProvider>
+        <ThemeProvider>
+          <LocaleProvider>
+            <PlaylistProvider>{children}</PlaylistProvider>
+          </LocaleProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

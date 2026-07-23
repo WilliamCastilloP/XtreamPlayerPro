@@ -3,6 +3,7 @@
 import { PosterCard } from "@/components/catalog/PosterCard";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import { listFavorites } from "@/lib/library/storage";
+import { catalogTitle } from "@/lib/xtream/title";
 
 export default function FavoritesPage() {
   const { activePlaylist, ready } = usePlaylists();
@@ -36,10 +37,12 @@ export default function FavoritesPage() {
               <PosterCard
                 key={item.id}
                 href={href}
-                title={item.title}
+                title={catalogTitle({ name: item.title })}
                 image={item.image}
                 subtitle={item.kind}
                 aspect={item.kind === "live" ? "live" : "poster"}
+                kind={item.kind}
+                streamId={item.streamId}
               />
             );
           })}

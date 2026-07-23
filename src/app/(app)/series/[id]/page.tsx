@@ -9,9 +9,12 @@ import { Shimmer } from "@/components/catalog/Skeleton";
 import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import { isFavorite, toggleFavorite } from "@/lib/library/storage";
-import { safeInternalPath } from "@/lib/navigation/back";
+import { backLabelForPath, safeInternalPath } from "@/lib/navigation/back";
 import { getSeriesInfo, watchPath } from "@/lib/xtream/client";
 import { parseMediaDuration } from "@/lib/player/duration";
+import { parseGenres } from "@/lib/xtream/genres";
+import { formatRating } from "@/lib/xtream/rating";
+import { catalogTitle } from "@/lib/xtream/title";
 import type { SeriesEpisode, SeriesInfo } from "@/lib/xtream/types";
 
 function SeriesDetailInner() {
@@ -28,9 +31,18 @@ function SeriesDetailInner() {
     searchParams.get("back"),
     "/?section=series",
   );
-  const backLabel = backHref.startsWith("/search")
-    ? t("searchTitle")
-    : t("navHome");
+  const backLabel = backLabelForPath(
+    backHref,
+    {
+      home: t("navHome"),
+      search: t("searchTitle"),
+      live: t("liveTv"),
+      movies: t("movies"),
+      series: t("series"),
+      favorites: t("favorite"),
+    },
+    "series",
+  );
 
   useEffect(() => {
     if (!credentials) return;
@@ -60,7 +72,8 @@ function SeriesDetailInner() {
     };
   }, [credentials, params.id]);
 
-  const title = info?.info?.name || `Series ${params.id}`;
+  const title =
+    catalogTitle({ name: info?.info?.name }) || `Series ${params.id}`;
   const image = info?.info?.cover;
   const seasonKeys = Object.keys(info?.episodes || {}).sort(
     (a, b) => Number(a) - Number(b),
@@ -96,12 +109,15 @@ function SeriesDetailInner() {
     return <p className="px-4 py-10 text-sm text-[var(--xp-danger)]">{error}</p>;
   }
 
+  const genreLabel = parseGenres(info?.info?.genre).join(", ");
+  const ratingLabel = formatRating(info?.info?.rating);
+
   return (
     <TitleHero
       backHref={backHref}
       backLabel={backLabel}
       title={title}
-      meta={[info?.info?.genre, info?.info?.releaseDate, info?.info?.rating]
+      meta={[genreLabel || undefined, info?.info?.releaseDate, ratingLabel]
         .filter(Boolean)
         .join(" · ")}
       plot={info?.info?.plot || undefined}
@@ -124,14 +140,49 @@ function SeriesDetailInner() {
         setFavTick((n) => n + 1);
       }}
     >
-      <div className="space-y-4 px-4 py-5 md:px-8">
+      <div className="space-y-4 px-4 pb-5 pt-3 md:px-8">
+        {info?.info?.cast || info?.info?.director || genreLabel ? (
+          <dl className="grid max-w-3xl gap-x-6 gap-y-2.5 text-sm sm:grid-cols-2">
+            {genreLabel ? (
+              <div>
+                <dt className="text-[var(--xp-muted)]">{t("metaGenre")}</dt>
+                <dd className="m-0">{genreLabel}</dd>
+              </div>
+            ) : null}
+            {info?.info?.releaseDate ? (
+              <div>
+                <dt className="text-[var(--xp-muted)]">{t("metaReleased")}</dt>
+                <dd className="m-0">{info.info.releaseDate}</dd>
+              </div>
+            ) : null}
+            {ratingLabel ? (
+              <div>
+                <dt className="text-[var(--xp-muted)]">{t("metaRating")}</dt>
+                <dd className="m-0">★ {ratingLabel}</dd>
+              </div>
+            ) : null}
+            {info?.info?.director ? (
+              <div className="sm:col-span-2">
+                <dt className="text-[var(--xp-muted)]">{t("metaDirector")}</dt>
+                <dd className="m-0">{info.info.director}</dd>
+              </div>
+            ) : null}
+            {info?.info?.cast ? (
+              <div className="sm:col-span-2">
+                <dt className="text-[var(--xp-muted)]">{t("metaCast")}</dt>
+                <dd className="m-0 leading-relaxed">{info.info.cast}</dd>
+              </div>
+            ) : null}
+          </dl>
+        ) : null}
+
         <div className="flex gap-2 overflow-x-auto scrollbar-none">
           {seasonKeys.map((key) => (
             <button
               key={key}
               type="button"
               onClick={() => setSeason(key)}
-              className={`shrink-0 rounded-full px-4 py-2 text-sm ${
+              className={`shrink-0 cursor-pointer rounded-full px-4 py-2 text-sm ${
                 season === key
                   ? "bg-[var(--xp-accent)] text-[var(--xp-ink)]"
                   : "bg-[var(--xp-surface)] text-[var(--xp-muted)]"

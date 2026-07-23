@@ -7,7 +7,7 @@ import { Shimmer } from "@/components/catalog/Skeleton";
 import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import { isFavorite, toggleFavorite } from "@/lib/library/storage";
-import { safeInternalPath } from "@/lib/navigation/back";
+import { backLabelForPath, safeInternalPath } from "@/lib/navigation/back";
 import { loadAllLiveStreams } from "@/lib/xtream/catalog-cache";
 import { watchPath } from "@/lib/xtream/client";
 import type { LiveStream } from "@/lib/xtream/types";
@@ -22,9 +22,18 @@ function LiveDetailInner() {
   const [error, setError] = useState<string | null>(null);
   const [favTick, setFavTick] = useState(0);
   const backHref = safeInternalPath(searchParams.get("back"), "/?section=live");
-  const backLabel = backHref.startsWith("/search")
-    ? t("searchTitle")
-    : t("navHome");
+  const backLabel = backLabelForPath(
+    backHref,
+    {
+      home: t("navHome"),
+      search: t("searchTitle"),
+      live: t("liveTv"),
+      movies: t("movies"),
+      series: t("series"),
+      favorites: t("favorite"),
+    },
+    "live",
+  );
 
   useEffect(() => {
     if (!credentials) return;

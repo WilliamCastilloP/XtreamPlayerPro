@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, usePathname, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { CatalogPager } from "@/components/catalog/CatalogPager";
 import { PosterCard } from "@/components/catalog/PosterCard";
 import { PosterSkeletonRow } from "@/components/catalog/Skeleton";
 import type { BrowseKind } from "@/components/catalog/BrowseRails";
+import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import type { FavoriteItem } from "@/lib/library/storage";
 import {
@@ -15,6 +16,12 @@ import {
   loadSeriesByGenre,
   loadVodByGenre,
 } from "@/lib/xtream/catalog-cache";
+import {
+  backLabelForPath,
+  currentBackPath,
+  safeInternalPath,
+  withBack,
+} from "@/lib/navigation/back";
 import { formatRatingStar } from "@/lib/xtream/rating";
 import { catalogTitle } from "@/lib/xtream/title";
 
@@ -36,13 +43,32 @@ function isBrowseKind(value: string): value is BrowseKind {
 function CategoryBrowseInner() {
   const params = useParams<{ kind: string; categoryId: string }>();
   const searchParams = useSearchParams();
+  const pathname = usePathname();
   const { credentials } = usePlaylists();
+  const { t } = useLocale();
   const [items, setItems] = useState<GridItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const kind = isBrowseKind(params.kind) ? params.kind : null;
   const filterKey = decodeURIComponent(params.categoryId || "");
+  const backSelf = currentBackPath(pathname, searchParams.toString());
+  const backHref = safeInternalPath(
+    searchParams.get("back"),
+    kind ? `/?section=${kind}` : "/",
+  );
+  const backLabel = backLabelForPath(
+    backHref,
+    {
+      home: t("navHome"),
+      search: t("searchTitle"),
+      live: t("liveTv"),
+      movies: t("movies"),
+      series: t("series"),
+      favorites: t("favorite"),
+    },
+    kind ?? "home",
+  );
   const categoryName =
     searchParams.get("name")?.trim() ||
     filterKey ||
@@ -74,7 +100,7 @@ function CategoryBrowseInner() {
           const streams = await loadLiveByCategory(credentials!, filterKey);
           next = streams.map((s) => ({
             key: `live-${s.stream_id}`,
-            href: `/live/${s.stream_id}`,
+            href: withBack(`/live/${s.stream_id}`, backSelf),
             title: catalogTitle(s),
             image: s.stream_icon || undefined,
             aspect: "live" as const,
@@ -85,7 +111,7 @@ function CategoryBrowseInner() {
           const streams = await loadVodByGenre(credentials!, filterKey);
           next = streams.map((s) => ({
             key: `vod-${s.stream_id}`,
-            href: `/movies/${s.stream_id}`,
+            href: withBack(`/movies/${s.stream_id}`, backSelf),
             title: catalogTitle(s),
             image: s.stream_icon || undefined,
             subtitle: formatRatingStar(s.rating),
@@ -96,7 +122,7 @@ function CategoryBrowseInner() {
           const series = await loadSeriesByGenre(credentials!, filterKey);
           next = series.map((s) => ({
             key: `series-${s.series_id}`,
-            href: `/series/${s.series_id}`,
+            href: withBack(`/series/${s.series_id}`, backSelf),
             title: catalogTitle(s),
             image: s.cover || undefined,
             subtitle: formatRatingStar(s.rating),
@@ -120,7 +146,7 @@ function CategoryBrowseInner() {
     return () => {
       cancelled = true;
     };
-  }, [credentials, kind, filterKey]);
+  }, [credentials, kind, filterKey, backSelf]);
 
   if (!kind) {
     return (
@@ -139,11 +165,11 @@ function CategoryBrowseInner() {
     <div className="space-y-5 pb-8 pt-3 md:pt-5">
       <div className="space-y-3 px-4 md:px-6">
         <Link
-          href={`/?section=${kind}`}
+          href={backHref}
           className="inline-flex items-center gap-1.5 text-sm text-[var(--xp-muted)] transition hover:text-[var(--xp-text)]"
         >
           <ArrowLeft className="h-4 w-4" />
-          {kindLabel}
+          {backLabel}
         </Link>
         <div>
           <h1 className="font-[family-name:var(--xp-font-display)] text-2xl font-bold md:text-3xl">

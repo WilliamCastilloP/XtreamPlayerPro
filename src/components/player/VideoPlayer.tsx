@@ -157,7 +157,19 @@ type Props = {
   extension?: string;
   /** Known full duration in seconds (catalog / probe). Beats under-reported HLS event playlists. */
   durationHint?: number;
+  /** Resume position in seconds (absolute timeline). */
+  initialPosition?: number;
+  /** Restore last audio track index when available. */
+  initialAudioTrack?: number;
+  /** Restore last subtitle track index (-1 = off). */
+  initialSubtitleTrack?: number;
   onProgress?: (position: number, duration: number) => void;
+  /** Persist audio/subtitle choices while watching. */
+  onTrackPrefs?: (prefs: { audioTrack: number; subtitleTrack: number }) => void;
+  /** Called when user chooses start from beginning. */
+  onStartOver?: () => void;
+  /** Next episode autoplay target (series). */
+  nextEpisode?: { href: string; title: string };
 };
 
 type DebugLine = {
@@ -263,7 +275,13 @@ export function VideoPlayer({
   seriesId,
   extension,
   durationHint,
+  initialPosition = 0,
+  initialAudioTrack = 0,
+  initialSubtitleTrack = -1,
   onProgress,
+  onTrackPrefs,
+  onStartOver,
+  nextEpisode,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const router = useRouter();
@@ -292,8 +310,16 @@ export function VideoPlayer({
   const [awaitingTap, setAwaitingTap] = useState(false);
   const [needsUnmute, setNeedsUnmute] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
-  const [serverHlsOffset, setServerHlsOffset] = useState(0);
-  const [serverHlsAudio, setServerHlsAudio] = useState(0);
+  const resumeStart =
+    initialPosition >= 5 ? snapHlsStart(initialPosition) : 0;
+  const resumeAudio =
+    Number.isFinite(initialAudioTrack) && initialAudioTrack >= 0
+      ? Math.floor(initialAudioTrack)
+      : 0;
+  const resumeSubtitle =
+    Number.isFinite(initialSubtitleTrack) ? Math.floor(initialSubtitleTrack) : -1;
+  const [serverHlsOffset, setServerHlsOffset] = useState(resumeStart);
+  const [serverHlsAudio, setServerHlsAudio] = useState(resumeAudio);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(() =>
     durationHint && durationHint > 0 ? durationHint : 0,
@@ -312,14 +338,16 @@ export function VideoPlayer({
   const [showSettings, setShowSettings] = useState(false);
   const [qualityIsHls, setQualityIsHls] = useState(false);
   const [audioOptions, setAudioOptions] = useState<TrackOption[]>([]);
-  const [audioId, setAudioId] = useState(0);
+  const [audioId, setAudioId] = useState(resumeAudio);
   const [subtitleOptions, setSubtitleOptions] = useState<TrackOption[]>([]);
-  const [subtitleId, setSubtitleId] = useState(-1);
+  const [subtitleId, setSubtitleId] = useState(resumeSubtitle);
   const [subtitleCues, setSubtitleCues] = useState<VttCue[]>([]);
   const [subtitleLoading, setSubtitleLoading] = useState(false);
   const [subtitleError, setSubtitleError] = useState<string | null>(null);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverPct, setHoverPct] = useState(0);
+  const [nextCountdown, setNextCountdown] = useState<number | null>(null);
+  const [nextCancelled, setNextCancelled] = useState(false);
   const scrubbingRef = useRef(false);
   const scrubValueRef = useRef(0);
   /** Status text to show when the next seekingReload fires (set by restartServerHlsAt). */
@@ -334,6 +362,7 @@ export function VideoPlayer({
   } | null>(null);
   const prefetchTimer = useRef<number | null>(null);
   const seekingReloadRef = useRef(false);
+  const resumeAppliedRef = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sourcesKey = sources.map((s) => s.url).join("|");
   const [seenSourcesKey, setSeenSourcesKey] = useState(sourcesKey);
@@ -350,9 +379,9 @@ export function VideoPlayer({
     setQualityId(-1);
     setQualityIsHls(false);
     setAudioOptions([]);
-    setAudioId(0);
+    setAudioId(resumeAudio);
     setSubtitleOptions([]);
-    setSubtitleId(-1);
+    setSubtitleId(resumeSubtitle);
     setSubtitleCues([]);
     setSubtitleLoading(false);
     setSubtitleError(null);
@@ -365,11 +394,13 @@ export function VideoPlayer({
     setNeedsUnmute(false);
     setAwaitingTap(false);
     setHasStarted(false);
-    setServerHlsOffset(0);
-    setServerHlsAudio(0);
+    setServerHlsOffset(resumeStart);
+    setServerHlsAudio(resumeAudio);
     setSeekingUi(false);
     seekingReloadRef.current = false;
     setHoldPoster(poster);
+    setNextCountdown(null);
+    setNextCancelled(false);
   }
 
   const candidate = sources[sourceIndex];
@@ -652,7 +683,10 @@ export function VideoPlayer({
         /* ignore */
       }
       if (best && onProgress) {
-        onProgress(video.currentTime, best);
+        const absoluteTime = isServerHls
+          ? serverHlsOffset + (video.currentTime || 0)
+          : video.currentTime;
+        onProgress(absoluteTime, best);
       }
     };
     const onNativeError = () => {
@@ -691,6 +725,22 @@ export function VideoPlayer({
         setBuffering(false);
         seekingReloadRef.current = false;
         pushDebug(`playing · ${candidate.label}`);
+        if (
+          !resumeAppliedRef.current &&
+          initialPosition >= 5 &&
+          kind !== "live"
+        ) {
+          resumeAppliedRef.current = true;
+          if (remuxRef.current) {
+            void remuxRef.current.seek(initialPosition);
+          } else if (!isServerHls && !looksLikeHlsUrl(playSrc)) {
+            try {
+              video.currentTime = initialPosition;
+            } catch {
+              /* ignore */
+            }
+          }
+        }
       }
     };
 
@@ -774,7 +824,11 @@ export function VideoPlayer({
             setAudioOptions(
               tracks.map((track) => ({ id: track.id, label: track.label })),
             );
-            setAudioId(selectedId);
+            const preferred =
+              tracks.some((track) => track.id === resumeAudio)
+                ? resumeAudio
+                : selectedId;
+            setAudioId(preferred);
           } else {
             setAudioOptions([]);
             setAudioId(0);
@@ -787,6 +841,13 @@ export function VideoPlayer({
             return;
           }
           remuxRef.current = handle;
+          if (
+            resumeAudio > 0 &&
+            handle.setAudioTrack
+          ) {
+            void handle.setAudioTrack(resumeAudio);
+            setAudioId(resumeAudio);
+          }
           setQualityOptions([{ id: -1, label: t("playerQualityAuto") }]);
           setQualityId(-1);
           setQualityIsHls(false);
@@ -853,18 +914,36 @@ export function VideoPlayer({
           }
         })();
       }
-      const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: false,
-        maxBufferLength: kind === "live" ? 12 : 30,
-        maxMaxBufferLength: kind === "live" ? 30 : 60,
-        backBufferLength: kind === "live" ? 10 : 30,
-        liveSyncDurationCount: 3,
-        liveMaxLatencyDurationCount: 6,
-        xhrSetup: (xhr) => {
-          xhr.withCredentials = false;
-        },
-      });
+      const isLiveKind = kind === "live";
+      const hls = new Hls(
+        isLiveKind
+          ? {
+              enableWorker: true,
+              lowLatencyMode: false,
+              maxBufferLength: 12,
+              maxMaxBufferLength: 30,
+              backBufferLength: 10,
+              liveSyncDurationCount: 3,
+              liveMaxLatencyDurationCount: 6,
+              xhrSetup: (xhr) => {
+                xhr.withCredentials = false;
+              },
+            }
+          : {
+              enableWorker: true,
+              lowLatencyMode: false,
+              maxBufferLength: 30,
+              maxMaxBufferLength: 60,
+              backBufferLength: 30,
+              // EVENT playlists grow while ffmpeg runs — don't chase the live edge on VOD.
+              liveSyncDurationCount: 1_000_000,
+              liveMaxLatencyDurationCount: 1_000_001,
+              maxLiveSyncPlaybackRate: 1,
+              xhrSetup: (xhr) => {
+                xhr.withCredentials = false;
+              },
+            },
+      );
       hlsRef.current = hls;
       hls.loadSource(playSrc);
       hls.attachMedia(video);
@@ -941,7 +1020,12 @@ export function VideoPlayer({
           label: mediaTrackLabel(track, index, "Audio"),
         }));
         setAudioOptions(audios.length > 1 ? audios : []);
-        setAudioId(current.audioTrack);
+        if (audios.some((a) => a.id === resumeAudio)) {
+          current.audioTrack = resumeAudio;
+          setAudioId(resumeAudio);
+        } else {
+          setAudioId(current.audioTrack);
+        }
         if (current.subtitleTracks.length > 0) {
           setSubtitleOptions([
             { id: -1, label: t("playerSubtitlesOff") },
@@ -950,8 +1034,21 @@ export function VideoPlayer({
               label: mediaTrackLabel(track, index, "CC"),
             })),
           ]);
-          setSubtitleId(current.subtitleTrack);
-          current.subtitleDisplay = true;
+          if (
+            resumeSubtitle >= 0 &&
+            resumeSubtitle < current.subtitleTracks.length
+          ) {
+            current.subtitleTrack = resumeSubtitle;
+            current.subtitleDisplay = true;
+            setSubtitleId(resumeSubtitle);
+          } else if (resumeSubtitle < 0) {
+            current.subtitleTrack = -1;
+            current.subtitleDisplay = false;
+            setSubtitleId(-1);
+          } else {
+            setSubtitleId(current.subtitleTrack);
+            current.subtitleDisplay = current.subtitleTrack >= 0;
+          }
         } else {
           setSubtitleOptions([]);
           setSubtitleId(-1);
@@ -1303,6 +1400,7 @@ export function VideoPlayer({
       return;
     }
     setAudioId(id);
+    onTrackPrefs?.({ audioTrack: id, subtitleTrack: subtitleId });
     const hls = hlsRef.current;
     if (isServerHls) {
       const absolute = serverHlsOffset + (videoRef.current?.currentTime || 0);
@@ -1452,6 +1550,7 @@ export function VideoPlayer({
 
   const applySubtitle = (id: number) => {
     setSubtitleId(id);
+    onTrackPrefs?.({ audioTrack: audioId, subtitleTrack: id });
     const hls = hlsRef.current;
     const video = videoRef.current;
     if (isServerHls) {
@@ -1550,16 +1649,46 @@ export function VideoPlayer({
     setExternalUrl(null);
     setAwaitingTap(false);
     setHasStarted(false);
-    setServerHlsOffset(0);
+    setServerHlsOffset(resumeStart);
     setServerHlsAudio(0);
     setLoadPercent(0);
     setSourceIndex(0);
     setSeekingUi(false);
     seekingReloadRef.current = false;
+    resumeAppliedRef.current = false;
     setHoldPoster(poster);
+    setNextCountdown(null);
+    setNextCancelled(false);
     lastFailDetail.current = null;
     resetDebug();
     setReloadToken((n) => n + 1);
+  };
+
+  const startOver = () => {
+    onStartOver?.();
+    resumeAppliedRef.current = true;
+    setNextCountdown(null);
+    setNextCancelled(false);
+    if (remuxRef.current) {
+      void remuxRef.current.seek(0);
+      setCurrentTime(0);
+      return;
+    }
+    if (isServerHls) {
+      seekingReloadRef.current = true;
+      setHasStarted(false);
+      setLoadPercent(0);
+      setServerHlsOffset(0);
+      setCurrentTime(0);
+      setSeekingUi(true);
+      return;
+    }
+    const video = videoRef.current;
+    if (video) {
+      video.currentTime = 0;
+      setCurrentTime(0);
+      void video.play().catch(() => undefined);
+    }
   };
 
   const controlsEnabled = hasStarted && !seekingUi && !error;
@@ -1598,9 +1727,11 @@ export function VideoPlayer({
           setAudioOptions(
             audios.map((a) => ({ id: a.id, label: a.label || `Audio ${a.id + 1}` })),
           );
-          setAudioId((prev) =>
-            audios.some((a) => a.id === prev) ? prev : audios[0]!.id,
-          );
+          setAudioId((prev) => {
+            if (audios.some((a) => a.id === resumeAudio)) return resumeAudio;
+            if (audios.some((a) => a.id === prev)) return prev;
+            return audios[0]!.id;
+          });
         } else {
           setAudioOptions([]);
         }
@@ -1613,6 +1744,9 @@ export function VideoPlayer({
               label: s.label || `Subtitles ${s.id + 1}`,
             })),
           ]);
+          if (resumeSubtitle >= 0 && subs.some((s) => s.id === resumeSubtitle)) {
+            setSubtitleId(resumeSubtitle);
+          }
           // Don't warm-extract here — competing with HLS truncated the VTT
           // to ~15 minutes. Extract on demand when the user picks a track.
         } else {
@@ -1633,7 +1767,7 @@ export function VideoPlayer({
     return () => {
       cancelled = true;
     };
-  }, [isServerHls, src, t, pushDebug]);
+  }, [isServerHls, src, t, pushDebug, resumeAudio, resumeSubtitle]);
 
   const schedulePrefetch = useCallback(
     (absoluteSec: number) => {
@@ -1693,6 +1827,44 @@ export function VideoPlayer({
     ? scrubValue
     : serverHlsOffset + currentTime;
   const timelineMax = duration > 0 ? duration : Math.max(timelineValue, 1);
+
+  // Next-episode countdown: start when 30s remain.
+  useEffect(() => {
+    if (!nextEpisode || nextCancelled || kind !== "series" || duration <= 0) {
+      return;
+    }
+    const remaining = duration - timelineValue;
+    if (remaining > 30 || remaining <= 0) {
+      if (nextCountdown !== null) setNextCountdown(null);
+      return;
+    }
+    if (nextCountdown === null) setNextCountdown(10);
+  }, [nextEpisode, nextCancelled, kind, duration, timelineValue, nextCountdown]);
+
+  useEffect(() => {
+    if (nextCountdown === null || nextCountdown <= 0 || !nextEpisode) return;
+    const timer = window.setTimeout(() => {
+      setNextCountdown((c) => (c !== null && c > 1 ? c - 1 : 0));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [nextCountdown, nextEpisode]);
+
+  useEffect(() => {
+    if (nextCountdown === 0 && nextEpisode) {
+      router.push(nextEpisode.href);
+    }
+  }, [nextCountdown, nextEpisode, router]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !nextEpisode || nextCancelled) return;
+    const onEnded = () => {
+      if (!nextCancelled) router.push(nextEpisode.href);
+    };
+    video.addEventListener("ended", onEnded);
+    return () => video.removeEventListener("ended", onEnded);
+  }, [nextEpisode, nextCancelled, router]);
+
   const displayBufferRanges = bufferRanges.map((r) => ({
     start: r.start + serverHlsOffset,
     end: r.end + serverHlsOffset,
@@ -1912,6 +2084,31 @@ export function VideoPlayer({
         >
           {t("playerTapForSound")}
         </button>
+      ) : null}
+
+      {nextCountdown !== null && nextEpisode && !error ? (
+        <div className="absolute inset-x-0 bottom-32 z-40 flex justify-center px-4">
+          <div className="flex max-w-md flex-col items-center gap-3 rounded-2xl bg-black/85 px-5 py-4 text-center backdrop-blur">
+            <p className="text-sm text-white/80">{t("playerNextEpisodeIn")}</p>
+            <p className="line-clamp-2 text-base font-semibold text-white">
+              {nextEpisode.title}
+            </p>
+            <p className="font-mono text-3xl font-bold text-[var(--xp-accent)]">
+              {nextCountdown}
+            </p>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setNextCancelled(true);
+                setNextCountdown(null);
+              }}
+              className="cursor-pointer rounded-full bg-white/15 px-4 py-2 text-sm font-medium text-white"
+            >
+              {t("playerNextEpisodeCancel")}
+            </button>
+          </div>
+        </div>
       ) : null}
 
       {subtitleId >= 0 && !error ? (
@@ -2161,6 +2358,21 @@ export function VideoPlayer({
                 )}
               </button>
               <div className="relative flex items-center gap-2" ref={settingsMenuRef}>
+                {kind !== "live" && initialPosition >= 5 ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startOver();
+                      bumpChrome();
+                    }}
+                    disabled={!controlsEnabled}
+                    className="hidden cursor-pointer items-center gap-1.5 rounded-full bg-white/10 px-3 py-2 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-40 sm:inline-flex"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    {t("playerStartOver")}
+                  </button>
+                ) : null}
                 {canFavorite ? (
                   <button
                     type="button"

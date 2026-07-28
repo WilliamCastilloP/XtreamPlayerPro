@@ -16,6 +16,8 @@ export type MediaRowItem = {
   aspect?: "poster" | "live";
   kind?: FavoriteItem["kind"];
   streamId?: number | string;
+  /** When set, card shows continue-watching Play + Info overlays. */
+  playHref?: string;
 };
 
 /** Shared card slot class for live / movies / series rows */
@@ -135,6 +137,7 @@ export function MediaRow({
                 aspect={item.aspect}
                 kind={item.kind}
                 streamId={item.streamId}
+                playHref={item.playHref}
               />
             </div>
           ))}

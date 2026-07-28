@@ -8,8 +8,15 @@ import { TitleHero } from "@/components/catalog/TitleHero";
 import { Shimmer } from "@/components/catalog/Skeleton";
 import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
-import { isFavorite, toggleFavorite } from "@/lib/library/storage";
-import { backLabelForPath, safeInternalPath } from "@/lib/navigation/back";
+import { useLibrary } from "@/components/providers/LibraryProvider";
+import {
+  getContinueItem,
+  isContinueCompleted,
+  isFavorite,
+  toggleFavorite,
+} from "@/lib/library/storage";
+import { continueFromZeroHref, continueWatchHref } from "@/lib/library/continue";
+import { backLabelForPath, safeInternalPath, withBack } from "@/lib/navigation/back";
 import { getSeriesInfo, watchPath } from "@/lib/xtream/client";
 import { parseMediaDuration } from "@/lib/player/duration";
 import { parseGenres } from "@/lib/xtream/genres";
@@ -26,7 +33,7 @@ function SeriesDetailInner() {
   const [season, setSeason] = useState<string>("1");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [favTick, setFavTick] = useState(0);
+  const { continueItems } = useLibrary();
   const backHref = safeInternalPath(
     searchParams.get("back"),
     "/?section=series",
@@ -80,7 +87,24 @@ function SeriesDetailInner() {
   );
   const episodes: SeriesEpisode[] = info?.episodes?.[season] || [];
   const firstEpisode = episodes[0];
-  const playHref = firstEpisode
+  const detailBack = withBack(`/series/${params.id}`, backHref);
+
+  const seriesProgress = useMemo(() => {
+    return continueItems
+      .filter(
+        (item) =>
+          item.kind === "series" &&
+          String(item.seriesId ?? "") === String(params.id),
+      )
+      .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  }, [continueItems, params.id]);
+
+  const canResumeSeries =
+    seriesProgress &&
+    (seriesProgress.position ?? 0) >= 5 &&
+    !isContinueCompleted(seriesProgress);
+
+  const defaultPlayHref = firstEpisode
     ? watchPath("series", firstEpisode.id, {
         title: `${title} · ${firstEpisode.title || `Episode ${firstEpisode.episode_num}`}`,
         ext: firstEpisode.container_extension || "mp4",
@@ -91,11 +115,17 @@ function SeriesDetailInner() {
       })
     : `/series/${params.id}`;
 
+  const playHref = canResumeSeries
+    ? continueWatchHref(seriesProgress)
+    : defaultPlayHref;
+  const secondaryPlayHref = canResumeSeries
+    ? continueFromZeroHref(seriesProgress)
+    : undefined;
+
   const fav = useMemo(() => {
     if (!activePlaylist) return false;
-    void favTick;
     return isFavorite(activePlaylist.id, "series", params.id);
-  }, [activePlaylist, params.id, favTick]);
+  }, [activePlaylist, params.id, continueItems]);
 
   if (loading) {
     return (
@@ -114,6 +144,7 @@ function SeriesDetailInner() {
 
   return (
     <TitleHero
+      layout="series"
       backHref={backHref}
       backLabel={backLabel}
       title={title}
@@ -124,10 +155,14 @@ function SeriesDetailInner() {
       image={image}
       playHref={playHref}
       playLabel={
-        firstEpisode
-          ? `${t("play")} S${season} E${firstEpisode.episode_num ?? 1}`
-          : t("play")
+        canResumeSeries
+          ? t("episodeContinue")
+          : firstEpisode
+            ? `${t("play")} S${season} E${firstEpisode.episode_num ?? 1}`
+            : t("play")
       }
+      secondaryPlayHref={secondaryPlayHref}
+      secondaryPlayLabel={t("episodeStartOver")}
       favorited={fav}
       onToggleFavorite={() => {
         if (!activePlaylist) return;
@@ -137,39 +172,38 @@ function SeriesDetailInner() {
           image,
           streamId: params.id,
         });
-        setFavTick((n) => n + 1);
       }}
     >
-      <div className="space-y-4 px-4 pb-5 pt-3 md:px-8">
+      <div className="space-y-4 px-4 pb-8 pt-2 md:px-8">
         {info?.info?.cast || info?.info?.director || genreLabel ? (
-          <dl className="grid max-w-3xl gap-x-6 gap-y-2.5 text-sm sm:grid-cols-2">
+          <dl className="grid max-w-3xl gap-x-6 gap-y-2.5 rounded-2xl border border-white/10 bg-black/35 p-4 text-sm text-white backdrop-blur-md sm:grid-cols-2">
             {genreLabel ? (
               <div>
-                <dt className="text-[var(--xp-muted)]">{t("metaGenre")}</dt>
+                <dt className="text-white/55">{t("metaGenre")}</dt>
                 <dd className="m-0">{genreLabel}</dd>
               </div>
             ) : null}
             {info?.info?.releaseDate ? (
               <div>
-                <dt className="text-[var(--xp-muted)]">{t("metaReleased")}</dt>
+                <dt className="text-white/55">{t("metaReleased")}</dt>
                 <dd className="m-0">{info.info.releaseDate}</dd>
               </div>
             ) : null}
             {ratingLabel ? (
               <div>
-                <dt className="text-[var(--xp-muted)]">{t("metaRating")}</dt>
+                <dt className="text-white/55">{t("metaRating")}</dt>
                 <dd className="m-0">★ {ratingLabel}</dd>
               </div>
             ) : null}
             {info?.info?.director ? (
               <div className="sm:col-span-2">
-                <dt className="text-[var(--xp-muted)]">{t("metaDirector")}</dt>
+                <dt className="text-white/55">{t("metaDirector")}</dt>
                 <dd className="m-0">{info.info.director}</dd>
               </div>
             ) : null}
             {info?.info?.cast ? (
               <div className="sm:col-span-2">
-                <dt className="text-[var(--xp-muted)]">{t("metaCast")}</dt>
+                <dt className="text-white/55">{t("metaCast")}</dt>
                 <dd className="m-0 leading-relaxed">{info.info.cast}</dd>
               </div>
             ) : null}
@@ -182,10 +216,10 @@ function SeriesDetailInner() {
               key={key}
               type="button"
               onClick={() => setSeason(key)}
-              className={`shrink-0 cursor-pointer rounded-full px-4 py-2 text-sm ${
+              className={`shrink-0 cursor-pointer rounded-full px-4 py-2 text-sm backdrop-blur-md ${
                 season === key
                   ? "bg-[var(--xp-accent)] text-[var(--xp-ink)]"
-                  : "bg-[var(--xp-surface)] text-[var(--xp-muted)]"
+                  : "border border-white/15 bg-black/40 text-white/80"
               }`}
             >
               Season {key}
@@ -197,41 +231,81 @@ function SeriesDetailInner() {
           {episodes.map((ep) => {
             const epTitle = ep.title || `Episode ${ep.episode_num ?? ep.id}`;
             const ext = ep.container_extension || "mp4";
+            const saved = activePlaylist
+              ? getContinueItem(activePlaylist.id, "series", ep.id)
+              : undefined;
+            const completed = saved ? isContinueCompleted(saved) : false;
+            const position = saved?.position ?? 0;
+            const duration = saved?.duration ?? 0;
+            const pct =
+              duration > 0 ? Math.min(100, Math.round((position / duration) * 100)) : 0;
+            const canResumeEp = saved && position >= 5 && !completed;
+            const watchBase = watchPath("series", ep.id, {
+              title: `${title} · ${epTitle}`,
+              ext,
+              image: ep.info?.movie_image || image || "",
+              seriesId: params.id,
+              season,
+              episode: String(ep.episode_num ?? ""),
+              ...(parseMediaDuration(ep.info?.duration)
+                ? {
+                    duration: String(parseMediaDuration(ep.info?.duration)),
+                  }
+                : {}),
+            });
+            const watchHref = withBack(
+              canResumeEp && saved ? continueWatchHref(saved) : watchBase,
+              detailBack,
+            );
+            const startOverHref = saved
+              ? withBack(continueFromZeroHref(saved), detailBack)
+              : withBack(`${watchBase}${watchBase.includes("?") ? "&" : "?"}t=0`, detailBack);
+
             return (
               <li key={ep.id}>
-                <Link
-                  href={watchPath("series", ep.id, {
-                    title: `${title} · ${epTitle}`,
-                    ext,
-                    image: ep.info?.movie_image || image || "",
-                    seriesId: params.id,
-                    season,
-                    episode: String(ep.episode_num ?? ""),
-                    ...(parseMediaDuration(ep.info?.duration)
-                      ? {
-                          duration: String(
-                            parseMediaDuration(ep.info?.duration),
-                          ),
-                        }
-                      : {}),
-                  })}
-                  className="flex items-center gap-3 rounded-xl bg-[var(--xp-surface)] px-3 py-3 transition hover:bg-[var(--xp-surface-2)]"
-                >
-                  <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--xp-accent)] text-[var(--xp-ink)]">
-                    <Play className="h-4 w-4 fill-current" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium">{epTitle}</p>
-                    <p className="truncate text-xs text-[var(--xp-muted)]">
-                      {ep.info?.duration || `S${season}E${ep.episode_num}`}
-                    </p>
+                <div className="rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-white backdrop-blur-md transition hover:bg-black/55">
+                  <div className="flex items-center gap-3">
+                    <Link
+                      href={watchHref}
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--xp-accent)] text-[var(--xp-ink)]"
+                    >
+                      <Play className="h-4 w-4 fill-current" />
+                    </Link>
+                    <div className="min-w-0 flex-1">
+                      <Link href={watchHref} className="block min-w-0">
+                        <p className="truncate font-medium">{epTitle}</p>
+                        <p className="truncate text-xs text-white/60">
+                          {completed
+                            ? t("episodeCompleted")
+                            : pct > 0
+                              ? t("episodeProgress", { pct: String(pct) })
+                              : ep.info?.duration || `S${season}E${ep.episode_num}`}
+                        </p>
+                      </Link>
+                      {pct > 0 && !completed ? (
+                        <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/20">
+                          <div
+                            className="h-full rounded-full bg-[var(--xp-accent)]"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                    {canResumeEp ? (
+                      <Link
+                        href={startOverHref}
+                        className="shrink-0 text-xs font-semibold text-[var(--xp-accent)] hover:underline"
+                      >
+                        {t("episodeStartOver")}
+                      </Link>
+                    ) : null}
                   </div>
-                </Link>
+                </div>
               </li>
             );
           })}
           {!episodes.length ? (
-            <li className="text-sm text-[var(--xp-muted)]">
+            <li className="text-sm text-white/60">
               No episodes in this season.
             </li>
           ) : null}

@@ -1,15 +1,17 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { BrowseRails, type BrowseKind } from "@/components/catalog/BrowseRails";
 import { HomeGenreBar } from "@/components/catalog/HomeGenreBar";
 import { HeroBanner } from "@/components/catalog/HeroBanner";
 import { MediaRow, type MediaRowItem } from "@/components/catalog/MediaRow";
 import { PosterSkeletonRow } from "@/components/catalog/Skeleton";
 import { useLocale } from "@/components/providers/LocaleProvider";
+import { useLibrary } from "@/components/providers/LibraryProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
-import { listContinue, listFavorites } from "@/lib/library/storage";
+import { continueDetailHref, continueWatchHref } from "@/lib/library/continue";
+import { currentBackPath, withBack } from "@/lib/navigation/back";
 import {
   loadLiveByCategory,
   loadLiveCategories,
@@ -31,14 +33,13 @@ function parseSection(value: string | null): Section | null {
 
 function HomeInner() {
   const { credentials, activePlaylist } = usePlaylists();
+  const { continueItems: libraryContinue, favorites, catalogVersion } = useLibrary();
   const { t } = useLocale();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
+  const backPath = currentBackPath(pathname, searchParams.toString());
   /** null = overview (a bit of everything). Driven by ?section= */
   const section = parseSection(searchParams.get("section"));
-  const [continueItems, setContinueItems] = useState<MediaRowItem[]>([]);
-  const [favLive, setFavLive] = useState<MediaRowItem[]>([]);
-  const [favMovies, setFavMovies] = useState<MediaRowItem[]>([]);
-  const [favSeries, setFavSeries] = useState<MediaRowItem[]>([]);
   const [featuredLive, setFeaturedLive] = useState<MediaRowItem[]>([]);
   const [featuredMovies, setFeaturedMovies] = useState<MediaRowItem[]>([]);
   const [featuredSeries, setFeaturedSeries] = useState<MediaRowItem[]>([]);
@@ -53,61 +54,6 @@ function HomeInner() {
       setLoadingHighlights(true);
       setError(null);
       try {
-        const cont = listContinue(activePlaylist!.id)
-          .slice(0, 16)
-          .map((item) => ({
-            key: item.id,
-            href:
-              item.kind === "series"
-                ? `/series/${item.seriesId ?? item.streamId}`
-                : item.kind === "movie"
-                  ? `/movies/${item.streamId}`
-                  : `/live/${item.streamId}`,
-            title: catalogTitle({ name: item.title }),
-            image: item.image,
-            aspect:
-              item.kind === "live" ? ("live" as const) : ("poster" as const),
-            kind: item.kind,
-            streamId: item.seriesId ?? item.streamId,
-          }));
-
-        const favorites = listFavorites(activePlaylist!.id);
-        const liveFavs = favorites
-          .filter((f) => f.kind === "live")
-          .slice(0, 18)
-          .map((f) => ({
-            key: f.id,
-            href: `/live/${f.streamId}`,
-            title: catalogTitle({ name: f.title }),
-            image: f.image,
-            aspect: "live" as const,
-            kind: "live" as const,
-            streamId: f.streamId,
-          }));
-        const movieFavs = favorites
-          .filter((f) => f.kind === "movie")
-          .slice(0, 18)
-          .map((f) => ({
-            key: f.id,
-            href: `/movies/${f.streamId}`,
-            title: catalogTitle({ name: f.title }),
-            image: f.image,
-            kind: "movie" as const,
-            streamId: f.streamId,
-          }));
-        const seriesFavs = favorites
-          .filter((f) => f.kind === "series")
-          .slice(0, 18)
-          .map((f) => ({
-            key: f.id,
-            href: `/series/${f.streamId}`,
-            title: catalogTitle({ name: f.title }),
-            image: f.image,
-            kind: "series" as const,
-            streamId: f.streamId,
-          }));
-
-        // Lightweight: only the FIRST category of each type for highlights
         const [liveCats, vodCats, seriesCats] = await Promise.all([
           loadLiveCategories(credentials!),
           loadVodCategories(credentials!),
@@ -128,14 +74,10 @@ function HomeInner() {
 
         if (cancelled) return;
 
-        setContinueItems(cont);
-        setFavLive(liveFavs);
-        setFavMovies(movieFavs);
-        setFavSeries(seriesFavs);
         setFeaturedLive(
           liveSlice.slice(0, 16).map((s) => ({
             key: `feat-live-${s.stream_id}`,
-            href: `/live/${s.stream_id}`,
+            href: withBack(`/live/${s.stream_id}`, backPath),
             title: catalogTitle(s),
             image: s.stream_icon || undefined,
             aspect: "live" as const,
@@ -146,7 +88,7 @@ function HomeInner() {
         setFeaturedMovies(
           vodSlice.slice(0, 16).map((s) => ({
             key: `feat-vod-${s.stream_id}`,
-            href: `/movies/${s.stream_id}`,
+            href: withBack(`/movies/${s.stream_id}`, backPath),
             title: catalogTitle(s),
             image: s.stream_icon || undefined,
             subtitle: formatRatingStar(s.rating),
@@ -157,7 +99,7 @@ function HomeInner() {
         setFeaturedSeries(
           seriesSlice.slice(0, 16).map((s) => ({
             key: `feat-series-${s.series_id}`,
-            href: `/series/${s.series_id}`,
+            href: withBack(`/series/${s.series_id}`, backPath),
             title: catalogTitle(s),
             image: s.cover || undefined,
             subtitle: formatRatingStar(s.rating),
@@ -178,71 +120,71 @@ function HomeInner() {
     return () => {
       cancelled = true;
     };
-  }, [credentials, activePlaylist]);
+  }, [credentials, activePlaylist, catalogVersion, backPath]);
 
-  // Re-read local library when switching sections so new favorites appear immediately.
-  useEffect(() => {
-    if (!activePlaylist) return;
-    const cont = listContinue(activePlaylist.id)
-      .slice(0, 16)
-      .map((item) => ({
+  const continueItems = useMemo(
+    () =>
+      libraryContinue.slice(0, 16).map((item) => ({
         key: item.id,
-        href:
-          item.kind === "series"
-            ? `/series/${item.seriesId ?? item.streamId}`
-            : item.kind === "movie"
-              ? `/movies/${item.streamId}`
-              : `/live/${item.streamId}`,
+        href: continueDetailHref(item, backPath),
+        playHref: continueWatchHref(item),
         title: catalogTitle({ name: item.title }),
         image: item.image,
-        aspect:
-          item.kind === "live" ? ("live" as const) : ("poster" as const),
+        aspect: item.kind === "live" ? ("live" as const) : ("poster" as const),
         kind: item.kind,
         streamId: item.seriesId ?? item.streamId,
-      }));
-    const favorites = listFavorites(activePlaylist.id);
-    setContinueItems(cont);
-    setFavLive(
+      })),
+    [libraryContinue, backPath],
+  );
+
+  const favLive = useMemo(
+    () =>
       favorites
         .filter((f) => f.kind === "live")
         .slice(0, 18)
         .map((f) => ({
           key: f.id,
-          href: `/live/${f.streamId}`,
+          href: withBack(`/live/${f.streamId}`, backPath),
           title: catalogTitle({ name: f.title }),
           image: f.image,
           aspect: "live" as const,
           kind: "live" as const,
           streamId: f.streamId,
         })),
-    );
-    setFavMovies(
+    [favorites, backPath],
+  );
+
+  const favMovies = useMemo(
+    () =>
       favorites
         .filter((f) => f.kind === "movie")
         .slice(0, 18)
         .map((f) => ({
           key: f.id,
-          href: `/movies/${f.streamId}`,
+          href: withBack(`/movies/${f.streamId}`, backPath),
           title: catalogTitle({ name: f.title }),
           image: f.image,
           kind: "movie" as const,
           streamId: f.streamId,
         })),
-    );
-    setFavSeries(
+    [favorites, backPath],
+  );
+
+  const favSeries = useMemo(
+    () =>
       favorites
         .filter((f) => f.kind === "series")
         .slice(0, 18)
         .map((f) => ({
           key: f.id,
-          href: `/series/${f.streamId}`,
+          href: withBack(`/series/${f.streamId}`, backPath),
           title: catalogTitle({ name: f.title }),
           image: f.image,
           kind: "series" as const,
           streamId: f.streamId,
         })),
-    );
-  }, [section, activePlaylist]);
+    [favorites, backPath],
+  );
 
   const hero =
     continueItems[0] ||
@@ -256,11 +198,11 @@ function HomeInner() {
 
   const sectionContinue =
     section === "live"
-      ? continueItems.filter((item) => item.href.startsWith("/live/"))
+      ? continueItems.filter((item) => item.kind === "live")
       : section === "movies"
-        ? continueItems.filter((item) => item.href.startsWith("/movies/"))
+        ? continueItems.filter((item) => item.kind === "movie")
         : section === "series"
-          ? continueItems.filter((item) => item.href.startsWith("/series/"))
+          ? continueItems.filter((item) => item.kind === "series")
           : [];
 
   const sectionFavorites =
@@ -302,6 +244,19 @@ function HomeInner() {
 
   const renderHero = (item: MediaRowItem | null) => {
     if (!item) return null;
+    const detailHref = item.href;
+    const playHref =
+      item.playHref ||
+      (item.href.startsWith("/movies/")
+        ? watchPath(
+            "movie",
+            item.streamId ?? (item.href.split("/").pop() || ""),
+            {
+              title: item.title,
+              image: item.image || "",
+            },
+          )
+        : item.href);
     return (
       <HeroBanner
         underHeader
@@ -310,15 +265,8 @@ function HomeInner() {
         title={item.title}
         subtitle={t("homeHeroSubtitle")}
         image={item.image}
-        playHref={
-          item.href.startsWith("/movies/")
-            ? watchPath("movie", item.href.split("/").pop() || "", {
-                title: item.title,
-                image: item.image || "",
-              })
-            : item.href
-        }
-        infoHref={item.href.startsWith("/watch") ? undefined : item.href}
+        playHref={playHref}
+        infoHref={detailHref}
       />
     );
   };

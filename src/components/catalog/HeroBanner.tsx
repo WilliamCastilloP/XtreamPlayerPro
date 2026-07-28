@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Info, Play } from "lucide-react";
 import { PosterPlaceholder } from "@/components/brand/BrandMark";
+import { useLocale } from "@/components/providers/LocaleProvider";
 
 type Props = {
   title: string;
@@ -31,6 +32,7 @@ export function HeroBanner({
   underHeader = false,
   cropLetterbox = false,
 }: Props) {
+  const { t } = useLocale();
   const [imgFailed, setImgFailed] = useState(false);
   const src = image?.trim();
   const showImage = Boolean(src) && !imgFailed;
@@ -67,6 +69,7 @@ export function HeroBanner({
         {underHeader ? (
           <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-transparent" />
         ) : null}
+
         <div
           className={`absolute inset-x-0 bottom-0 space-y-3 p-4 sm:p-6 md:max-w-3xl lg:max-w-4xl ${
             underHeader ? "px-4 md:px-6 lg:px-8 xl:px-12" : ""
@@ -89,12 +92,12 @@ export function HeroBanner({
           <div className="flex flex-wrap gap-2 pt-1">
             <Link href={playHref} className="xp-btn xp-btn-primary min-w-[7.5rem]">
               <Play className="h-4 w-4 fill-current" />
-              Play
+              {t("play")}
             </Link>
             {infoHref ? (
               <Link href={infoHref} className="xp-btn xp-btn-ghost min-w-[7.5rem]">
                 <Info className="h-4 w-4" />
-                Details
+                {t("details")}
               </Link>
             ) : null}
           </div>

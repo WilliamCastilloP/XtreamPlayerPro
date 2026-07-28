@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Figtree, Syne } from "next/font/google";
 import { LocaleProvider } from "@/components/providers/LocaleProvider";
+import { LibraryProvider } from "@/components/providers/LibraryProvider";
 import { PlaylistProvider } from "@/components/providers/PlaylistProvider";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import "./globals.css";
@@ -61,7 +62,9 @@ export default function RootLayout({
       <body className="min-h-dvh antialiased">
         <ThemeProvider>
           <LocaleProvider>
-            <PlaylistProvider>{children}</PlaylistProvider>
+            <PlaylistProvider>
+              <LibraryProvider>{children}</LibraryProvider>
+            </PlaylistProvider>
           </LocaleProvider>
         </ThemeProvider>
       </body>

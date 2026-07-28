@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { X } from "lucide-react";
 import { PosterCard } from "@/components/catalog/PosterCard";
 import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
@@ -10,8 +11,10 @@ import {
   loadAllSeries,
   loadAllVodStreams,
 } from "@/lib/xtream/catalog-cache";
+import { CATALOG_REFRESH_EVENT } from "@/lib/library/storage";
 import type { LiveStream, SeriesItem, VodStream } from "@/lib/xtream/types";
 import { catalogTitle } from "@/lib/xtream/title";
+import { withBack } from "@/lib/navigation/back";
 
 type Filter = "live" | "movies" | "series";
 
@@ -27,11 +30,6 @@ function searchHref(query: string, filter: Filter | null): string {
   if (filter) params.set("f", filter);
   const qs = params.toString();
   return qs ? `/search?${qs}` : "/search";
-}
-
-function withBack(href: string, back: string): string {
-  const sep = href.includes("?") ? "&" : "?";
-  return `${href}${sep}back=${encodeURIComponent(back)}`;
 }
 
 function SearchInner() {
@@ -67,7 +65,13 @@ function SearchInner() {
   }, [query, filter, qParam, fParam, router]);
 
   useEffect(() => {
-    if (!credentials) return;
+    if (!credentials) {
+      setReadyCatalog(false);
+      setLive([]);
+      setMovies([]);
+      setSeries([]);
+      return;
+    }
     const q = query.trim();
     if (q.length < 2 || readyCatalog) return;
 
@@ -100,7 +104,28 @@ function SearchInner() {
     };
   }, [credentials, query, readyCatalog]);
 
+  useEffect(() => {
+    const reset = () => {
+      setReadyCatalog(false);
+      setLive([]);
+      setMovies([]);
+      setSeries([]);
+    };
+    window.addEventListener(CATALOG_REFRESH_EVENT, reset);
+    return () => window.removeEventListener(CATALOG_REFRESH_EVENT, reset);
+  }, []);
+
   const backTarget = searchHref(query, filter);
+
+  const closeSearch = () => {
+    setQuery("");
+    setFilter(null);
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      router.back();
+    } else {
+      router.push("/");
+    }
+  };
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -247,13 +272,34 @@ function SearchInner() {
           {t("searchPlaceholder")}
         </p>
       </div>
-      <input
-        className="xp-field"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder={t("searchPlaceholder")}
-        autoFocus
-      />
+      <div className="flex items-center gap-2">
+        <div className="relative min-w-0 flex-1">
+          <input
+            className={`xp-field w-full ${query ? "pr-10" : ""}`}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("searchPlaceholder")}
+            autoFocus
+          />
+          {query ? (
+            <button
+              type="button"
+              aria-label={t("searchClearInput")}
+              onClick={() => setQuery("")}
+              className="absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full text-[var(--xp-muted)] hover:text-[var(--xp-text)]"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          onClick={closeSearch}
+          className="shrink-0 cursor-pointer rounded-full px-3 py-2 text-sm font-medium text-[var(--xp-accent)] hover:underline"
+        >
+          {t("searchCancel")}
+        </button>
+      </div>
       <div className="flex gap-2 overflow-x-auto scrollbar-none">
         {chips.map((chip) => (
           <button

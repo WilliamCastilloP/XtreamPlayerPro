@@ -6,7 +6,14 @@ import { TitleHero } from "@/components/catalog/TitleHero";
 import { Shimmer } from "@/components/catalog/Skeleton";
 import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
-import { isFavorite, toggleFavorite } from "@/lib/library/storage";
+import { useLibrary } from "@/components/providers/LibraryProvider";
+import {
+  getContinueItem,
+  isContinueCompleted,
+  isFavorite,
+  toggleFavorite,
+} from "@/lib/library/storage";
+import { continueFromZeroHref, continueWatchHref } from "@/lib/library/continue";
 import { backLabelForPath, safeInternalPath } from "@/lib/navigation/back";
 import { getVodInfo, watchPath } from "@/lib/xtream/client";
 import { parseMediaDuration } from "@/lib/player/duration";
@@ -23,7 +30,7 @@ function MovieDetailInner() {
   const [info, setInfo] = useState<VodInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [favTick, setFavTick] = useState(0);
+  const { continueItems } = useLibrary();
   const backHref = safeInternalPath(
     searchParams.get("back"),
     "/?section=movies",
@@ -84,9 +91,48 @@ function MovieDetailInner() {
 
   const fav = useMemo(() => {
     if (!activePlaylist) return false;
-    void favTick;
     return isFavorite(activePlaylist.id, "movie", streamId);
-  }, [activePlaylist, streamId, favTick]);
+  }, [activePlaylist, streamId, continueItems]);
+
+  const saved = useMemo(() => {
+    const byId = continueItems.find(
+      (item) =>
+        item.kind === "movie" &&
+        (String(item.streamId) === String(params.id) ||
+          String(item.streamId) === String(streamId)),
+    );
+    if (byId) return byId;
+    if (!activePlaylist) return undefined;
+    return (
+      getContinueItem(activePlaylist.id, "movie", streamId) ||
+      getContinueItem(activePlaylist.id, "movie", params.id)
+    );
+  }, [activePlaylist, streamId, params.id, continueItems]);
+
+  const position = saved?.position ?? 0;
+  const catalogDuration = parseMediaDuration(info?.info?.duration) || 0;
+  const duration = saved?.duration && saved.duration > 0 ? saved.duration : catalogDuration;
+  const completed = saved ? isContinueCompleted(saved) : false;
+  const progressPct =
+    duration > 0 && position > 0
+      ? Math.min(100, Math.round((position / duration) * 100))
+      : 0;
+  const canResume = Boolean(saved && position >= 5 && !completed);
+
+  const defaultPlayHref = watchPath("movie", streamId, {
+    title,
+    ext: extension,
+    image: image || "",
+    ...(parseMediaDuration(info?.info?.duration)
+      ? {
+          duration: String(parseMediaDuration(info?.info?.duration)),
+        }
+      : {}),
+  });
+
+  const playHref = canResume && saved ? continueWatchHref(saved) : defaultPlayHref;
+  const secondaryPlayHref =
+    canResume && saved ? continueFromZeroHref(saved) : undefined;
 
   if (loading) {
     return (
@@ -102,23 +148,25 @@ function MovieDetailInner() {
 
   return (
     <TitleHero
+      layout="movie"
       backHref={backHref}
       backLabel={backLabel}
       title={title}
       meta={meta}
       plot={info?.info?.plot || undefined}
       image={image}
-      playHref={watchPath("movie", streamId, {
-        title,
-        ext: extension,
-        image: image || "",
-        ...(parseMediaDuration(info?.info?.duration)
-          ? {
-              duration: String(parseMediaDuration(info?.info?.duration)),
-            }
-          : {}),
-      })}
-      playLabel={t("play")}
+      playHref={playHref}
+      playLabel={canResume ? t("episodeContinue") : t("play")}
+      secondaryPlayHref={secondaryPlayHref}
+      secondaryPlayLabel={t("episodeStartOver")}
+      progressPct={progressPct > 0 ? progressPct : undefined}
+      progressLabel={
+        completed
+          ? t("episodeCompleted")
+          : progressPct > 0
+            ? t("episodeProgress", { pct: String(progressPct) })
+            : undefined
+      }
       favorited={fav}
       onToggleFavorite={() => {
         if (!activePlaylist) return;
@@ -128,7 +176,6 @@ function MovieDetailInner() {
           image,
           streamId,
         });
-        setFavTick((n) => n + 1);
       }}
     >
       {      info?.info?.cast ||
@@ -138,41 +185,41 @@ function MovieDetailInner() {
       info?.info?.releasedate ||
       ratingLabel ||
       info?.info?.youtube_trailer ? (
-        <div className="space-y-4 px-4 pb-5 pt-3 md:px-8">
-          <dl className="grid max-w-3xl gap-x-6 gap-y-2.5 text-sm sm:grid-cols-2">
+        <div className="space-y-4 px-4 pb-5 pt-2 md:px-8">
+          <dl className="grid max-w-3xl gap-x-6 gap-y-2.5 rounded-2xl border border-white/10 bg-black/35 p-4 text-sm text-white backdrop-blur-md sm:grid-cols-2">
             {genreLabel ? (
               <div>
-                <dt className="text-[var(--xp-muted)]">{t("metaGenre")}</dt>
+                <dt className="text-white/55">{t("metaGenre")}</dt>
                 <dd className="m-0">{genreLabel}</dd>
               </div>
             ) : null}
             {info?.info?.releasedate ? (
               <div>
-                <dt className="text-[var(--xp-muted)]">{t("metaReleased")}</dt>
+                <dt className="text-white/55">{t("metaReleased")}</dt>
                 <dd className="m-0">{info.info.releasedate}</dd>
               </div>
             ) : null}
             {info?.info?.duration ? (
               <div>
-                <dt className="text-[var(--xp-muted)]">{t("metaDuration")}</dt>
+                <dt className="text-white/55">{t("metaDuration")}</dt>
                 <dd className="m-0">{info.info.duration}</dd>
               </div>
             ) : null}
             {ratingLabel ? (
               <div>
-                <dt className="text-[var(--xp-muted)]">{t("metaRating")}</dt>
+                <dt className="text-white/55">{t("metaRating")}</dt>
                 <dd className="m-0">★ {ratingLabel}</dd>
               </div>
             ) : null}
             {info?.info?.director ? (
               <div className="sm:col-span-2">
-                <dt className="text-[var(--xp-muted)]">{t("metaDirector")}</dt>
+                <dt className="text-white/55">{t("metaDirector")}</dt>
                 <dd className="m-0">{info.info.director}</dd>
               </div>
             ) : null}
             {info?.info?.cast ? (
               <div className="sm:col-span-2">
-                <dt className="text-[var(--xp-muted)]">{t("metaCast")}</dt>
+                <dt className="text-white/55">{t("metaCast")}</dt>
                 <dd className="m-0 leading-relaxed">{info.info.cast}</dd>
               </div>
             ) : null}

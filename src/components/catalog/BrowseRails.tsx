@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { HeroBanner } from "@/components/catalog/HeroBanner";
 import {
   MediaRow,
@@ -9,6 +10,7 @@ import {
 } from "@/components/catalog/MediaRow";
 import { PosterSkeletonRow } from "@/components/catalog/Skeleton";
 import { useLocale } from "@/components/providers/LocaleProvider";
+import { useLibrary } from "@/components/providers/LibraryProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import {
   groupByCategory,
@@ -22,6 +24,7 @@ import {
   type VodStream,
 } from "@/lib/xtream/catalog-cache";
 import { watchPath } from "@/lib/xtream/client";
+import { currentBackPath, withBack } from "@/lib/navigation/back";
 import { formatRatingStar } from "@/lib/xtream/rating";
 import { catalogTitle } from "@/lib/xtream/title";
 
@@ -47,12 +50,20 @@ type Rail = {
 const PREVIEW_LIMIT = 6;
 const PAINT_BATCH = 8;
 
-function categoryHref(kind: BrowseKind, categoryId: string, name: string) {
+function categoryHref(
+  kind: BrowseKind,
+  categoryId: string,
+  name: string,
+  back: string,
+) {
   const params = new URLSearchParams({ name });
-  return `/browse/${kind}/${encodeURIComponent(categoryId)}?${params.toString()}`;
+  return withBack(
+    `/browse/${kind}/${encodeURIComponent(categoryId)}?${params.toString()}`,
+    back,
+  );
 }
 
-function mapLiveItems(streams: LiveStream[]): MediaRowItem[] {
+function mapLiveItems(streams: LiveStream[], back: string): MediaRowItem[] {
   const seen = new Set<number | string>();
   const out: MediaRowItem[] = [];
   for (const s of streams) {
@@ -60,7 +71,7 @@ function mapLiveItems(streams: LiveStream[]): MediaRowItem[] {
     seen.add(s.stream_id);
     out.push({
       key: `live-${s.stream_id}`,
-      href: `/live/${s.stream_id}`,
+      href: withBack(`/live/${s.stream_id}`, back),
       title: catalogTitle(s),
       image: s.stream_icon || undefined,
       aspect: "live" as const,
@@ -71,7 +82,7 @@ function mapLiveItems(streams: LiveStream[]): MediaRowItem[] {
   return out;
 }
 
-function mapVodItems(streams: VodStream[]): MediaRowItem[] {
+function mapVodItems(streams: VodStream[], back: string): MediaRowItem[] {
   const seen = new Set<number | string>();
   const out: MediaRowItem[] = [];
   for (const s of streams) {
@@ -79,7 +90,7 @@ function mapVodItems(streams: VodStream[]): MediaRowItem[] {
     seen.add(s.stream_id);
     out.push({
       key: `vod-${s.stream_id}`,
-      href: `/movies/${s.stream_id}`,
+      href: withBack(`/movies/${s.stream_id}`, back),
       title: catalogTitle(s),
       image: s.stream_icon || undefined,
       subtitle: formatRatingStar(s.rating),
@@ -90,7 +101,7 @@ function mapVodItems(streams: VodStream[]): MediaRowItem[] {
   return out;
 }
 
-function mapSeriesItems(series: SeriesItem[]): MediaRowItem[] {
+function mapSeriesItems(series: SeriesItem[], back: string): MediaRowItem[] {
   const seen = new Set<number | string>();
   const out: MediaRowItem[] = [];
   for (const s of series) {
@@ -98,7 +109,7 @@ function mapSeriesItems(series: SeriesItem[]): MediaRowItem[] {
     seen.add(s.series_id);
     out.push({
       key: `series-${s.series_id}`,
-      href: `/series/${s.series_id}`,
+      href: withBack(`/series/${s.series_id}`, back),
       title: catalogTitle(s),
       image: s.cover || undefined,
       subtitle: formatRatingStar(s.rating),
@@ -117,7 +128,11 @@ export function BrowseRails({
   hideHero = false,
 }: Props) {
   const { credentials } = usePlaylists();
+  const { catalogVersion } = useLibrary();
   const { t } = useLocale();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const backPath = currentBackPath(pathname, searchParams.toString());
   const [rails, setRails] = useState<Rail[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -151,8 +166,9 @@ export function BrowseRails({
               kind,
               rail.category.category_id,
               rail.category.category_name,
+              backPath,
             ),
-            items: mapLiveItems(rail.items.slice(0, PREVIEW_LIMIT)),
+            items: mapLiveItems(rail.items.slice(0, PREVIEW_LIMIT), backPath),
           }));
         } else {
           const streams =
@@ -168,14 +184,16 @@ export function BrowseRails({
             id: rail.genre,
             name: rail.genre,
             totalCount: rail.items.length,
-            href: categoryHref(kind, rail.genre, rail.genre),
+            href: categoryHref(kind, rail.genre, rail.genre, backPath),
             items:
               kind === "movies"
                 ? mapVodItems(
                     (rail.items as VodStream[]).slice(0, PREVIEW_LIMIT),
+                    backPath,
                   )
                 : mapSeriesItems(
                     (rail.items as SeriesItem[]).slice(0, PREVIEW_LIMIT),
+                    backPath,
                   ),
           }));
         }
@@ -211,7 +229,7 @@ export function BrowseRails({
     return () => {
       cancelled = true;
     };
-  }, [credentials, kind]);
+  }, [credentials, kind, backPath, catalogVersion]);
 
   const hero = rails[0]?.items[0];
   const isLive = kind === "live";

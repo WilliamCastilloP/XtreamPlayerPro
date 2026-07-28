@@ -17,6 +17,18 @@ export function safeInternalPath(
   return decoded;
 }
 
+/** Append a safe ?back= query param to a detail href. */
+export function withBack(href: string, back: string): string {
+  const sep = href.includes("?") ? "&" : "?";
+  return `${href}${sep}back=${encodeURIComponent(back)}`;
+}
+
+/** Current pathname + search for use as ?back=. */
+export function currentBackPath(pathname: string, search = ""): string {
+  const path = search ? `${pathname}?${search.replace(/^\?/, "")}` : pathname;
+  return safeInternalPath(path, pathname || "/");
+}
+
 type BackLabels = {
   home: string;
   search: string;

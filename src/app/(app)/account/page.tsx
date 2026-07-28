@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { RefreshCw } from "lucide-react";
 import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import {
@@ -10,8 +11,20 @@ import {
   type ThemePreference,
 } from "@/components/providers/ThemeProvider";
 import type { Locale } from "@/lib/i18n/dictionaries";
+import { emitCatalogRefresh } from "@/lib/library/storage";
+import {
+  clearCatalogCache,
+  loadAllLiveStreams,
+  loadAllSeries,
+  loadAllVodStreams,
+  loadLiveCategories,
+  loadSeriesCategories,
+  loadVodCategories,
+} from "@/lib/xtream/catalog-cache";
 import { authenticate } from "@/lib/xtream/client";
 import type { XtreamAuthResponse } from "@/lib/xtream/types";
+
+type RefreshState = "idle" | "loading" | "done" | "error";
 
 export default function AccountPage() {
   const {
@@ -27,6 +40,7 @@ export default function AccountPage() {
   const router = useRouter();
   const [info, setInfo] = useState<XtreamAuthResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refreshState, setRefreshState] = useState<RefreshState>("idle");
 
   useEffect(() => {
     if (!credentials) return;
@@ -48,6 +62,27 @@ export default function AccountPage() {
   }, [credentials, t]);
 
   const user = info?.user_info;
+
+  async function refreshPlaylist() {
+    if (!credentials || refreshState === "loading") return;
+    setRefreshState("loading");
+    try {
+      clearCatalogCache();
+      await Promise.all([
+        loadLiveCategories(credentials),
+        loadVodCategories(credentials),
+        loadSeriesCategories(credentials),
+        loadAllLiveStreams(credentials),
+        loadAllVodStreams(credentials),
+        loadAllSeries(credentials),
+      ]);
+      emitCatalogRefresh();
+      setRefreshState("done");
+      window.setTimeout(() => setRefreshState("idle"), 3000);
+    } catch {
+      setRefreshState("error");
+    }
+  }
 
   const languages: { id: Locale; label: string }[] = [
     { id: "es", label: t("langSpanish") },
@@ -162,6 +197,32 @@ export default function AccountPage() {
           {error ? (
             <p className="mt-3 text-sm text-[var(--xp-danger)]">{error}</p>
           ) : null}
+          <div className="mt-4 space-y-2 border-t border-[var(--xp-border)] pt-4">
+            <p className="text-sm text-[var(--xp-muted)]">{t("refreshPlaylistHint")}</p>
+            <button
+              type="button"
+              disabled={refreshState === "loading" || !credentials}
+              onClick={() => void refreshPlaylist()}
+              className="xp-btn xp-btn-ghost inline-flex cursor-pointer items-center gap-2 disabled:opacity-50"
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${refreshState === "loading" ? "animate-spin" : ""}`}
+              />
+              {refreshState === "loading"
+                ? t("refreshing")
+                : t("refreshPlaylist")}
+            </button>
+            {refreshState === "done" ? (
+              <p className="text-sm text-[var(--xp-accent)]">
+                {t("refreshPlaylistDone")}
+              </p>
+            ) : null}
+            {refreshState === "error" ? (
+              <p className="text-sm text-[var(--xp-danger)]">
+                {t("refreshPlaylistFailed")}
+              </p>
+            ) : null}
+          </div>
         </div>
       </section>
 

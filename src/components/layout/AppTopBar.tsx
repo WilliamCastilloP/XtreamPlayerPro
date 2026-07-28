@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Search, UserRound, X } from "lucide-react";
+import { Search, UserRound } from "lucide-react";
 import { BrandMark } from "@/components/brand/BrandMark";
 import type { BrowseKind } from "@/components/catalog/BrowseRails";
 import { useLocale } from "@/components/providers/LocaleProvider";
@@ -91,24 +91,25 @@ function AppTopBarInner({ scrolled }: Props) {
         <BrandMark size="md" className="order-1 !text-white drop-shadow-sm" />
 
         <div className="order-2 ml-auto flex shrink-0 items-center gap-0.5 md:order-3">
-          {searchOpen ? (
-            <button
-              type="button"
-              aria-label={t("back")}
-              onClick={() => router.push("/")}
-              className={iconBtn(true)}
-            >
-              <X className="h-5 w-5" />
-            </button>
-          ) : (
-            <Link
-              href="/search"
-              aria-label={t("navSearch")}
-              className={iconBtn(false)}
-            >
-              <Search className="h-5 w-5" />
-            </Link>
-          )}
+          <button
+            type="button"
+            aria-label={t("navSearch")}
+            aria-pressed={searchOpen}
+            onClick={() => {
+              if (searchOpen) {
+                if (typeof window !== "undefined" && window.history.length > 1) {
+                  router.back();
+                } else {
+                  router.push("/");
+                }
+              } else {
+                router.push("/search");
+              }
+            }}
+            className={iconBtn(searchOpen)}
+          >
+            <Search className="h-5 w-5" />
+          </button>
           <Link
             href="/account"
             aria-label={t("navAccount")}

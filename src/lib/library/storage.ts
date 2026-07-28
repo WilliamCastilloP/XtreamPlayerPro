@@ -19,8 +19,15 @@ export type ContinueItem = {
   extension?: string;
   position?: number;
   duration?: number;
+  /** Last selected audio track index (server HLS / remux / hls.js). */
+  audioTrack?: number;
+  /** Last selected subtitle track index; -1 = off. */
+  subtitleTrack?: number;
   updatedAt: number;
 };
+
+export const LIBRARY_EVENT = "xp-library";
+export const CATALOG_REFRESH_EVENT = "xp-catalog-refresh";
 
 function favKey(playlistId: string) {
   return `xp.favorites.${playlistId}`;
@@ -50,6 +57,16 @@ function writeJson<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
+export function emitLibraryChange() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(LIBRARY_EVENT));
+}
+
+export function emitCatalogRefresh() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(CATALOG_REFRESH_EVENT));
+}
+
 export function listFavorites(playlistId: string): FavoriteItem[] {
   return readJson<FavoriteItem[]>(favKey(playlistId), []).sort(
     (a, b) => b.addedAt - a.addedAt,
@@ -77,12 +94,14 @@ export function toggleFavorite(
       favKey(playlistId),
       current.filter((f) => f.id !== id),
     );
+    emitLibraryChange();
     return false;
   }
   writeJson(favKey(playlistId), [
     { ...item, id, addedAt: Date.now() },
     ...current,
   ]);
+  emitLibraryChange();
   return true;
 }
 
@@ -90,6 +109,22 @@ export function listContinue(playlistId: string): ContinueItem[] {
   return readJson<ContinueItem[]>(recentKey(playlistId), []).sort(
     (a, b) => b.updatedAt - a.updatedAt,
   );
+}
+
+export function getContinueItem(
+  playlistId: string,
+  kind: ContinueItem["kind"],
+  streamId: number | string,
+): ContinueItem | undefined {
+  const id = `${kind}:${streamId}`;
+  return listContinue(playlistId).find((c) => c.id === id);
+}
+
+export function isContinueCompleted(item: ContinueItem): boolean {
+  const pos = item.position ?? 0;
+  const dur = item.duration ?? 0;
+  if (dur <= 0) return false;
+  return pos / dur >= 0.9;
 }
 
 export function upsertContinue(
@@ -103,10 +138,37 @@ export function upsertContinue(
     ...current,
   ].slice(0, 40);
   writeJson(recentKey(playlistId), next);
+  emitLibraryChange();
+}
+
+export function clearContinuePosition(
+  playlistId: string,
+  kind: ContinueItem["kind"],
+  streamId: number | string,
+) {
+  const id = `${kind}:${streamId}`;
+  const current = listContinue(playlistId);
+  const item = current.find((c) => c.id === id);
+  if (!item) return;
+  upsertContinue(playlistId, {
+    kind: item.kind,
+    title: item.title,
+    image: item.image,
+    streamId: item.streamId,
+    seriesId: item.seriesId,
+    season: item.season,
+    episode: item.episode,
+    extension: item.extension,
+    position: 0,
+    duration: item.duration,
+    audioTrack: item.audioTrack,
+    subtitleTrack: item.subtitleTrack,
+  });
 }
 
 export function clearLibraryForPlaylist(playlistId: string) {
   if (!canUseStorage()) return;
   localStorage.removeItem(favKey(playlistId));
   localStorage.removeItem(recentKey(playlistId));
+  emitLibraryChange();
 }

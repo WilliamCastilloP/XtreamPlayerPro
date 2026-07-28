@@ -90,6 +90,7 @@ function LiveDetailInner() {
 
   return (
     <TitleHero
+      layout="live"
       backHref={backHref}
       backLabel={backLabel}
       title={title}

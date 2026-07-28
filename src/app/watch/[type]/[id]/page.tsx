@@ -1,18 +1,37 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { VideoPlayer } from "@/components/player/VideoPlayer";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
-import { upsertContinue } from "@/lib/library/storage";
+import {
+  clearContinuePosition,
+  getContinueItem,
+  isContinueCompleted,
+  upsertContinue,
+} from "@/lib/library/storage";
 import { parseMediaDuration } from "@/lib/player/duration";
-import { getSeriesInfo, getVodInfo } from "@/lib/xtream/client";
+import { getSeriesInfo, getVodInfo, watchPath } from "@/lib/xtream/client";
 import { buildStreamCandidates } from "@/lib/xtream/urls";
 import { catalogTitle } from "@/lib/xtream/title";
-import type { StreamKind } from "@/lib/xtream/types";
+import type { SeriesEpisode, SeriesInfo, StreamKind } from "@/lib/xtream/types";
 
 function normalizeExt(value?: string | null): string {
   return (value || "").replace(/^\./, "").toLowerCase().trim();
+}
+
+function flattenSeriesEpisodes(info: SeriesInfo) {
+  const seasonKeys = Object.keys(info.episodes || {}).sort(
+    (a, b) => Number(a) - Number(b),
+  );
+  const flat: { season: string; episode: SeriesEpisode }[] = [];
+  for (const season of seasonKeys) {
+    const eps = [...(info.episodes?.[season] || [])].sort(
+      (a, b) => (a.episode_num ?? 0) - (b.episode_num ?? 0),
+    );
+    for (const episode of eps) flat.push({ season, episode });
+  }
+  return flat;
 }
 
 function WatchInner() {
@@ -30,11 +49,40 @@ function WatchInner() {
   const episode = search.get("episode") || undefined;
   const durationHint =
     parseMediaDuration(search.get("duration")) || undefined;
+  const startFromZero = search.get("t") === "0";
 
   const [resolvedExt, setResolvedExt] = useState(queryExt);
   const [resolvingExt, setResolvingExt] = useState(
     () => kind !== "live" && !queryExt,
   );
+  const [seriesInfo, setSeriesInfo] = useState<SeriesInfo | null>(null);
+
+  const saved = useMemo(() => {
+    if (!activePlaylist || kind === "live") return undefined;
+    return getContinueItem(activePlaylist.id, kind, params.id);
+  }, [activePlaylist, kind, params.id]);
+
+  const initialPosition = useMemo(() => {
+    if (startFromZero || kind === "live") return 0;
+    const pos = saved?.position ?? 0;
+    if (pos < 5) return 0;
+    if (saved && isContinueCompleted(saved)) return 0;
+    return pos;
+  }, [startFromZero, kind, saved]);
+
+  const initialAudioTrack = saved?.audioTrack ?? 0;
+  const initialSubtitleTrack = saved?.subtitleTrack ?? -1;
+  const prefsRef = useRef({
+    audioTrack: initialAudioTrack,
+    subtitleTrack: initialSubtitleTrack,
+  });
+
+  useEffect(() => {
+    prefsRef.current = {
+      audioTrack: initialAudioTrack,
+      subtitleTrack: initialSubtitleTrack,
+    };
+  }, [params.id, initialAudioTrack, initialSubtitleTrack]);
 
   useEffect(() => {
     if (!ready) return;
@@ -43,7 +91,6 @@ function WatchInner() {
     }
   }, [ready, activePlaylist, router]);
 
-  // Soft-lock to landscape on mobile when supported (best-effort)
   useEffect(() => {
     const orient = screen.orientation as ScreenOrientation & {
       lock?: (orientation: string) => Promise<void>;
@@ -54,8 +101,6 @@ function WatchInner() {
     };
   }, []);
 
-  // Hero / continue links often omit ?ext= — resolve real container from the panel
-  // so MKV titles don't fall through to a dead .mp4 URL.
   useEffect(() => {
     if (kind === "live") {
       setResolvedExt("m3u8");
@@ -84,6 +129,7 @@ function WatchInner() {
 
         if (kind === "series" && seriesId) {
           const info = await getSeriesInfo(credentials, seriesId);
+          if (!cancelled) setSeriesInfo(info);
           const episodes = Object.values(info.episodes || {}).flat();
           const match = episodes.find(
             (ep) => String(ep.id) === String(params.id),
@@ -106,6 +152,17 @@ function WatchInner() {
     };
   }, [credentials, kind, params.id, queryExt, seriesId]);
 
+  useEffect(() => {
+    if (kind !== "series" || !credentials || !seriesId || seriesInfo) return;
+    let cancelled = false;
+    void getSeriesInfo(credentials, seriesId).then((info) => {
+      if (!cancelled) setSeriesInfo(info);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [kind, credentials, seriesId, seriesInfo]);
+
   const sources = useMemo(() => {
     if (!credentials || resolvingExt) return [];
     return buildStreamCandidates(
@@ -116,10 +173,40 @@ function WatchInner() {
     );
   }, [credentials, kind, params.id, resolvedExt, resolvingExt]);
 
-  const onProgress = useCallback(
-    (position: number, duration: number) => {
-      if (!activePlaylist) return;
-      if (position < 5) return;
+  const nextEpisode = useMemo(() => {
+    if (kind !== "series" || !seriesInfo || !seriesId) return undefined;
+    const flat = flattenSeriesEpisodes(seriesInfo);
+    const idx = flat.findIndex(
+      ({ episode: ep }) => String(ep.id) === String(params.id),
+    );
+    if (idx < 0 || idx >= flat.length - 1) return undefined;
+    const next = flat[idx + 1]!;
+    const epTitle =
+      next.episode.title || `Episode ${next.episode.episode_num ?? next.episode.id}`;
+    return {
+      title: epTitle,
+      href: watchPath("series", next.episode.id, {
+        title: `${catalogTitle({ name: seriesInfo.info?.name })} · ${epTitle}`,
+        ext: next.episode.container_extension || "mp4",
+        image: next.episode.info?.movie_image || seriesInfo.info?.cover || "",
+        seriesId,
+        season: next.season,
+        episode: String(next.episode.episode_num ?? ""),
+        duration: next.episode.info?.duration || "",
+      }),
+    };
+  }, [kind, seriesInfo, seriesId, params.id]);
+
+  const saveContinue = useCallback(
+    (
+      position: number,
+      duration: number,
+      prefs?: { audioTrack: number; subtitleTrack: number },
+    ) => {
+      if (!activePlaylist || kind === "live") return;
+      const nextPrefs = prefs ?? prefsRef.current;
+      prefsRef.current = nextPrefs;
+      const existing = getContinueItem(activePlaylist.id, kind, params.id);
       upsertContinue(activePlaylist.id, {
         kind,
         title: catalogTitle({ name: title }),
@@ -129,8 +216,10 @@ function WatchInner() {
         season: season ? Number(season) : undefined,
         episode: episode ? Number(episode) : undefined,
         extension: resolvedExt,
-        position,
-        duration,
+        position: position >= 0 ? position : (existing?.position ?? 0),
+        duration: duration > 0 ? duration : (existing?.duration ?? 0),
+        audioTrack: nextPrefs.audioTrack,
+        subtitleTrack: nextPrefs.subtitleTrack,
       });
     },
     [
@@ -145,6 +234,30 @@ function WatchInner() {
       resolvedExt,
     ],
   );
+
+  const onProgress = useCallback(
+    (position: number, duration: number) => {
+      if (position < 5) return;
+      saveContinue(position, duration);
+    },
+    [saveContinue],
+  );
+
+  const onTrackPrefs = useCallback(
+    (prefs: { audioTrack: number; subtitleTrack: number }) => {
+      prefsRef.current = prefs;
+      const existing = activePlaylist
+        ? getContinueItem(activePlaylist.id, kind, params.id)
+        : undefined;
+      saveContinue(existing?.position ?? 0, existing?.duration ?? 0, prefs);
+    },
+    [activePlaylist, kind, params.id, saveContinue],
+  );
+
+  const onStartOver = useCallback(() => {
+    if (!activePlaylist || kind === "live") return;
+    clearContinuePosition(activePlaylist.id, kind, params.id);
+  }, [activePlaylist, kind, params.id]);
 
   if (!ready || !credentials || resolvingExt) {
     return (
@@ -173,7 +286,13 @@ function WatchInner() {
       seriesId={seriesId}
       extension={resolvedExt}
       durationHint={durationHint}
+      initialPosition={initialPosition}
+      initialAudioTrack={initialAudioTrack}
+      initialSubtitleTrack={initialSubtitleTrack}
       onProgress={onProgress}
+      onTrackPrefs={onTrackPrefs}
+      onStartOver={onStartOver}
+      nextEpisode={nextEpisode}
     />
   );
 }

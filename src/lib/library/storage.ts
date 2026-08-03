@@ -95,6 +95,11 @@ export function toggleFavorite(
       current.filter((f) => f.id !== id),
     );
     emitLibraryChange();
+    if (typeof window !== "undefined") {
+      void import("@/lib/sync/client").then(({ schedulePushFavorites }) =>
+        schedulePushFavorites(playlistId),
+      );
+    }
     return false;
   }
   writeJson(favKey(playlistId), [
@@ -102,6 +107,11 @@ export function toggleFavorite(
     ...current,
   ]);
   emitLibraryChange();
+  if (typeof window !== "undefined") {
+    void import("@/lib/sync/client").then(({ schedulePushFavorites }) =>
+      schedulePushFavorites(playlistId),
+    );
+  }
   return true;
 }
 
@@ -139,6 +149,12 @@ export function upsertContinue(
   ].slice(0, 40);
   writeJson(recentKey(playlistId), next);
   emitLibraryChange();
+  const saved = next.find((c) => c.id === id);
+  if (saved && typeof window !== "undefined") {
+    void import("@/lib/sync/client").then(({ schedulePushContinue }) =>
+      schedulePushContinue(playlistId, saved),
+    );
+  }
 }
 
 export function clearContinuePosition(

@@ -41,6 +41,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# prisma sqlite database
+prisma/*.db
+prisma/*.db-journal
+
 # PWA build artifacts
 public/sw.js
 public/sw.js.map

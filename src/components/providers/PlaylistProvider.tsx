@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useSyncExternalStore,
 } from "react";
@@ -12,6 +13,7 @@ import {
   deletePlaylist,
   getActivePlaylist,
   getActivePlaylistId,
+  getPlaylist,
   listPlaylists,
   setActivePlaylistId,
   updatePlaylist,
@@ -88,12 +90,29 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
   const selectPlaylist = useCallback((id: string) => {
     setActivePlaylistId(id);
     emit();
+    const playlist = getPlaylist(id);
+    if (playlist) {
+      void import("@/lib/sync/client").then(({ scheduleSyncAuth }) =>
+        scheduleSyncAuth({
+          serverUrl: playlist.serverUrl,
+          username: playlist.username,
+          password: playlist.password,
+        }),
+      );
+    }
   }, []);
 
   const addPlaylist = useCallback((draft: PlaylistDraft) => {
     const playlist = createPlaylist(draft);
     setActivePlaylistId(playlist.id);
     emit();
+    void import("@/lib/sync/client").then(({ scheduleSyncAuth }) =>
+      scheduleSyncAuth({
+        serverUrl: playlist.serverUrl,
+        username: playlist.username,
+        password: playlist.password,
+      }),
+    );
     return playlist;
   }, []);
 
@@ -124,6 +143,13 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
       password: activePlaylist.password,
     };
   }, [activePlaylist]);
+
+  useEffect(() => {
+    if (!credentials) return;
+    void import("@/lib/sync/client").then(({ scheduleSyncAuth }) =>
+      scheduleSyncAuth(credentials),
+    );
+  }, [credentials]);
 
   const value = useMemo(
     () => ({

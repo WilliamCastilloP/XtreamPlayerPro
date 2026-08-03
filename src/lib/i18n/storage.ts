@@ -29,5 +29,9 @@ export function getLocale(): Locale {
 export function setLocale(locale: Locale) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(KEY, locale);
+  window.localStorage.setItem("xp.locale.updatedAt", String(Date.now()));
   window.dispatchEvent(new Event("xp-locale"));
+  void import("@/lib/sync/client").then(({ schedulePushPreferences }) =>
+    schedulePushPreferences(locale),
+  );
 }

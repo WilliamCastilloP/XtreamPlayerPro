@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useSyncExternalStore,
 } from "react";
@@ -73,6 +74,13 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new Event(CATALOG_REFRESH_EVENT));
     }
   }, []);
+
+  useEffect(() => {
+    if (!playlistId) return;
+    void import("@/lib/sync/client").then(({ schedulePullSync }) =>
+      schedulePullSync(playlistId),
+    );
+  }, [playlistId]);
 
   const value = useMemo(
     () => ({

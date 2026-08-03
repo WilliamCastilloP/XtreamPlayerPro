@@ -48,11 +48,22 @@ export async function POST(request: NextRequest) {
   }
 
   const userId = syncUserId(credentials);
-  await prisma.user.upsert({
-    where: { id: userId },
-    create: { id: userId },
-    update: {},
-  });
+
+  try {
+    await prisma.user.upsert({
+      where: { id: userId },
+      create: { id: userId },
+      update: {},
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Database error";
+    console.error("[sync/auth] db", message);
+    return jsonError(
+      "Sync database is not ready. Run: npm run db:deploy",
+      500,
+    );
+  }
 
   try {
     const { token, expiresAt } = await signSyncToken(credentials);

@@ -137,9 +137,17 @@ export function isContinueCompleted(item: ContinueItem): boolean {
   return pos / dur >= 0.9;
 }
 
+export type UpsertContinueOptions = {
+  /** Skip xp-library event (high-frequency progress). Default false. */
+  silent?: boolean;
+  /** Push to sync API. Default true. */
+  sync?: boolean;
+};
+
 export function upsertContinue(
   playlistId: string,
   item: Omit<ContinueItem, "id" | "updatedAt">,
+  options?: UpsertContinueOptions,
 ) {
   const id = `${item.kind}:${item.streamId}`;
   const current = listContinue(playlistId).filter((c) => c.id !== id);
@@ -148,9 +156,12 @@ export function upsertContinue(
     ...current,
   ].slice(0, 40);
   writeJson(recentKey(playlistId), next);
-  emitLibraryChange();
+  if (!options?.silent) {
+    emitLibraryChange();
+  }
   const saved = next.find((c) => c.id === id);
-  if (saved && typeof window !== "undefined") {
+  const shouldSync = options?.sync !== false;
+  if (saved && shouldSync && typeof window !== "undefined") {
     void import("@/lib/sync/client").then(({ schedulePushContinue }) =>
       schedulePushContinue(playlistId, saved),
     );

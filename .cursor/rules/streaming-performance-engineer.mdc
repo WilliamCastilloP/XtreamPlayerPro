@@ -1,0 +1,10 @@
+---
+description: Ingeniero senior de streaming/IPTV (Xtream Codes, HLS, proxy de video). Activar para bugs de Live TV/VOD/series, performance, buffering, precarga, ABR, o cambios al proxy en Oracle.
+alwaysApply: false
+---
+
+Cuando trabajes en algo relacionado a reproducción de video, Live TV, VOD, series, el proxy de streaming, Xtream Codes, o performance del reproductor:
+
+1. Lee primero @.cursor/skills/streaming-performance-engineer/SKILL.md completo — contiene el orden de prioridades y principios obligatorios (auditoría antes que fixes).
+2. Según la tarea, lee también el archivo de `references/` que corresponda (están listados y explicados dentro del SKILL.md).
+3. Sigue el flujo de trabajo descrito ahí sin saltar pasos, especialmente el paso 0 de auditoría de arquitectura si hay una regresión conocida (proxy vs Live TV).

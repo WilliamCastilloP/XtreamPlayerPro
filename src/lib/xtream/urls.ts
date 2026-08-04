@@ -172,8 +172,8 @@ function isNativeProgressiveExt(ext: string): boolean {
 /**
  * Build playback candidates.
  *
- * Live: prefer DIRECT HLS first (panel→CDN redirect + CORS), like before
- * the standalone proxy. Proxy is a CORS/rewrite fallback only.
+ * Live: PROXY first (rewrite CDN-relative /hls/ segments + force our CORS).
+ * Direct panel/CDN is last resort — usually 404 or CORS in the browser.
  *
  * VOD/series:
  * - Prefer the panel's real extension only (don't spray .avi/.ts 404s).
@@ -213,8 +213,9 @@ export function buildStreamCandidates(
     const ts = buildDirectStreamUrl(credentials, kind, streamId, "ts");
     const bare = buildDirectStreamUrl(credentials, kind, streamId, "");
 
-    // Proxy first: panel m3u8 redirects to CDN with relative /hls/ paths;
-    // browsers often fail CORS/direct manifest, while our proxy rewrites segments.
+    // Live MUST stay on the proxy: panel m3u8 has relative /hls/ segments that
+    // only resolve on the CDN host after redirect. Direct browser fetches hit
+    // the panel (404) or the CDN (CORS). Never put direct before proxy.
     push({
       url: buildProxiedStreamUrl(m3u8),
       transport: "proxy",
@@ -225,13 +226,14 @@ export function buildStreamCandidates(
       transport: "proxy",
       label: "Live (proxy)",
     });
-    push({ url: m3u8, transport: "direct", label: "HLS (direct)" });
-    push({ url: bare, transport: "direct", label: "Live (direct)" });
     push({
       url: buildProxiedStreamUrl(ts),
       transport: "proxy",
       label: "MPEG-TS (proxy)",
     });
+    // Last-resort only (usually fails CORS / relative paths).
+    push({ url: m3u8, transport: "direct", label: "HLS (direct)" });
+    push({ url: bare, transport: "direct", label: "Live (direct)" });
     push({ url: ts, transport: "direct", label: "MPEG-TS (direct)" });
     return out;
   }

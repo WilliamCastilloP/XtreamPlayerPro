@@ -100,6 +100,9 @@ const HLS_ROOT = path.join(
 );
 const SESSION_TTL_MS = Number(process.env.STREAM_HLS_TTL_MS || 45 * 60 * 1000);
 const READY_TIMEOUT_MS = Number(process.env.STREAM_HLS_READY_MS || 90000);
+/** Max time to buffer a suspected HLS playlist before treating it as a continuous stream. */
+const PLAYLIST_BUFFER_MS = Number(process.env.STREAM_PLAYLIST_BUFFER_MS || 10000);
+const PLAYLIST_MAX_BYTES = 2 * 1024 * 1024;
 
 const HOP_BY_HOP = new Set([
   "connection",
@@ -272,6 +275,8 @@ function shouldBufferAsPlaylist(contentType, pathname) {
   if (isLargeProgressivePath(pathname) || pathname.endsWith(".ts")) {
     return false;
   }
+  // Bare /live/user/pass/id may redirect to m3u8 OR to a continuous MPEG-TS.
+  // Always peek first — never assume buffer-to-end (that hangs Live forever).
   return (
     contentType.includes("mpegurl") ||
     contentType.includes("m3u8") ||
@@ -279,6 +284,116 @@ function shouldBufferAsPlaylist(contentType, pathname) {
     pathname.endsWith(".m3u8") ||
     /\/live\/[^/]+\/[^/]+\/[^/.]+$/i.test(pathname)
   );
+}
+
+function looksLikeM3u8Chunk(buf) {
+  if (!buf || buf.length === 0) return false;
+  // MPEG-TS sync byte — continuous live, never buffer as text.
+  if (buf[0] === 0x47) return false;
+  const head = buf.toString("utf8", 0, Math.min(buf.length, 64)).trimStart();
+  return head.startsWith("#EXTM3U") || head.startsWith("#EXT");
+}
+
+/**
+ * @param {ReadableStreamDefaultReader<Uint8Array>} reader
+ * @param {Buffer} firstChunk
+ * @param {number} timeoutMs
+ * @returns {Promise<Buffer>}
+ */
+async function bufferPlaylistBody(reader, firstChunk, timeoutMs) {
+  const chunks = [firstChunk];
+  let total = firstChunk.length;
+  const deadline = Date.now() + timeoutMs;
+
+  for (;;) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error("Playlist buffer timeout");
+    }
+    /** @type {{ done: boolean, value?: Uint8Array }} */
+    const result = await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("Playlist buffer timeout")), remaining);
+      }),
+    ]);
+    if (result.done) break;
+    const chunk = Buffer.from(result.value);
+    chunks.push(chunk);
+    total += chunk.length;
+    if (total >= PLAYLIST_MAX_BYTES) break;
+  }
+  return Buffer.concat(chunks);
+}
+
+/**
+ * @param {ReadableStreamDefaultReader<Uint8Array>} reader
+ * @param {import('http').ServerResponse} res
+ * @param {Buffer | null} prefix
+ */
+async function pipeReaderToResponse(reader, res, prefix) {
+  try {
+    if (prefix && prefix.length > 0) {
+      if (!res.write(prefix)) {
+        await new Promise((resolve) => res.once("drain", resolve));
+      }
+    }
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!res.write(value)) {
+        await new Promise((resolve) => res.once("drain", resolve));
+      }
+    }
+    res.end();
+  } catch (error) {
+    if (!res.headersSent) {
+      sendJson(res, 502, {
+        error: error instanceof Error ? error.message : "Stream proxy failed",
+      });
+    } else {
+      res.destroy();
+    }
+  }
+}
+
+function writeMediaHeaders(res, status, contentType, finalPath, upstream) {
+  // Copy upstream first, then force our CORS — CDN ACAO headers must not win.
+  const headers = {};
+  upstream.headers.forEach((value, key) => {
+    const lower = key.toLowerCase();
+    if (HOP_BY_HOP.has(lower)) return;
+    if (lower.startsWith("access-control-")) return;
+    headers[key] = value;
+  });
+  Object.assign(
+    headers,
+    corsHeaders({
+      "Access-Control-Allow-Headers":
+        "Range, Content-Type, Accept, If-None-Match, If-Modified-Since",
+      "Access-Control-Allow-Private-Network": "true",
+    }),
+  );
+  if (!headers["Content-Type"] && !headers["content-type"]) {
+    if (finalPath.endsWith(".ts") || contentType.includes("mp2t")) {
+      headers["Content-Type"] = "video/mp2t";
+    } else if (isLargeProgressivePath(finalPath)) {
+      headers["Content-Type"] = "video/mp4";
+    } else {
+      headers["Content-Type"] = contentType || "application/octet-stream";
+    }
+  }
+  // Continuous live TS: drop Content-Length so the client streams forever.
+  if (
+    (headers["Content-Type"] || headers["content-type"] || "").includes("mp2t")
+  ) {
+    delete headers["Content-Length"];
+    delete headers["content-length"];
+  }
+  if (!headers["Accept-Ranges"] && !headers["accept-ranges"]) {
+    headers["Accept-Ranges"] = "bytes";
+  }
+  res.writeHead(status, headers);
 }
 
 function corsHeaders(extra = {}) {
@@ -362,68 +477,95 @@ async function handleStream(req, res, target) {
     (process.env.PUBLIC_STREAM_PROXY_BASE || "").replace(/\/+$/, "") ||
     `${proto}://${host}`;
 
-  if (req.method !== "HEAD" && shouldBufferAsPlaylist(contentType, finalPath)) {
-    const text = await upstream.text();
-    if (text.includes("#EXTM3U")) {
-      const rewritten = rewriteUpstreamPlaylist(text, finalUrl, proxyOrigin);
-      const headers = corsHeaders({
-        "Content-Type": "application/vnd.apple.mpegurl",
-      });
-      res.writeHead(200, headers);
-      res.end(rewritten);
-      return;
-    }
-    const headers = corsHeaders({
-      "Content-Type": contentType || "application/octet-stream",
-    });
-    res.writeHead(upstream.status, headers);
-    res.end(text);
-    return;
-  }
-
-  const headers = corsHeaders();
-  upstream.headers.forEach((value, key) => {
-    if (!HOP_BY_HOP.has(key.toLowerCase())) {
-      headers[key] = value;
-    }
-  });
-  if (!headers["Content-Type"] && !headers["content-type"]) {
-    if (finalPath.endsWith(".ts")) headers["Content-Type"] = "video/mp2t";
-    else if (isLargeProgressivePath(finalPath)) {
-      headers["Content-Type"] = "video/mp4";
-    } else {
-      headers["Content-Type"] = contentType || "application/octet-stream";
-    }
-  }
-  if (!headers["Accept-Ranges"] && !headers["accept-ranges"]) {
-    headers["Accept-Ranges"] = "bytes";
-  }
-
-  res.writeHead(upstream.status, headers);
   if (req.method === "HEAD" || !upstream.body) {
+    writeMediaHeaders(res, upstream.status, contentType, finalPath, upstream);
     res.end();
     return;
   }
 
   const reader = upstream.body.getReader();
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!res.write(value)) {
-        await new Promise((resolve) => res.once("drain", resolve));
-      }
-    }
-    res.end();
-  } catch (error) {
-    if (!res.headersSent) {
+
+  // Suspected playlist (incl. bare live): peek first — m3u8 rewrite vs pipe TS.
+  if (shouldBufferAsPlaylist(contentType, finalPath)) {
+    let first;
+    try {
+      first = await reader.read();
+    } catch (error) {
       sendJson(res, 502, {
         error: error instanceof Error ? error.message : "Stream proxy failed",
       });
-    } else {
-      res.destroy();
+      return;
     }
+
+    if (first.done || !first.value) {
+      writeMediaHeaders(res, upstream.status, contentType, finalPath, upstream);
+      res.end();
+      return;
+    }
+
+    const firstBuf = Buffer.from(first.value);
+    const tryAsPlaylist =
+      looksLikeM3u8Chunk(firstBuf) ||
+      contentType.includes("mpegurl") ||
+      contentType.includes("m3u8") ||
+      finalPath.endsWith(".m3u8");
+
+    if (tryAsPlaylist && looksLikeM3u8Chunk(firstBuf)) {
+      try {
+        const all = await bufferPlaylistBody(
+          reader,
+          firstBuf,
+          PLAYLIST_BUFFER_MS,
+        );
+        const text = all.toString("utf8");
+        if (text.includes("#EXTM3U")) {
+          const rewritten = rewriteUpstreamPlaylist(
+            text,
+            finalUrl,
+            proxyOrigin,
+          );
+          const headers = corsHeaders({
+            "Content-Type": "application/vnd.apple.mpegurl",
+          });
+          res.writeHead(200, headers);
+          res.end(rewritten);
+          return;
+        }
+        // Finished body but not m3u8 — return as opaque payload.
+        const headers = corsHeaders({
+          "Content-Type": contentType || "application/octet-stream",
+        });
+        res.writeHead(upstream.status, headers);
+        res.end(all);
+        return;
+      } catch {
+        // Timeout / hang: continuous stream mis-detected — pipe what we have.
+        writeMediaHeaders(
+          res,
+          upstream.status,
+          contentType || "video/mp2t",
+          finalPath,
+          upstream,
+        );
+        await pipeReaderToResponse(reader, res, firstBuf);
+        return;
+      }
+    }
+
+    // Bare live → continuous MPEG-TS (or non-playlist): stream immediately.
+    writeMediaHeaders(
+      res,
+      upstream.status,
+      contentType || (firstBuf[0] === 0x47 ? "video/mp2t" : ""),
+      finalPath,
+      upstream,
+    );
+    await pipeReaderToResponse(reader, res, firstBuf);
+    return;
   }
+
+  writeMediaHeaders(res, upstream.status, contentType, finalPath, upstream);
+  await pipeReaderToResponse(reader, res, null);
 }
 
 async function ensureHlsDir() {
@@ -1366,7 +1508,9 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-      "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
+      "Access-Control-Allow-Headers":
+        "Range, Content-Type, Accept, If-None-Match, If-Modified-Since",
+      "Access-Control-Allow-Private-Network": "true",
       "Access-Control-Max-Age": "86400",
     });
     res.end();

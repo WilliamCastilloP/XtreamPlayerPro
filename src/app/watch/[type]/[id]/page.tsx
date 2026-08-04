@@ -197,30 +197,52 @@ function WatchInner() {
     };
   }, [kind, seriesInfo, seriesId, params.id]);
 
+  const lastProgressSaveRef = useRef({ at: 0, position: -1 });
+
   const saveContinue = useCallback(
     (
       position: number,
       duration: number,
       prefs?: { audioTrack: number; subtitleTrack: number },
+      opts?: { silent?: boolean; sync?: boolean; force?: boolean },
     ) => {
       if (!activePlaylist || kind === "live") return;
       const nextPrefs = prefs ?? prefsRef.current;
       prefsRef.current = nextPrefs;
       const existing = getContinueItem(activePlaylist.id, kind, params.id);
-      upsertContinue(activePlaylist.id, {
-        kind,
-        title: catalogTitle({ name: title }),
-        image,
-        streamId: params.id,
-        seriesId,
-        season: season ? Number(season) : undefined,
-        episode: episode ? Number(episode) : undefined,
-        extension: resolvedExt,
-        position: position >= 0 ? position : (existing?.position ?? 0),
-        duration: duration > 0 ? duration : (existing?.duration ?? 0),
-        audioTrack: nextPrefs.audioTrack,
-        subtitleTrack: nextPrefs.subtitleTrack,
-      });
+      const nextPos = position >= 0 ? position : (existing?.position ?? 0);
+      const now = Date.now();
+      const last = lastProgressSaveRef.current;
+      // timeupdate fires ~4/s — only persist every 10s or +15s jump (unless force).
+      if (
+        !opts?.force &&
+        now - last.at < 10_000 &&
+        Math.abs(nextPos - last.position) < 15
+      ) {
+        return;
+      }
+      lastProgressSaveRef.current = { at: now, position: nextPos };
+      upsertContinue(
+        activePlaylist.id,
+        {
+          kind,
+          title: catalogTitle({ name: title }),
+          image,
+          streamId: params.id,
+          seriesId,
+          season: season ? Number(season) : undefined,
+          episode: episode ? Number(episode) : undefined,
+          extension: resolvedExt,
+          position: nextPos,
+          duration: duration > 0 ? duration : (existing?.duration ?? 0),
+          audioTrack: nextPrefs.audioTrack,
+          subtitleTrack: nextPrefs.subtitleTrack,
+        },
+        {
+          silent: opts?.silent ?? true,
+          sync: opts?.sync,
+        },
+      );
     },
     [
       activePlaylist,
@@ -238,7 +260,8 @@ function WatchInner() {
   const onProgress = useCallback(
     (position: number, duration: number) => {
       if (position < 5) return;
-      saveContinue(position, duration);
+      // Silent local writes; sync debounced inside schedulePushContinue.
+      saveContinue(position, duration, undefined, { silent: true, sync: true });
     },
     [saveContinue],
   );

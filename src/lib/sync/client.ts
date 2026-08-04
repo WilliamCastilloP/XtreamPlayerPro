@@ -338,7 +338,35 @@ export function schedulePushFavorites(playlistId: string) {
   void pushFavorites(playlistId);
 }
 
+const CONTINUE_SYNC_MIN_MS = 15_000;
+const continueSyncTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const continueSyncLatest = new Map<string, ContinueItem>();
+
+/** Debounce remote continue pushes — local storage stays immediate. */
 export function schedulePushContinue(playlistId: string, item: ContinueItem) {
+  const key = `${playlistId}:${item.id}`;
+  continueSyncLatest.set(key, item);
+  if (continueSyncTimers.has(key)) return;
+  continueSyncTimers.set(
+    key,
+    setTimeout(() => {
+      continueSyncTimers.delete(key);
+      const latest = continueSyncLatest.get(key);
+      continueSyncLatest.delete(key);
+      if (latest) void pushContinue(playlistId, latest);
+    }, CONTINUE_SYNC_MIN_MS),
+  );
+}
+
+/** Flush pending continue sync immediately (pause / unmount). */
+export function flushPushContinue(playlistId: string, item: ContinueItem) {
+  const key = `${playlistId}:${item.id}`;
+  const pending = continueSyncTimers.get(key);
+  if (pending) {
+    clearTimeout(pending);
+    continueSyncTimers.delete(key);
+  }
+  continueSyncLatest.delete(key);
   void pushContinue(playlistId, item);
 }
 

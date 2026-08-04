@@ -11,7 +11,7 @@ import {
 import {
   CATALOG_REFRESH_EVENT,
   LIBRARY_EVENT,
-  listContinue,
+  listContinueDeduped,
   listFavorites,
   type ContinueItem,
   type FavoriteItem,
@@ -53,7 +53,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     () => {
       if (!playlistId) return "empty";
       const favs = listFavorites(playlistId);
-      const cont = listContinue(playlistId);
+      const cont = listContinueDeduped(playlistId);
       return `${playlistId}:c${catalogRefreshGen}:${favs.map((f) => f.id).join(",")}:${cont.map((c) => `${c.id}@${c.position ?? 0}`).join(",")}`;
     },
     () => "empty",
@@ -65,7 +65,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
   );
 
   const continueItems = useMemo(
-    () => (playlistId ? listContinue(playlistId) : []),
+    () => (playlistId ? listContinueDeduped(playlistId) : []),
     [playlistId, snapshot],
   );
 

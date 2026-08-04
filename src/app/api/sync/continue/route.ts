@@ -124,6 +124,18 @@ export async function PUT(request: NextRequest) {
     },
   });
 
+  // Keep one continue row per series (drop older episodes of the same show).
+  if (item.kind === "series" && item.seriesId != null) {
+    await prisma.continue.deleteMany({
+      where: {
+        userId: auth.sub,
+        kind: "series",
+        seriesId: String(item.seriesId),
+        NOT: { itemId: item.id },
+      },
+    });
+  }
+
   const count = await prisma.continue.count({ where: { userId: auth.sub } });
   if (count > 40) {
     const stale = await prisma.continue.findMany({

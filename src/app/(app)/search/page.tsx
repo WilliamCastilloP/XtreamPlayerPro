@@ -1,12 +1,19 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import {
+  Suspense,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
 import { PosterCard } from "@/components/catalog/PosterCard";
 import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import {
+  hydrateCatalogCache,
   loadAllLiveStreams,
   loadAllSeries,
   loadAllVodStreams,
@@ -17,6 +24,8 @@ import { catalogTitle } from "@/lib/xtream/title";
 import { withBack } from "@/lib/navigation/back";
 
 type Filter = "live" | "movies" | "series";
+
+const RESULT_CAP = 200;
 
 function parseFilter(value: string | null): Filter | null {
   if (value === "live" || value === "movies" || value === "series") return value;
@@ -30,6 +39,15 @@ function searchHref(query: string, filter: Filter | null): string {
   if (filter) params.set("f", filter);
   const qs = params.toString();
   return qs ? `/search?${qs}` : "/search";
+}
+
+function matchScore(haystack: string, q: string): number {
+  const h = haystack.toLowerCase();
+  if (!h.includes(q)) return -1;
+  if (h.startsWith(q)) return 0;
+  const idx = h.indexOf(` ${q}`);
+  if (idx >= 0) return 1;
+  return 2;
 }
 
 function SearchInner() {
@@ -50,6 +68,8 @@ function SearchInner() {
   const [readyCatalog, setReadyCatalog] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const deferredQuery = useDeferredValue(query);
+
   // Restore from URL (e.g. browser back / shared link).
   useEffect(() => {
     setQuery(qParam);
@@ -64,6 +84,7 @@ function SearchInner() {
     router.replace(next, { scroll: false });
   }, [query, filter, qParam, fParam, router]);
 
+  // Prefetch full catalog as soon as search opens (don't wait for typing).
   useEffect(() => {
     if (!credentials) {
       setReadyCatalog(false);
@@ -72,14 +93,14 @@ function SearchInner() {
       setSeries([]);
       return;
     }
-    const q = query.trim();
-    if (q.length < 2 || readyCatalog) return;
+    if (readyCatalog) return;
 
     let cancelled = false;
     async function load() {
       setLoading(true);
       setError(null);
       try {
+        await hydrateCatalogCache(credentials!);
         const [l, m, s] = await Promise.all([
           loadAllLiveStreams(credentials!),
           loadAllVodStreams(credentials!),
@@ -102,7 +123,7 @@ function SearchInner() {
     return () => {
       cancelled = true;
     };
-  }, [credentials, query, readyCatalog]);
+  }, [credentials, readyCatalog]);
 
   useEffect(() => {
     const reset = () => {
@@ -128,133 +149,112 @@ function SearchInner() {
   };
 
   const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (q.length < 2) return [];
+    const q = deferredQuery.trim().toLowerCase();
+    if (q.length < 2 || !readyCatalog) return [];
 
-    const liveHits =
-      filter === null || filter === "live"
-        ? (() => {
-            const seen = new Set<number | string>();
-            const out: {
-              key: string;
-              href: string;
-              title: string;
-              image?: string;
-              kind: string;
-              favKind: "live";
-              streamId: number | string;
-              aspect: "live";
-            }[] = [];
-            for (const s of live) {
-              const label = catalogTitle(s);
-              if (
-                !s.name.toLowerCase().includes(q) &&
-                !label.toLowerCase().includes(q)
-              ) {
-                continue;
-              }
-              if (seen.has(s.stream_id)) continue;
-              seen.add(s.stream_id);
-              out.push({
-                key: `live-${s.stream_id}`,
-                href: withBack(`/live/${s.stream_id}`, backTarget),
-                title: label,
-                image: s.stream_icon || undefined,
-                kind: "Live",
-                favKind: "live",
-                streamId: s.stream_id,
-                aspect: "live",
-              });
-              if (out.length >= 80) break;
-            }
-            return out;
-          })()
-        : [];
+    type Hit = {
+      key: string;
+      href: string;
+      title: string;
+      image?: string;
+      kind: string;
+      favKind: "live" | "movie" | "series";
+      streamId: number | string;
+      aspect: "live" | "poster";
+      score: number;
+    };
 
-    const movieHits =
-      filter === null || filter === "movies"
-        ? (() => {
-            const seen = new Set<number | string>();
-            const out: {
-              key: string;
-              href: string;
-              title: string;
-              image?: string;
-              kind: string;
-              favKind: "movie";
-              streamId: number | string;
-              aspect: "poster";
-            }[] = [];
-            for (const s of movies) {
-              const label = catalogTitle(s);
-              if (
-                !s.name.toLowerCase().includes(q) &&
-                !(s.title || "").toLowerCase().includes(q) &&
-                !label.toLowerCase().includes(q)
-              ) {
-                continue;
-              }
-              if (seen.has(s.stream_id)) continue;
-              seen.add(s.stream_id);
-              out.push({
-                key: `vod-${s.stream_id}`,
-                href: withBack(`/movies/${s.stream_id}`, backTarget),
-                title: label,
-                image: s.stream_icon || undefined,
-                kind: "Movie",
-                favKind: "movie",
-                streamId: s.stream_id,
-                aspect: "poster",
-              });
-              if (out.length >= 80) break;
-            }
-            return out;
-          })()
-        : [];
+    const liveHits: Hit[] = [];
+    if (filter === null || filter === "live") {
+      const seen = new Set<number | string>();
+      for (const s of live) {
+        const label = catalogTitle(s);
+        const scores = [s.name, label]
+          .map((t) => matchScore(t, q))
+          .filter((n) => n >= 0);
+        if (!scores.length) continue;
+        const score = Math.min(...scores);
+        if (seen.has(s.stream_id)) continue;
+        seen.add(s.stream_id);
+        liveHits.push({
+          key: `live-${s.stream_id}`,
+          href: withBack(`/live/${s.stream_id}`, backTarget),
+          title: label,
+          image: s.stream_icon || undefined,
+          kind: "Live",
+          favKind: "live",
+          streamId: s.stream_id,
+          aspect: "live",
+          score,
+        });
+      }
+      liveHits.sort((a, b) => a.score - b.score || a.title.localeCompare(b.title));
+    }
 
-    const seriesHits =
-      filter === null || filter === "series"
-        ? (() => {
-            const seen = new Set<number | string>();
-            const out: {
-              key: string;
-              href: string;
-              title: string;
-              image?: string;
-              kind: string;
-              favKind: "series";
-              streamId: number | string;
-              aspect: "poster";
-            }[] = [];
-            for (const s of series) {
-              const label = catalogTitle(s);
-              if (
-                !s.name.toLowerCase().includes(q) &&
-                !(s.title || "").toLowerCase().includes(q) &&
-                !label.toLowerCase().includes(q)
-              ) {
-                continue;
-              }
-              if (seen.has(s.series_id)) continue;
-              seen.add(s.series_id);
-              out.push({
-                key: `series-${s.series_id}`,
-                href: withBack(`/series/${s.series_id}`, backTarget),
-                title: label,
-                image: s.cover || undefined,
-                kind: "Series",
-                favKind: "series",
-                streamId: s.series_id,
-                aspect: "poster",
-              });
-              if (out.length >= 80) break;
-            }
-            return out;
-          })()
-        : [];
+    const movieHits: Hit[] = [];
+    if (filter === null || filter === "movies") {
+      const seen = new Set<number | string>();
+      for (const s of movies) {
+        const label = catalogTitle(s);
+        const scores = [s.name, s.title || "", label]
+          .map((t) => matchScore(t, q))
+          .filter((n) => n >= 0);
+        if (!scores.length) continue;
+        const score = Math.min(...scores);
+        if (seen.has(s.stream_id)) continue;
+        seen.add(s.stream_id);
+        movieHits.push({
+          key: `vod-${s.stream_id}`,
+          href: withBack(`/movies/${s.stream_id}`, backTarget),
+          title: label,
+          image: s.stream_icon || undefined,
+          kind: "Movie",
+          favKind: "movie",
+          streamId: s.stream_id,
+          aspect: "poster",
+          score,
+        });
+      }
+      movieHits.sort(
+        (a, b) => a.score - b.score || a.title.localeCompare(b.title),
+      );
+    }
 
-    return [...liveHits, ...movieHits, ...seriesHits];
-  }, [query, filter, live, movies, series, backTarget]);
+    const seriesHits: Hit[] = [];
+    if (filter === null || filter === "series") {
+      const seen = new Set<number | string>();
+      for (const s of series) {
+        const label = catalogTitle(s);
+        const scores = [s.name, s.title || "", label]
+          .map((t) => matchScore(t, q))
+          .filter((n) => n >= 0);
+        if (!scores.length) continue;
+        const score = Math.min(...scores);
+        if (seen.has(s.series_id)) continue;
+        seen.add(s.series_id);
+        seriesHits.push({
+          key: `series-${s.series_id}`,
+          href: withBack(`/series/${s.series_id}`, backTarget),
+          title: label,
+          image: s.cover || undefined,
+          kind: "Series",
+          favKind: "series",
+          streamId: s.series_id,
+          aspect: "poster",
+          score,
+        });
+      }
+      seriesHits.sort(
+        (a, b) => a.score - b.score || a.title.localeCompare(b.title),
+      );
+    }
+
+    return [
+      ...liveHits.slice(0, RESULT_CAP),
+      ...movieHits.slice(0, RESULT_CAP),
+      ...seriesHits.slice(0, RESULT_CAP),
+    ];
+  }, [deferredQuery, filter, live, movies, series, backTarget, readyCatalog]);
 
   const chips: { id: Filter; label: string }[] = [
     { id: "live", label: t("liveTv") },

@@ -121,6 +121,24 @@ export function listContinue(playlistId: string): ContinueItem[] {
   );
 }
 
+/**
+ * Home / rails: one row per movie/live, and one row per series (latest episode).
+ * Storage may still keep older episode rows until the next upsert prunes them.
+ */
+export function listContinueDeduped(playlistId: string): ContinueItem[] {
+  const seenSeries = new Set<string>();
+  const out: ContinueItem[] = [];
+  for (const item of listContinue(playlistId)) {
+    if (item.kind === "series") {
+      const sid = String(item.seriesId ?? item.streamId);
+      if (seenSeries.has(sid)) continue;
+      seenSeries.add(sid);
+    }
+    out.push(item);
+  }
+  return out;
+}
+
 export function getContinueItem(
   playlistId: string,
   kind: ContinueItem["kind"],
@@ -150,7 +168,22 @@ export function upsertContinue(
   options?: UpsertContinueOptions,
 ) {
   const id = `${item.kind}:${item.streamId}`;
-  const current = listContinue(playlistId).filter((c) => c.id !== id);
+  const seriesKey =
+    item.kind === "series" && item.seriesId != null
+      ? String(item.seriesId)
+      : null;
+  // Drop other episodes of the same show so "Continue" shows one card per series.
+  const current = listContinue(playlistId).filter((c) => {
+    if (c.id === id) return false;
+    if (
+      seriesKey &&
+      c.kind === "series" &&
+      String(c.seriesId ?? "") === seriesKey
+    ) {
+      return false;
+    }
+    return true;
+  });
   const next: ContinueItem[] = [
     { ...item, id, updatedAt: Date.now() },
     ...current,

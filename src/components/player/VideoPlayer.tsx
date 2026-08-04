@@ -40,7 +40,7 @@ import {
 import { cueTextAt, parseWebVtt, type VttCue } from "@/lib/player/vtt";
 
 const CONNECT_READY_SEC = 2.5;
-const CONNECT_READY_SEEK_SEC = 1.2;
+const CONNECT_READY_SEEK_SEC = 0.7;
 /** Live edge usually only has ~1–2s ahead — don't wait like VOD. */
 const CONNECT_READY_LIVE_SEC = 0.8;
 
@@ -1410,6 +1410,8 @@ export function VideoPlayer({
     const hls = hlsRef.current;
     if (isServerHls) {
       const absolute = serverHlsOffset + (videoRef.current?.currentTime || 0);
+      // Kick warm session for this audio+position before tearing down current.
+      prefetchServerHls(absolute, id);
       pushDebug(`audio · server HLS · ${id}`);
       restartServerHlsAt(absolute, id, t("playerChangingAudio"));
       bumpChrome();
@@ -1616,13 +1618,16 @@ export function VideoPlayer({
           /* ignore */
         }
         // Within already-remuxed window → cheap local seek.
-        if (local >= 0 && local <= bufEnd - 0.35) {
-          video.currentTime = local;
+        // Slightly looser margin so small scrub jumps stay local.
+        if (local >= 0 && local <= bufEnd + 0.15) {
+          video.currentTime = Math.min(local, Math.max(0, bufEnd - 0.05));
           void video.play().catch(() => undefined);
         } else {
           // Restart ffmpeg HLS from a snapped wall-clock position (2s buckets
           // match the proxy session id so scrub-prefetch can warm it).
           const snapped = snapHlsStart(target);
+          // Warm target session first (often already warm from scrub hover).
+          prefetchServerHls(snapped, serverHlsAudio);
           restartingServerHls = true;
           const frame = captureFreezeFrame(video);
           if (frame) setHoldPoster(frame);
@@ -1700,12 +1705,11 @@ export function VideoPlayer({
   const controlsEnabled = hasStarted && !seekingUi && !error;
 
   const prefetchServerHls = useCallback(
-    (absoluteSec: number) => {
+    (absoluteSec: number, audioIndex = serverHlsAudio) => {
       if (!isServerHls || !src) return;
       const start = snapHlsStart(absoluteSec);
-      if (start <= 0) return;
       // warm=1: start ffmpeg without killing the session currently playing.
-      const warmUrl = withServerHlsParams(src, start, serverHlsAudio, {
+      const warmUrl = withServerHlsParams(src, start, audioIndex, {
         warm: true,
       });
       void fetch(warmUrl, { cache: "no-store" }).catch(() => undefined);
@@ -1753,8 +1757,13 @@ export function VideoPlayer({
           if (resumeSubtitle >= 0 && subs.some((s) => s.id === resumeSubtitle)) {
             setSubtitleId(resumeSubtitle);
           }
-          // Don't warm-extract here — competing with HLS truncated the VTT
-          // to ~15 minutes. Extract on demand when the user picks a track.
+          // Warm alternate audio sessions at current position so switches are faster.
+          const absolute =
+            serverHlsOffset + (videoRef.current?.currentTime || 0);
+          for (const a of audios.slice(0, 3)) {
+            if (a.id === serverHlsAudio) continue;
+            prefetchServerHls(absolute, a.id);
+          }
         } else {
           setSubtitleOptions([]);
           setSubtitleId(-1);
@@ -1773,7 +1782,27 @@ export function VideoPlayer({
     return () => {
       cancelled = true;
     };
-  }, [isServerHls, src, t, pushDebug, resumeAudio, resumeSubtitle]);
+  }, [
+    isServerHls,
+    src,
+    t,
+    pushDebug,
+    resumeAudio,
+    resumeSubtitle,
+    prefetchServerHls,
+    serverHlsOffset,
+    serverHlsAudio,
+  ]);
+
+  // After playback is stable, pre-extract resumed subtitles so toggle is instant.
+  useEffect(() => {
+    if (!isServerHls || !hasStarted || subtitleId < 0) return;
+    const timer = window.setTimeout(() => {
+      void loadProxySubtitles(subtitleId, { quiet: true });
+    }, 2500);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only warm once settled
+  }, [isServerHls, hasStarted, subtitleId]);
 
   const schedulePrefetch = useCallback(
     (absoluteSec: number) => {

@@ -925,6 +925,9 @@ export function VideoPlayer({
               backBufferLength: 10,
               liveSyncDurationCount: 3,
               liveMaxLatencyDurationCount: 6,
+              startLevel: -1,
+              abrEwmaDefaultEstimate: 5_000_000,
+              capLevelToPlayerSize: true,
               xhrSetup: (xhr) => {
                 xhr.withCredentials = false;
               },
@@ -939,6 +942,9 @@ export function VideoPlayer({
               liveSyncDurationCount: 1_000_000,
               liveMaxLatencyDurationCount: 1_000_001,
               maxLiveSyncPlaybackRate: 1,
+              startLevel: -1,
+              abrEwmaDefaultEstimate: 5_000_000,
+              capLevelToPlayerSize: true,
               xhrSetup: (xhr) => {
                 xhr.withCredentials = false;
               },
@@ -1827,6 +1833,21 @@ export function VideoPlayer({
     ? scrubValue
     : serverHlsOffset + currentTime;
   const timelineMax = duration > 0 ? duration : Math.max(timelineValue, 1);
+
+  // Prefetch next episode route (~60s left) so navigation feels instant.
+  useEffect(() => {
+    if (!nextEpisode || nextCancelled || kind !== "series" || duration <= 0) {
+      return;
+    }
+    const remaining = duration - timelineValue;
+    if (remaining > 0 && remaining <= 60) {
+      try {
+        router.prefetch(nextEpisode.href);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [nextEpisode, nextCancelled, kind, duration, timelineValue, router]);
 
   // Next-episode countdown: start when 30s remain.
   useEffect(() => {

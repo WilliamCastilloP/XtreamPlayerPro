@@ -149,6 +149,9 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
     void import("@/lib/sync/client").then(({ scheduleSyncAuth }) =>
       scheduleSyncAuth(credentials),
     );
+    void import("@/lib/xtream/catalog-cache").then(({ hydrateCatalogCache }) =>
+      hydrateCatalogCache(credentials),
+    );
   }, [credentials]);
 
   const value = useMemo(

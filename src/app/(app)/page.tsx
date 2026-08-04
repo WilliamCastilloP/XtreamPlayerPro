@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { BrowseRails, type BrowseKind } from "@/components/catalog/BrowseRails";
 import { HomeGenreBar } from "@/components/catalog/HomeGenreBar";
 import { HeroBanner } from "@/components/catalog/HeroBanner";
@@ -35,6 +35,7 @@ function HomeInner() {
   const { credentials, activePlaylist } = usePlaylists();
   const { continueItems: libraryContinue, favorites, catalogVersion } = useLibrary();
   const { t } = useLocale();
+  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const backPath = currentBackPath(pathname, searchParams.toString());
@@ -195,6 +196,17 @@ function HomeInner() {
     featuredSeries[0] ||
     featuredLive[0] ||
     null;
+
+  // Prefetch hero / continue watch route so first play feels instant.
+  useEffect(() => {
+    const target = hero?.playHref || hero?.href;
+    if (!target) return;
+    try {
+      router.prefetch(target);
+    } catch {
+      /* ignore */
+    }
+  }, [hero?.playHref, hero?.href, router]);
 
   const sectionContinue =
     section === "live"

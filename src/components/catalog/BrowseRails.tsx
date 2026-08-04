@@ -19,6 +19,8 @@ import {
   loadAllSeries,
   loadAllVodStreams,
   loadLiveCategories,
+  loadSeriesCategories,
+  loadVodCategories,
   type LiveStream,
   type SeriesItem,
   type VodStream,
@@ -144,10 +146,9 @@ export function BrowseRails({
     let cancelled = false;
 
     async function load() {
-      setLoading(true);
       setError(null);
-      setRails([]);
       setLoadingMore(false);
+      setLoading(true);
       try {
         let built: Rail[] = [];
 
@@ -171,10 +172,15 @@ export function BrowseRails({
             items: mapLiveItems(rail.items.slice(0, PREVIEW_LIMIT), backPath),
           }));
         } else {
-          const streams =
+          // Movies/series: categories + full list in parallel (SWR may resolve IDB instantly).
+          const [, streams] = await Promise.all([
             kind === "movies"
-              ? await loadAllVodStreams(credentials!)
-              : await loadAllSeries(credentials!);
+              ? loadVodCategories(credentials!)
+              : loadSeriesCategories(credentials!),
+            kind === "movies"
+              ? loadAllVodStreams(credentials!)
+              : loadAllSeries(credentials!),
+          ]);
           if (cancelled) return;
           const grouped =
             kind === "movies"

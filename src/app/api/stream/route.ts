@@ -278,7 +278,7 @@ async function proxy(request: NextRequest) {
           }
           const headers = corsHeaders();
           headers.set("Content-Type", contentType || "application/octet-stream");
-          return new Response(new Blob([all]), {
+          return new Response(Buffer.from(all), {
             status: upstream.status,
             headers,
           });

@@ -8,6 +8,7 @@ import { CatalogPager } from "@/components/catalog/CatalogPager";
 import { PosterCard } from "@/components/catalog/PosterCard";
 import { PosterSkeletonRow } from "@/components/catalog/Skeleton";
 import type { BrowseKind } from "@/components/catalog/BrowseRails";
+import { APP_FRAME } from "@/components/layout/AppTopBar";
 import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import type { FavoriteItem } from "@/lib/library/storage";
@@ -152,7 +153,7 @@ function CategoryBrowseInner() {
     return (
       <div className="space-y-4 px-4 py-6 md:px-6">
         <p className="text-sm text-[var(--xp-danger)]">Invalid catalog type.</p>
-        <Link href="/" className="text-sm text-[var(--xp-accent)] hover:underline">
+        <Link href="/" className="xp-link text-sm">
           Back to Home
         </Link>
       </div>
@@ -162,8 +163,8 @@ function CategoryBrowseInner() {
   const isLive = kind === "live";
 
   return (
-    <div className="space-y-5 pb-8 pt-3 md:pt-5">
-      <div className="space-y-3 px-4 md:px-6">
+    <div className={`${APP_FRAME} space-y-5 pb-8 pt-3 md:pt-5`}>
+      <div className="space-y-3 px-4 md:px-6 lg:px-8 xl:px-12">
         <Link
           href={backHref}
           className="inline-flex items-center gap-1.5 text-sm text-[var(--xp-muted)] transition hover:text-[var(--xp-text)]"

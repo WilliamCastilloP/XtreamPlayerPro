@@ -294,7 +294,7 @@ function SeriesDetailInner() {
                     {canResumeEp ? (
                       <Link
                         href={startOverHref}
-                        className="shrink-0 text-xs font-semibold text-[var(--xp-accent)] hover:underline"
+                        className="xp-link shrink-0 text-xs font-semibold"
                       >
                         {t("episodeStartOver")}
                       </Link>

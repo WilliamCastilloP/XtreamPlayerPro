@@ -74,12 +74,35 @@ export function MediaRow({
     el.scrollBy({ left: dir * amount, behavior: "smooth" });
   };
 
+  const heading = (
+    <h2 className="min-w-0 font-[family-name:var(--xp-font-display)] text-lg font-semibold md:text-xl">
+      {href ? (
+        <Link href={href} className="xp-link-title">
+          {title}
+        </Link>
+      ) : (
+        title
+      )}
+    </h2>
+  );
+
+  const seeAll = href ? (
+    <Link
+      href={href}
+      className="xp-link inline-flex shrink-0 items-center gap-0.5 text-sm"
+    >
+      {label}
+      <ChevronRight className="h-4 w-4 opacity-80" aria-hidden />
+    </Link>
+  ) : null;
+
   if (!items.length) {
     return emptyLabel ? (
-      <section className="xp-fade-in space-y-3">
-        <h2 className="px-4 font-[family-name:var(--xp-font-display)] text-lg font-semibold md:px-6 md:text-xl lg:px-8 xl:px-12">
-          {title}
-        </h2>
+      <section className="xp-media-row xp-fade-in space-y-3">
+        <div className="flex items-end justify-between gap-3 px-4 md:px-6 lg:px-8 xl:px-12">
+          {heading}
+          {seeAll}
+        </div>
         <p className="px-4 text-sm text-[var(--xp-muted)] md:px-6 lg:px-8 xl:px-12">
           {emptyLabel}
         </p>
@@ -88,27 +111,18 @@ export function MediaRow({
   }
 
   return (
-    <section className="xp-fade-in space-y-3">
+    <section className="xp-media-row xp-fade-in space-y-3">
       <div className="flex items-end justify-between gap-3 px-4 md:px-6 lg:px-8 xl:px-12">
-        <h2 className="min-w-0 font-[family-name:var(--xp-font-display)] text-lg font-semibold md:text-xl">
-          {title}
-        </h2>
-        {href ? (
-          <Link
-            href={href}
-            className="shrink-0 text-sm font-medium text-[var(--xp-accent)] hover:underline"
-          >
-            {label}
-          </Link>
-        ) : null}
+        {heading}
+        {seeAll}
       </div>
-      <div className="relative">
+      <div className="relative min-w-0 w-full overflow-hidden">
         {canPrev ? (
           <button
             type="button"
             aria-label={t("pagerPrev")}
             onClick={() => scrollByCards(-1)}
-            className="absolute left-1 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-[var(--xp-surface)]/95 text-[var(--xp-text)] shadow-lg ring-1 ring-[var(--xp-border)] md:inline-flex lg:left-6 xl:left-10"
+            className="absolute left-1 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-[var(--xp-surface)]/95 text-[var(--xp-text)] shadow-lg ring-1 ring-[var(--xp-border)] transition hover:bg-[var(--xp-surface-2)] md:inline-flex lg:left-6 xl:left-10"
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
@@ -118,14 +132,14 @@ export function MediaRow({
             type="button"
             aria-label={t("pagerNext")}
             onClick={() => scrollByCards(1)}
-            className="absolute right-1 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-[var(--xp-surface)]/95 text-[var(--xp-text)] shadow-lg ring-1 ring-[var(--xp-border)] md:inline-flex lg:right-6 xl:right-10"
+            className="absolute right-1 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-[var(--xp-surface)]/95 text-[var(--xp-text)] shadow-lg ring-1 ring-[var(--xp-border)] transition hover:bg-[var(--xp-surface-2)] md:inline-flex lg:right-6 xl:right-10"
           >
             <ChevronRight className="h-5 w-5" />
           </button>
         ) : null}
         <div
           ref={scrollerRef}
-          className="flex gap-2.5 overflow-x-auto px-4 py-1 scrollbar-none md:gap-3 md:px-6 lg:px-8 xl:px-12"
+          className="xp-media-row__scroller gap-2.5 px-4 py-1 scrollbar-none md:gap-3 md:px-6 lg:px-8 xl:px-12"
         >
           {items.map((item) => (
             <div key={item.key} className={posterWidth}>

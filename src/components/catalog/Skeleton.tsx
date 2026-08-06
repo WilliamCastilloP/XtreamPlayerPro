@@ -4,7 +4,7 @@ export function Shimmer({ className = "" }: { className?: string }) {
 
 export function PosterSkeletonRow({ count = 6 }: { count?: number }) {
   return (
-    <div className="flex gap-3 overflow-hidden px-4 md:px-6">
+    <div className="flex gap-3 overflow-hidden px-4 md:px-6 lg:px-8 xl:px-12">
       {Array.from({ length: count }).map((_, i) => (
         <Shimmer
           key={i}
@@ -17,7 +17,7 @@ export function PosterSkeletonRow({ count = 6 }: { count?: number }) {
 
 export function ChannelSkeletonList({ count = 8 }: { count?: number }) {
   return (
-    <div className="space-y-2 px-4 md:px-6">
+    <div className="space-y-2 px-4 md:px-6 lg:px-8 xl:px-12">
       {Array.from({ length: count }).map((_, i) => (
         <Shimmer key={i} className="h-16 w-full rounded-xl" />
       ))}

@@ -3,19 +3,25 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Search, UserRound } from "lucide-react";
+import { Clapperboard, Search, UserRound } from "lucide-react";
 import { BrandMark } from "@/components/brand/BrandMark";
 import type { BrowseKind } from "@/components/catalog/BrowseRails";
 import { useLocale } from "@/components/providers/LocaleProvider";
 
 type Props = {
   scrolled: boolean;
+  /** Temporary: replay boot splash while tuning the animation. */
+  onReplaySplash?: () => void;
 };
 
 const SECTIONS: BrowseKind[] = ["live", "movies", "series"];
 
+/** Centered column (max 1400px). Pair with APP_GUTTER for padded content. */
+export const APP_FRAME = "xp-frame";
 /** Same horizontal padding as catalog rows / genre bar */
 export const APP_GUTTER = "px-4 md:px-6 lg:px-8 xl:px-12";
+/** Frame + gutter — use for header / page blocks that should not full-bleed */
+export const APP_CONTENT = `${APP_FRAME} ${APP_GUTTER}`;
 
 function parseSection(value: string | null): BrowseKind | null {
   if (value === "live" || value === "movies" || value === "series") return value;
@@ -43,7 +49,7 @@ function sectionActive(
   );
 }
 
-function AppTopBarInner({ scrolled }: Props) {
+function AppTopBarInner({ scrolled, onReplaySplash }: Props) {
   const { t } = useLocale();
   const router = useRouter();
   const pathname = usePathname();
@@ -86,11 +92,23 @@ function AppTopBarInner({ scrolled }: Props) {
       }`}
     >
       <div
-        className={`pointer-events-auto flex w-full flex-wrap items-center gap-x-5 gap-y-2 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] ${APP_GUTTER}`}
+        className={`pointer-events-auto flex w-full flex-wrap items-center gap-x-5 gap-y-2 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] ${APP_CONTENT}`}
       >
         <BrandMark size="md" className="order-1 !text-white drop-shadow-sm" />
 
         <div className="order-2 ml-auto flex shrink-0 items-center gap-0.5 md:order-3">
+          {onReplaySplash ? (
+            <button
+              type="button"
+              aria-label={t("bootPreviewHint")}
+              title={t("bootPreviewHint")}
+              onClick={onReplaySplash}
+              className="inline-flex h-10 cursor-pointer items-center gap-1 rounded-full px-2.5 text-xs font-medium text-white/75 transition hover:text-white"
+            >
+              <Clapperboard className="h-4 w-4" />
+              {t("bootPreview")}
+            </button>
+          ) : null}
           <button
             type="button"
             aria-label={t("navSearch")}
@@ -131,10 +149,10 @@ function AppTopBarInner({ scrolled }: Props) {
                   key={id}
                   type="button"
                   onClick={() => setSection(id)}
-                  className={`cursor-pointer text-sm tracking-wide transition ${
+                  className={`cursor-pointer text-sm tracking-wide transition-colors duration-150 ${
                     active
                       ? "font-bold text-white underline decoration-2 underline-offset-[6px]"
-                      : "font-medium text-white/70 hover:text-white"
+                      : "font-medium text-white/70 hover:text-[var(--xp-accent)]"
                   }`}
                 >
                   {sectionLabel(id)}
@@ -148,10 +166,10 @@ function AppTopBarInner({ scrolled }: Props) {
   );
 }
 
-export function AppTopBar({ scrolled }: Props) {
+export function AppTopBar({ scrolled, onReplaySplash }: Props) {
   return (
     <Suspense fallback={null}>
-      <AppTopBarInner scrolled={scrolled} />
+      <AppTopBarInner scrolled={scrolled} onReplaySplash={onReplaySplash} />
     </Suspense>
   );
 }

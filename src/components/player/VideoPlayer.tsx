@@ -302,6 +302,10 @@ export function VideoPlayer({
   const [copyState, setCopyState] = useState<"idle" | "ok" | "err">("idle");
   const [probing, setProbing] = useState(false);
   const hideTimer = useRef<number | null>(null);
+  const playingRef = useRef(false);
+  const showDebugRef = useRef(false);
+  const showSettingsRef = useRef(false);
+  const errorRef = useRef<string | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const remuxRef = useRef<RemuxHandle | null>(null);
   const lastFailDetail = useRef<string | null>(null);
@@ -517,10 +521,38 @@ export function VideoPlayer({
   const bumpChrome = () => {
     setShowChrome(true);
     if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    // Hide all chrome (back, debug, timeline) after idle playback.
     hideTimer.current = window.setTimeout(() => {
-      if (playing && !error && !showDebug && !showSettings) setShowChrome(false);
-    }, 2800);
+      if (
+        playingRef.current &&
+        !errorRef.current &&
+        !showDebugRef.current &&
+        !showSettingsRef.current
+      ) {
+        setShowChrome(false);
+      }
+    }, 10_000);
   };
+
+  useEffect(() => {
+    playingRef.current = playing;
+  }, [playing]);
+  useEffect(() => {
+    showDebugRef.current = showDebug;
+  }, [showDebug]);
+  useEffect(() => {
+    showSettingsRef.current = showSettings;
+  }, [showSettings]);
+  useEffect(() => {
+    errorRef.current = error;
+  }, [error]);
+
+  // Start the auto-hide countdown once playback is running (not only on mouse move).
+  useEffect(() => {
+    if (!hasStarted || !playing || error || showDebug || showSettings) return;
+    bumpChrome();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-arm when playback/session gates change
+  }, [hasStarted, playing, error, showDebug, showSettings]);
 
   const toggleChrome = () => {
     if (!hasStarted || error || awaitingTap) return;
@@ -2183,15 +2215,25 @@ export function VideoPlayer({
         </div>
       ) : null}
 
-      {/* Back + title — always above error/retry overlay */}
-      <div className="pointer-events-none absolute left-0 right-0 top-0 z-50 flex items-center gap-3 p-4 pt-[max(1rem,env(safe-area-inset-top))]">
+      {/* Back + title + debug — hide with the rest of chrome while playing */}
+      <div
+        className={`xp-player-chrome pointer-events-none absolute left-0 right-0 top-0 z-50 flex items-center gap-3 p-4 pt-[max(1rem,env(safe-area-inset-top))] ${
+          showChrome || error || !hasStarted || awaitingTap || showDebug
+            ? "opacity-100"
+            : "opacity-0"
+        }`}
+      >
         <button
           type="button"
           onClick={(e) => {
             e.stopPropagation();
             goBack();
           }}
-          className="pointer-events-auto flex h-11 w-11 cursor-pointer items-center justify-center rounded-full bg-black/55 text-white backdrop-blur"
+          className={`flex h-11 w-11 cursor-pointer items-center justify-center rounded-full bg-black/55 text-white backdrop-blur ${
+            showChrome || error || !hasStarted || awaitingTap || showDebug
+              ? "pointer-events-auto"
+              : "pointer-events-none"
+          }`}
           aria-label={t("back")}
         >
           <ArrowLeft className="h-5 w-5" />
@@ -2207,8 +2249,13 @@ export function VideoPlayer({
             e.stopPropagation();
             setShowDebug((v) => !v);
             setShowChrome(true);
+            bumpChrome();
           }}
-          className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-2 text-xs font-medium text-white backdrop-blur"
+          className={`inline-flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-2 text-xs font-medium text-white backdrop-blur ${
+            showChrome || error || !hasStarted || awaitingTap || showDebug
+              ? "pointer-events-auto"
+              : "pointer-events-none"
+          }`}
         >
           <Bug className="h-3.5 w-3.5" />
           {showDebug ? t("playerDebugHide") : t("playerDebug")}
@@ -2250,7 +2297,7 @@ export function VideoPlayer({
       ) : null}
 
       <div
-        className={`xp-player-chrome absolute inset-0 z-20 bg-gradient-to-t from-black/80 via-transparent to-transparent transition-opacity duration-300 ${
+        className={`xp-player-chrome absolute inset-0 z-20 bg-gradient-to-t from-black/80 via-transparent to-transparent ${
           showChrome && !error && hasStarted
             ? "opacity-100"
             : "pointer-events-none opacity-0"

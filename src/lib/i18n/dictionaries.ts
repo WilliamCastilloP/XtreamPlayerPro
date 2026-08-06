@@ -29,6 +29,9 @@ const en = {
 
   seeAll: "See all",
   seeAllCount: "See all ({count})",
+  seeAllLive: "See all live",
+  seeAllMovies: "See all movies",
+  seeAllSeries: "See all series",
   categoriesPreview: "{shown}{total} categories · {limit} per row",
   loadingMore: " · showing more…",
   loadingCatalog: "Loading {kind} catalog…",
@@ -61,6 +64,15 @@ const en = {
   searchTypeHint: "Type to search Live, Movies, and Series together.",
   searchNoMatches: "No matches.",
   searchLoadingCatalog: "Loading full catalog…",
+  searchWaitCatalog:
+    "Please wait — the catalog is still loading. Search will be ready in a moment.",
+  searchInputDisabled: "Search available when catalog is ready…",
+
+  bootPreparing: "Preparing your library…",
+  bootLoadingCatalog: "Downloading live, movies, and series…",
+  bootAlmostReady: "Almost ready…",
+  bootPreview: "Anim",
+  bootPreviewHint: "Replay boot animation",
 
   playerConnecting: "Connecting…",
   playerLoadingStream: "Connecting…",
@@ -117,7 +129,8 @@ const en = {
   episodeProgress: "{pct}% watched",
   episodeCompleted: "Completed",
   refreshPlaylist: "Refresh playlist",
-  refreshPlaylistHint: "Reload categories and catalog from the panel",
+  refreshPlaylistHint:
+    "Download a fresh catalog from the panel (saved on this device until you refresh again)",
   refreshPlaylistDone: "Catalog updated",
   refreshPlaylistFailed: "Could not refresh catalog",
   refreshing: "Refreshing…",
@@ -179,6 +192,9 @@ const es: Record<MessageKey, string> = {
 
   seeAll: "Ver todo",
   seeAllCount: "Ver todo ({count})",
+  seeAllLive: "Ver todo en vivo",
+  seeAllMovies: "Ver todas las películas",
+  seeAllSeries: "Ver todas las series",
   categoriesPreview: "{shown}{total} categorías · {limit} por fila",
   loadingMore: " · mostrando más…",
   loadingCatalog: "Cargando catálogo de {kind}…",
@@ -211,6 +227,15 @@ const es: Record<MessageKey, string> = {
   searchTypeHint: "Escribe para buscar en En vivo, Películas y Series a la vez.",
   searchNoMatches: "Sin resultados.",
   searchLoadingCatalog: "Cargando catálogo completo…",
+  searchWaitCatalog:
+    "Espera un momento — el catálogo aún se está cargando. La búsqueda estará lista enseguida.",
+  searchInputDisabled: "La búsqueda estará disponible cuando cargue el catálogo…",
+
+  bootPreparing: "Preparando tu biblioteca…",
+  bootLoadingCatalog: "Descargando live, películas y series…",
+  bootAlmostReady: "Casi listo…",
+  bootPreview: "Anim",
+  bootPreviewHint: "Repetir animación de arranque",
 
   playerConnecting: "Conectando…",
   playerLoadingStream: "Conectando…",
@@ -267,7 +292,8 @@ const es: Record<MessageKey, string> = {
   episodeProgress: "{pct}% visto",
   episodeCompleted: "Completado",
   refreshPlaylist: "Actualizar playlist",
-  refreshPlaylistHint: "Recargar categorías y catálogo desde el panel",
+  refreshPlaylistHint:
+    "Descargar un catálogo nuevo del panel (queda guardado en este dispositivo hasta que lo actualices otra vez)",
   refreshPlaylistDone: "Catálogo actualizado",
   refreshPlaylistFailed: "No se pudo actualizar el catálogo",
   refreshing: "Actualizando…",

@@ -16,7 +16,7 @@ export default function EditPlaylistPage() {
     return (
       <div className="mx-auto max-w-xl px-5 py-16">
         <p className="mb-4">Playlist not found.</p>
-        <Link href="/playlists" className="text-[var(--xp-accent)]">
+        <Link href="/playlists" className="xp-link">
           Back to playlists
         </Link>
       </div>

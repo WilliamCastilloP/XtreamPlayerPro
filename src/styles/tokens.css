@@ -17,6 +17,7 @@
   --xp-header-fade: rgba(11, 15, 20, 0.97);
   --xp-nav-bg: rgba(11, 15, 20, 0.96);
   --xp-radius: 14px;
+  --xp-content-max: 1400px;
   --xp-font-display: var(--font-syne), ui-sans-serif, sans-serif;
   --xp-font-ui: var(--font-figtree), ui-sans-serif, sans-serif;
 }

@@ -233,7 +233,7 @@ function MovieDetailInner() {
               }
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex text-sm font-semibold text-[var(--xp-accent)] hover:underline"
+              className="xp-link inline-flex text-sm font-semibold"
             >
               {t("metaTrailer")}
             </a>

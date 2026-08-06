@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { HeroBanner } from "@/components/catalog/HeroBanner";
+import { APP_FRAME } from "@/components/layout/AppTopBar";
 import {
   MediaRow,
   STANDARD_POSTER_WIDTH,
@@ -242,9 +243,38 @@ export function BrowseRails({
   const kindLabel =
     kind === "movies" ? t("movies") : kind === "series" ? t("series") : t("liveTv");
 
-  return (
+  const heroBanner =
+    hero && !hideHero ? (
+      <HeroBanner
+        cropLetterbox={isLive}
+        eyebrow={rails[0]?.name || title}
+        title={hero.title}
+        subtitle={
+          isLive ? t("tapPlayRotate") : hero.subtitle || t("openDetails")
+        }
+        image={hero.image}
+        playHref={
+          isLive
+            ? watchPath("live", hero.href.split("/").pop() || "", {
+                title: hero.title,
+                image: hero.image || "",
+              })
+            : kind === "movies"
+              ? watchPath("movie", hero.href.split("/").pop() || "", {
+                  title: hero.title,
+                  image: hero.image || "",
+                })
+              : hero.href
+        }
+        infoHref={hero.href}
+      />
+    ) : null;
+
+  const body = (
     <div
-      className={`space-y-6 pb-8 ${embedded ? "pt-0" : "pt-3 lg:pt-5"} lg:space-y-8`}
+      className={`space-y-6 ${embedded ? "pt-0" : "pt-3 lg:pt-5"} lg:space-y-8 ${
+        embedded ? "" : "pb-8"
+      }`}
     >
       {!embedded ? (
         <div className="px-4 md:px-6 lg:px-8 xl:px-12">
@@ -286,32 +316,6 @@ export function BrowseRails({
             </p>
           ) : null}
 
-          {hero && !hideHero ? (
-            <HeroBanner
-              cropLetterbox={isLive}
-              eyebrow={rails[0]?.name || title}
-              title={hero.title}
-              subtitle={
-                isLive ? t("tapPlayRotate") : hero.subtitle || t("openDetails")
-              }
-              image={hero.image}
-              playHref={
-                isLive
-                  ? watchPath("live", hero.href.split("/").pop() || "", {
-                      title: hero.title,
-                      image: hero.image || "",
-                    })
-                  : kind === "movies"
-                    ? watchPath("movie", hero.href.split("/").pop() || "", {
-                        title: hero.title,
-                        image: hero.image || "",
-                      })
-                    : hero.href
-              }
-              infoHref={hero.href}
-            />
-          ) : null}
-
           {rails.map((rail) => (
             <MediaRow
               key={rail.id}
@@ -335,5 +339,14 @@ export function BrowseRails({
         </>
       )}
     </div>
+  );
+
+  if (embedded) return body;
+
+  return (
+    <>
+      {heroBanner}
+      <div className={APP_FRAME}>{body}</div>
+    </>
   );
 }

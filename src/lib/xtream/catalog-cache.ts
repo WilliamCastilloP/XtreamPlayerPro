@@ -20,16 +20,24 @@ type CacheBucket<T> = {
   data: T;
 };
 
-/** Serve from memory without network while younger than this. */
-const TTL_FRESH_MS = 5 * 60 * 1000;
-/** Serve stale from memory/IDB and revalidate in background. */
-const TTL_STALE_MS = 45 * 60 * 1000;
+/**
+ * Catalog is persisted until the user refreshes from Account.
+ * No automatic TTL / background revalidate.
+ */
 const IDB_NAME = "xp-catalog";
 const IDB_STORE = "buckets";
 const IDB_VERSION = 1;
 
+const FULL_CATALOG_PARTS = [
+  "live-cats",
+  "vod-cats",
+  "series-cats",
+  "live-all",
+  "vod-all",
+  "series-all",
+] as const;
+
 const memory = new Map<string, CacheBucket<unknown>>();
-const revalidating = new Set<string>();
 
 function key(credentials: XtreamCredentials, part: string) {
   return `${credentials.serverUrl}|${credentials.username}|${part}`;
@@ -105,28 +113,22 @@ function peekMemory<T>(
   return memory.get(key(credentials, part)) as CacheBucket<T> | undefined;
 }
 
-function ageOk(bucket: CacheBucket<unknown>, ttl: number) {
-  return Date.now() - bucket.at < ttl;
-}
-
 function peek<T>(
   credentials: XtreamCredentials,
   part: string,
 ): T | undefined {
-  const hit = peekMemory<T>(credentials, part);
-  if (hit && ageOk(hit, TTL_STALE_MS)) return hit.data;
-  return undefined;
+  return peekMemory<T>(credentials, part)?.data;
 }
 
-async function readStale<T>(
+async function readCached<T>(
   credentials: XtreamCredentials,
   part: string,
 ): Promise<T | undefined> {
   const k = key(credentials, part);
   const mem = memory.get(k) as CacheBucket<T> | undefined;
-  if (mem && ageOk(mem, TTL_STALE_MS)) return mem.data;
+  if (mem) return mem.data;
   const disk = await idbGet<T>(k);
-  if (disk && ageOk(disk, TTL_STALE_MS)) {
+  if (disk) {
     memory.set(k, disk);
     return disk.data;
   }
@@ -139,27 +141,9 @@ function store<T>(k: string, data: T) {
   void idbSet(k, bucket);
 }
 
-async function revalidate<T>(
-  k: string,
-  loader: () => Promise<T>,
-): Promise<void> {
-  if (revalidating.has(k)) return;
-  revalidating.add(k);
-  try {
-    const data = await loader();
-    store(k, data);
-  } catch {
-    /* keep stale */
-  } finally {
-    revalidating.delete(k);
-  }
-}
-
 /**
- * Stale-while-revalidate:
- * - fresh memory → return immediately
- * - stale memory/IDB → return immediately + refresh in background
- * - miss → await network
+ * Memory → IndexedDB → network. Once stored, never auto-refetches
+ * until clearCatalogCache() / force preload from Account.
  */
 async function cached<T>(
   credentials: XtreamCredentials,
@@ -168,17 +152,11 @@ async function cached<T>(
 ): Promise<T> {
   const k = key(credentials, part);
   const mem = memory.get(k) as CacheBucket<T> | undefined;
-  if (mem && ageOk(mem, TTL_FRESH_MS)) return mem.data;
-
-  if (mem && ageOk(mem, TTL_STALE_MS)) {
-    void revalidate(k, loader);
-    return mem.data;
-  }
+  if (mem) return mem.data;
 
   const disk = await idbGet<T>(k);
-  if (disk && ageOk(disk, TTL_STALE_MS)) {
+  if (disk) {
     memory.set(k, disk);
-    void revalidate(k, loader);
     return disk.data;
   }
 
@@ -195,21 +173,124 @@ export function clearCatalogCache() {
 /** Warm IDB → memory for instant first paint (call on app mount). */
 export async function hydrateCatalogCache(
   credentials: XtreamCredentials,
-  parts: string[] = [
-    "live-cats",
-    "vod-cats",
-    "series-cats",
-    "live-all",
-    "vod-all",
-    "series-all",
-  ],
+  parts: string[] = [...FULL_CATALOG_PARTS],
 ) {
   await Promise.all(
     parts.map(async (part) => {
       const k = key(credentials, part);
       if (memory.has(k)) return;
       const disk = await idbGet(k);
-      if (disk && ageOk(disk, TTL_STALE_MS)) memory.set(k, disk);
+      if (disk) memory.set(k, disk);
+    }),
+  );
+}
+
+/** True when live/VOD/series catalogs (+ categories) are already on disk/memory. */
+export async function hasFullCatalogCached(
+  credentials: XtreamCredentials,
+): Promise<boolean> {
+  for (const part of FULL_CATALOG_PARTS) {
+    const k = key(credentials, part);
+    if (memory.has(k)) continue;
+    const disk = await idbGet(k);
+    if (!disk) return false;
+    memory.set(k, disk);
+  }
+  return true;
+}
+
+export type CatalogPreloadProgress = {
+  done: number;
+  total: number;
+  part: string;
+};
+
+/**
+ * Ensure the full catalog is in memory + IndexedDB.
+ * Pass `force: true` to hit the network even when a cache entry exists
+ * (Account → Refresh playlist; typically after clearCatalogCache()).
+ */
+export async function preloadFullCatalog(
+  credentials: XtreamCredentials,
+  options?: {
+    force?: boolean;
+    onProgress?: (progress: CatalogPreloadProgress) => void;
+  },
+): Promise<void> {
+  if (!options?.force) {
+    await hydrateCatalogCache(credentials);
+    if (await hasFullCatalogCached(credentials)) {
+      options?.onProgress?.({
+        done: FULL_CATALOG_PARTS.length,
+        total: FULL_CATALOG_PARTS.length,
+        part: "done",
+      });
+      return;
+    }
+  }
+
+  const loaders: { part: string; run: () => Promise<unknown> }[] = options
+    ?.force
+    ? [
+        {
+          part: "live-cats",
+          run: async () => {
+            const data = await getLiveCategories(credentials);
+            store(key(credentials, "live-cats"), data);
+          },
+        },
+        {
+          part: "vod-cats",
+          run: async () => {
+            const data = await getVodCategories(credentials);
+            store(key(credentials, "vod-cats"), data);
+          },
+        },
+        {
+          part: "series-cats",
+          run: async () => {
+            const data = await getSeriesCategories(credentials);
+            store(key(credentials, "series-cats"), data);
+          },
+        },
+        {
+          part: "live-all",
+          run: async () => {
+            const data = await getLiveStreams(credentials);
+            store(key(credentials, "live-all"), data);
+          },
+        },
+        {
+          part: "vod-all",
+          run: async () => {
+            const data = await getVodStreams(credentials);
+            store(key(credentials, "vod-all"), data);
+          },
+        },
+        {
+          part: "series-all",
+          run: async () => {
+            const data = await getSeries(credentials);
+            store(key(credentials, "series-all"), data);
+          },
+        },
+      ]
+    : [
+        { part: "live-cats", run: () => loadLiveCategories(credentials) },
+        { part: "vod-cats", run: () => loadVodCategories(credentials) },
+        { part: "series-cats", run: () => loadSeriesCategories(credentials) },
+        { part: "live-all", run: () => loadAllLiveStreams(credentials) },
+        { part: "vod-all", run: () => loadAllVodStreams(credentials) },
+        { part: "series-all", run: () => loadAllSeries(credentials) },
+      ];
+
+  let done = 0;
+  const total = loaders.length;
+  await Promise.all(
+    loaders.map(async ({ part, run }) => {
+      await run();
+      done += 1;
+      options?.onProgress?.({ done, total, part });
     }),
   );
 }
@@ -261,13 +342,8 @@ export async function loadLiveByCategory(
 ) {
   const all = peek<LiveStream[]>(credentials, "live-all");
   if (all) return filterByCategoryId(all, categoryId);
-  const stale = await readStale<LiveStream[]>(credentials, "live-all");
-  if (stale) {
-    void revalidate(key(credentials, "live-all"), () =>
-      getLiveStreams(credentials),
-    );
-    return filterByCategoryId(stale, categoryId);
-  }
+  const disk = await readCached<LiveStream[]>(credentials, "live-all");
+  if (disk) return filterByCategoryId(disk, categoryId);
   return cached(credentials, `live-cat-${categoryId}`, () =>
     getLiveStreams(credentials, categoryId),
   );
@@ -279,13 +355,8 @@ export async function loadVodByCategory(
 ) {
   const all = peek<VodStream[]>(credentials, "vod-all");
   if (all) return filterByCategoryId(all, categoryId);
-  const stale = await readStale<VodStream[]>(credentials, "vod-all");
-  if (stale) {
-    void revalidate(key(credentials, "vod-all"), () =>
-      getVodStreams(credentials),
-    );
-    return filterByCategoryId(stale, categoryId);
-  }
+  const disk = await readCached<VodStream[]>(credentials, "vod-all");
+  if (disk) return filterByCategoryId(disk, categoryId);
   return cached(credentials, `vod-cat-${categoryId}`, () =>
     getVodStreams(credentials, categoryId),
   );
@@ -297,13 +368,8 @@ export async function loadSeriesByCategory(
 ) {
   const all = peek<SeriesItem[]>(credentials, "series-all");
   if (all) return filterByCategoryId(all, categoryId);
-  const stale = await readStale<SeriesItem[]>(credentials, "series-all");
-  if (stale) {
-    void revalidate(key(credentials, "series-all"), () =>
-      getSeries(credentials),
-    );
-    return filterByCategoryId(stale, categoryId);
-  }
+  const disk = await readCached<SeriesItem[]>(credentials, "series-all");
+  if (disk) return filterByCategoryId(disk, categoryId);
   return cached(credentials, `series-cat-${categoryId}`, () =>
     getSeries(credentials, categoryId),
   );

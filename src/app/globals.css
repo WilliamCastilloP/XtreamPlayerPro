@@ -14,6 +14,35 @@
 html,
 body {
   min-height: 100%;
+  overflow-x: clip;
+}
+
+/*
+ * Centered column (max 1400px).
+ * Put HeroBanner OUTSIDE .xp-frame so it can stay full-bleed.
+ * overflow-x:hidden clips carousels to the column.
+ */
+.xp-frame {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--xp-content-max);
+  margin-inline: auto;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.xp-media-row {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+
+.xp-media-row__scroller {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 body {
@@ -38,7 +67,7 @@ body::before {
 }
 
 #__next,
-body > * {
+body > *:not(.xp-catalog-splash) {
   position: relative;
   z-index: 1;
 }
@@ -46,6 +75,44 @@ body > * {
 a {
   color: inherit;
   text-decoration: none;
+}
+
+/* Accent / “see all” links */
+.xp-link {
+  color: var(--xp-accent);
+  font-weight: 500;
+  text-decoration: none;
+  text-underline-offset: 0.2em;
+  transition:
+    color 160ms ease,
+    opacity 160ms ease,
+    text-decoration-color 160ms ease;
+}
+
+.xp-link:hover {
+  color: #fff;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 255, 255, 0.55);
+}
+
+.xp-link:active {
+  opacity: 0.85;
+}
+
+[data-theme="light"] .xp-link:hover {
+  color: var(--xp-text);
+  text-decoration-color: rgba(11, 15, 20, 0.35);
+}
+
+/* Row / section titles that navigate */
+.xp-link-title {
+  color: inherit;
+  text-decoration: none;
+  transition: color 160ms ease;
+}
+
+.xp-link-title:hover {
+  color: var(--xp-accent);
 }
 
 button,
@@ -154,7 +221,257 @@ select {
 }
 
 .xp-player-chrome {
-  transition: opacity 280ms ease;
+  transition: opacity 500ms ease-in-out;
+}
+
+/* First-visit catalog boot — portaled to <body>, above everything */
+.xp-catalog-splash {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 2147483647 !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  isolation: isolate;
+  animation: xp-splash-in 380ms ease-out both;
+}
+
+.xp-catalog-splash--out {
+  animation: xp-splash-out 700ms ease-in forwards;
+  pointer-events: none;
+}
+
+.xp-catalog-splash__backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: #000;
+  width: 100%;
+  height: 100%;
+  min-height: 100dvh;
+  min-width: 100vw;
+}
+
+.xp-catalog-splash__anim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.xp-catalog-splash__bars {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(42rem, 92vw);
+  height: min(58vh, 28rem);
+  display: flex;
+  transform: translate(-50%, -50%);
+  gap: 0;
+}
+
+.xp-catalog-splash__bars span {
+  flex: 1;
+  transform: scaleY(0);
+  transform-origin: center;
+  opacity: 0;
+  animation: xp-splash-bar 2.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.35);
+}
+
+.xp-catalog-splash--loop .xp-catalog-splash__bars span {
+  animation-iteration-count: infinite;
+}
+
+.xp-catalog-splash__bars span:nth-child(1) {
+  background: linear-gradient(180deg, #ff3b4a, #e50914);
+  animation-delay: 120ms;
+}
+.xp-catalog-splash__bars span:nth-child(2) {
+  background: linear-gradient(180deg, #ffc14d, #f5a623);
+  animation-delay: 220ms;
+}
+.xp-catalog-splash__bars span:nth-child(3) {
+  background: linear-gradient(180deg, #5dffc0, #2ee6a6);
+  animation-delay: 320ms;
+}
+.xp-catalog-splash__bars span:nth-child(4) {
+  background: linear-gradient(180deg, #6aa8ff, #3b82f6);
+  animation-delay: 420ms;
+}
+.xp-catalog-splash__bars span:nth-child(5) {
+  background: linear-gradient(180deg, #c084fc, #a855f7);
+  animation-delay: 520ms;
+}
+
+.xp-catalog-splash__glow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(36rem, 80vw);
+  height: min(36rem, 80vw);
+  transform: translate(-50%, -50%) scale(0.4);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(46, 230, 166, 0.28) 0%,
+    rgba(59, 130, 246, 0.12) 42%,
+    transparent 70%
+  );
+  opacity: 0;
+  animation: xp-splash-glow 2.8s ease-out 0.2s both;
+}
+
+.xp-catalog-splash--loop .xp-catalog-splash__glow {
+  animation-iteration-count: infinite;
+}
+
+.xp-catalog-splash__stage {
+  position: relative;
+  z-index: 2;
+  width: min(22rem, 86vw);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.xp-catalog-splash__logo {
+  position: relative;
+  overflow: hidden;
+  animation: xp-splash-logo 1.1s cubic-bezier(0.22, 1, 0.36, 1) 0.55s both;
+}
+
+.xp-catalog-splash__shine {
+  pointer-events: none;
+  position: absolute;
+  top: -20%;
+  bottom: -20%;
+  left: 0;
+  width: 55%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.15) 35%,
+    rgba(255, 255, 255, 0.7) 50%,
+    rgba(255, 255, 255, 0.15) 65%,
+    transparent 100%
+  );
+  transform: translateX(-120%);
+  opacity: 0;
+  /* Full cycle matches bars (~2.8s): sweep then pause */
+  animation: xp-splash-shine 2.8s ease-in-out 0.9s both;
+}
+
+.xp-catalog-splash--loop .xp-catalog-splash__shine {
+  animation-iteration-count: infinite;
+}
+
+@keyframes xp-splash-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes xp-splash-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes xp-splash-bar {
+  0% {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+  18% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+  55% {
+    transform: scaleY(1);
+    opacity: 0.95;
+  }
+  78% {
+    transform: scaleY(0.92);
+    opacity: 0.45;
+  }
+  100% {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+}
+
+@keyframes xp-splash-glow {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.35);
+  }
+  35% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  100% {
+    opacity: 0.35;
+    transform: translate(-50%, -50%) scale(1.15);
+  }
+}
+
+@keyframes xp-splash-logo {
+  from {
+    opacity: 0;
+    transform: scale(1.45);
+    filter: blur(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes xp-splash-shine {
+  0% {
+    transform: translateX(-120%);
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  42% {
+    transform: translateX(220%);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(220%);
+    opacity: 0;
+  }
+}
+
+.xp-catalog-search-pulse {
+  animation: xp-search-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes xp-search-pulse {
+  0% {
+    transform: translateX(-20%);
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(220%);
+    opacity: 0.55;
+  }
 }
 
 video::cue {
@@ -206,8 +523,17 @@ video::cue {
   color: var(--xp-ink);
 }
 
+.xp-btn-primary:hover {
+  filter: brightness(1.08);
+}
+
 .xp-btn-ghost {
   background: var(--xp-surface);
+  color: var(--xp-text);
+}
+
+.xp-btn-ghost:hover {
+  background: var(--xp-surface-2);
   color: var(--xp-text);
 }
 

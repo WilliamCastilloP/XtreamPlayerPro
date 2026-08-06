@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Info, Play } from "lucide-react";
 import { PosterPlaceholder } from "@/components/brand/BrandMark";
+import { APP_CONTENT } from "@/components/layout/AppTopBar";
 import { useLocale } from "@/components/providers/LocaleProvider";
 
 type Props = {
@@ -38,13 +39,7 @@ export function HeroBanner({
   const showImage = Boolean(src) && !imgFailed;
 
   return (
-    <section
-      className={`xp-fade-in relative overflow-hidden ${
-        underHeader
-          ? "mx-0 -mt-0 rounded-none lg:-mt-0"
-          : "mx-4 rounded-2xl md:mx-6 lg:mx-8 xl:mx-12"
-      }`}
-    >
+    <section className="xp-fade-in relative w-full overflow-hidden">
       <div
         className={`relative w-full bg-[var(--xp-surface)] ${
           underHeader
@@ -70,36 +65,40 @@ export function HeroBanner({
           <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-transparent" />
         ) : null}
 
-        <div
-          className={`absolute inset-x-0 bottom-0 space-y-3 p-4 sm:p-6 md:max-w-3xl lg:max-w-4xl ${
-            underHeader ? "px-4 md:px-6 lg:px-8 xl:px-12" : ""
-          }`}
-        >
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--xp-accent)]">
-            {eyebrow}
-          </p>
-          <h2
-            title={title}
-            className="font-[family-name:var(--xp-font-display)] text-2xl font-bold leading-tight text-white sm:text-3xl md:text-4xl"
-          >
-            {title}
-          </h2>
-          {subtitle ? (
-            <p className="line-clamp-2 max-w-2xl text-sm text-white/75 sm:line-clamp-none">
-              {subtitle}
+        <div className={`absolute inset-x-0 bottom-0 ${APP_CONTENT}`}>
+          <div className="max-w-3xl space-y-3 py-4 sm:py-6 lg:max-w-4xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--xp-accent)]">
+              {eyebrow}
             </p>
-          ) : null}
-          <div className="flex flex-wrap gap-2 pt-1">
-            <Link href={playHref} className="xp-btn xp-btn-primary min-w-[7.5rem]">
-              <Play className="h-4 w-4 fill-current" />
-              {t("play")}
-            </Link>
-            {infoHref ? (
-              <Link href={infoHref} className="xp-btn xp-btn-ghost min-w-[7.5rem]">
-                <Info className="h-4 w-4" />
-                {t("details")}
-              </Link>
+            <h2
+              title={title}
+              className="font-[family-name:var(--xp-font-display)] text-2xl font-bold leading-tight text-white sm:text-3xl md:text-4xl"
+            >
+              {title}
+            </h2>
+            {subtitle ? (
+              <p className="line-clamp-2 max-w-2xl text-sm text-white/75 sm:line-clamp-none">
+                {subtitle}
+              </p>
             ) : null}
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Link
+                href={playHref}
+                className="xp-btn xp-btn-primary min-w-[7.5rem]"
+              >
+                <Play className="h-4 w-4 fill-current" />
+                {t("play")}
+              </Link>
+              {infoHref ? (
+                <Link
+                  href={infoHref}
+                  className="xp-btn xp-btn-ghost min-w-[7.5rem]"
+                >
+                  <Info className="h-4 w-4" />
+                  {t("details")}
+                </Link>
+              ) : null}
+            </div>
           </div>
         </div>
       </div>

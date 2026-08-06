@@ -7,6 +7,7 @@ import { HomeGenreBar } from "@/components/catalog/HomeGenreBar";
 import { HeroBanner } from "@/components/catalog/HeroBanner";
 import { MediaRow, type MediaRowItem } from "@/components/catalog/MediaRow";
 import { PosterSkeletonRow } from "@/components/catalog/Skeleton";
+import { APP_FRAME } from "@/components/layout/AppTopBar";
 import { useLocale } from "@/components/providers/LocaleProvider";
 import { useLibrary } from "@/components/providers/LibraryProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
@@ -286,16 +287,18 @@ function HomeInner() {
   return (
     <div className="pb-8">
       {error ? (
-        <p className="px-4 text-sm text-[var(--xp-danger)] lg:px-8 xl:px-12">
+        <p
+          className={`${APP_FRAME} px-4 text-sm text-[var(--xp-danger)] lg:px-8 xl:px-12`}
+        >
           {error}
         </p>
       ) : null}
 
-      {/* Filtered catalog — only mounts when user picks LIVE/MOVIES/SERIES */}
+      {/* Hero stays full-bleed; everything below is capped at 1400px */}
       {section ? (
-        <div className="space-y-6">
+        <>
           {renderHero(activeHero)}
-          <div className="space-y-6 pt-4">
+          <div className={`${APP_FRAME} space-y-6 pt-4`}>
             <HomeGenreBar kind={section} />
             <MediaRow
               title={t("continueWatching")}
@@ -307,31 +310,30 @@ function HomeInner() {
               items={sectionFavorites}
               emptyLabel={sectionFavEmpty}
             />
+            <BrowseRails
+              kind={section}
+              title={
+                section === "live"
+                  ? t("liveTv")
+                  : section === "movies"
+                    ? t("movies")
+                    : t("series")
+              }
+              subtitle={t("browseByCategory")}
+              embedded
+              hideHero
+            />
           </div>
-          <BrowseRails
-            kind={section}
-            title={
-              section === "live"
-                ? t("liveTv")
-                : section === "movies"
-                  ? t("movies")
-                  : t("series")
-            }
-            subtitle={t("browseByCategory")}
-            embedded
-            hideHero
-          />
-        </div>
+        </>
       ) : loadingHighlights ? (
-        <div className="space-y-8 pt-4">
+        <div className={`${APP_FRAME} space-y-8 pt-4`}>
           <div className="xp-shimmer mx-4 h-48 rounded-2xl lg:mx-8 lg:h-64 xl:mx-12" />
           <PosterSkeletonRow />
         </div>
       ) : (
-        <div className="space-y-6 lg:space-y-8">
+        <>
           {renderHero(hero)}
-
-          <div className="space-y-6 pt-2 lg:space-y-8 lg:pt-4">
+          <div className={`${APP_FRAME} space-y-6 pt-2 lg:space-y-8 lg:pt-4`}>
             <MediaRow
               title={t("continueWatching")}
               items={continueItems}
@@ -343,23 +345,38 @@ function HomeInner() {
               items={favLive}
               emptyLabel={t("favoriteChannelsEmpty")}
             />
-            <MediaRow title={t("liveHighlights")} items={featuredLive} />
+            <MediaRow
+              title={t("liveHighlights")}
+              href="/?section=live"
+              seeAllLabel={t("seeAllLive")}
+              items={featuredLive}
+            />
 
             <MediaRow
               title={t("favoriteMovies")}
               items={favMovies}
               emptyLabel={t("favoriteMoviesEmpty")}
             />
-            <MediaRow title={t("movieHighlights")} items={featuredMovies} />
+            <MediaRow
+              title={t("movieHighlights")}
+              href="/?section=movies"
+              seeAllLabel={t("seeAllMovies")}
+              items={featuredMovies}
+            />
 
             <MediaRow
               title={t("favoriteSeries")}
               items={favSeries}
               emptyLabel={t("favoriteSeriesEmpty")}
             />
-            <MediaRow title={t("seriesHighlights")} items={featuredSeries} />
+            <MediaRow
+              title={t("seriesHighlights")}
+              href="/?section=series"
+              seeAllLabel={t("seeAllSeries")}
+              items={featuredSeries}
+            />
           </div>
-        </div>
+        </>
       )}
     </div>
   );
@@ -369,7 +386,7 @@ export default function HomePage() {
   return (
     <Suspense
       fallback={
-        <div className="space-y-8 px-4 pb-8 pt-4 lg:px-6">
+        <div className={`${APP_FRAME} space-y-8 px-4 pb-8 pt-4 lg:px-6`}>
           <div className="xp-shimmer h-10 w-40 rounded" />
           <div className="xp-shimmer h-48 rounded-2xl" />
           <PosterSkeletonRow />

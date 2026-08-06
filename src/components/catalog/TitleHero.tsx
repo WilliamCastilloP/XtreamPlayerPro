@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ArrowLeft, Heart, Play } from "lucide-react";
 import { PosterPlaceholder } from "@/components/brand/BrandMark";
+import { APP_CONTENT } from "@/components/layout/AppTopBar";
 import { useLocale } from "@/components/providers/LocaleProvider";
 
 type Props = {
@@ -92,7 +93,9 @@ export function TitleHero({
 
       {/* First viewport: title + actions pinned to the bottom */}
       <section className="relative z-10 flex min-h-dvh w-full flex-col justify-end">
-        <div className="space-y-3 px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-28 md:px-8 md:pb-8 md:space-y-4">
+        <div
+          className={`${APP_CONTENT} space-y-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-28 md:pb-8 md:space-y-4`}
+        >
           <div className="max-w-2xl space-y-2 md:space-y-3">
             <h1
               className="font-[family-name:var(--xp-font-display)] text-3xl font-bold leading-tight text-white sm:text-4xl md:text-5xl"

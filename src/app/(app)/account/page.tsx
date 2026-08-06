@@ -14,12 +14,7 @@ import type { Locale } from "@/lib/i18n/dictionaries";
 import { emitCatalogRefresh } from "@/lib/library/storage";
 import {
   clearCatalogCache,
-  loadAllLiveStreams,
-  loadAllSeries,
-  loadAllVodStreams,
-  loadLiveCategories,
-  loadSeriesCategories,
-  loadVodCategories,
+  preloadFullCatalog,
 } from "@/lib/xtream/catalog-cache";
 import { authenticate } from "@/lib/xtream/client";
 import type { XtreamAuthResponse } from "@/lib/xtream/types";
@@ -68,14 +63,7 @@ export default function AccountPage() {
     setRefreshState("loading");
     try {
       clearCatalogCache();
-      await Promise.all([
-        loadLiveCategories(credentials),
-        loadVodCategories(credentials),
-        loadSeriesCategories(credentials),
-        loadAllLiveStreams(credentials),
-        loadAllVodStreams(credentials),
-        loadAllSeries(credentials),
-      ]);
+      await preloadFullCatalog(credentials, { force: true });
       emitCatalogRefresh();
       setRefreshState("done");
       window.setTimeout(() => setRefreshState("idle"), 3000);
@@ -231,7 +219,7 @@ export default function AccountPage() {
           <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--xp-muted)]">
             {t("playlists")}
           </h2>
-          <Link href="/playlists/new" className="text-sm text-[var(--xp-accent)]">
+          <Link href="/playlists/new" className="xp-link text-sm">
             {t("add")}
           </Link>
         </div>

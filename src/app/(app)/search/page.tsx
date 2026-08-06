@@ -10,6 +10,7 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
 import { PosterCard } from "@/components/catalog/PosterCard";
+import { APP_FRAME } from "@/components/layout/AppTopBar";
 import { useLocale } from "@/components/providers/LocaleProvider";
 import { usePlaylists } from "@/components/providers/PlaylistProvider";
 import {
@@ -263,7 +264,9 @@ function SearchInner() {
   ];
 
   return (
-    <div className="space-y-4 px-4 py-5 md:px-6">
+    <div
+      className={`${APP_FRAME} space-y-4 px-4 py-5 md:px-6 lg:px-8 xl:px-12`}
+    >
       <div>
         <h1 className="font-[family-name:var(--xp-font-display)] text-2xl font-bold">
           {t("searchTitle")}
@@ -275,11 +278,16 @@ function SearchInner() {
       <div className="flex items-center gap-2">
         <div className="relative min-w-0 flex-1">
           <input
-            className={`xp-field w-full ${query ? "pr-10" : ""}`}
+            className={`xp-field w-full ${query ? "pr-10" : ""} ${
+              !readyCatalog ? "opacity-70" : ""
+            }`}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={t("searchPlaceholder")}
-            autoFocus
+            placeholder={
+              readyCatalog ? t("searchPlaceholder") : t("searchInputDisabled")
+            }
+            disabled={!readyCatalog}
+            autoFocus={readyCatalog}
           />
           {query ? (
             <button
@@ -295,7 +303,7 @@ function SearchInner() {
         <button
           type="button"
           onClick={closeSearch}
-          className="shrink-0 cursor-pointer rounded-full px-3 py-2 text-sm font-medium text-[var(--xp-accent)] hover:underline"
+          className="xp-link shrink-0 cursor-pointer rounded-full px-3 py-2 text-sm"
         >
           {t("searchCancel")}
         </button>
@@ -305,10 +313,11 @@ function SearchInner() {
           <button
             key={chip.id}
             type="button"
+            disabled={!readyCatalog}
             onClick={() =>
               setFilter((current) => (current === chip.id ? null : chip.id))
             }
-            className={`shrink-0 cursor-pointer rounded-full px-4 py-2 text-sm ${
+            className={`shrink-0 cursor-pointer rounded-full px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50 ${
               filter === chip.id
                 ? "bg-[var(--xp-accent)] text-[var(--xp-ink)]"
                 : "bg-[var(--xp-surface)] text-[var(--xp-muted)]"
@@ -322,17 +331,27 @@ function SearchInner() {
       {error ? (
         <p className="text-sm text-[var(--xp-danger)]">{error}</p>
       ) : null}
-      {loading ? (
-        <p className="text-sm text-[var(--xp-muted)]">
-          {t("searchLoadingCatalog")}
-        </p>
+      {loading || !readyCatalog ? (
+        <div className="rounded-xl border border-[var(--xp-border)] bg-[var(--xp-surface)]/80 px-4 py-5">
+          <div className="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+            <div className="xp-catalog-search-pulse h-full w-1/3 rounded-full bg-[var(--xp-accent)]" />
+          </div>
+          <p className="text-sm font-medium text-[var(--xp-text)]">
+            {t("searchLoadingCatalog")}
+          </p>
+          <p className="mt-1 text-sm text-[var(--xp-muted)]">
+            {t("searchWaitCatalog")}
+          </p>
+        </div>
       ) : null}
 
-      {query.trim().length < 2 ? (
+      {readyCatalog && query.trim().length < 2 ? (
         <p className="text-sm text-[var(--xp-muted)]">{t("searchTypeHint")}</p>
-      ) : results.length === 0 && !loading ? (
+      ) : null}
+      {readyCatalog && query.trim().length >= 2 && results.length === 0 ? (
         <p className="text-sm text-[var(--xp-muted)]">{t("searchNoMatches")}</p>
-      ) : (
+      ) : null}
+      {readyCatalog && results.length > 0 ? (
         <div className="xp-fade-in grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
           {results.map((item) => (
             <PosterCard
@@ -347,7 +366,7 @@ function SearchInner() {
             />
           ))}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -356,7 +375,9 @@ export default function SearchPage() {
   return (
     <Suspense
       fallback={
-        <div className="space-y-4 px-4 py-5 md:px-6">
+        <div
+          className={`${APP_FRAME} space-y-4 px-4 py-5 md:px-6 lg:px-8 xl:px-12`}
+        >
           <p className="text-sm text-[var(--xp-muted)]">Loading…</p>
         </div>
       }

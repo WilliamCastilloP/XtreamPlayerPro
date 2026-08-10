@@ -15,11 +15,16 @@ import {
 } from "@/lib/library/storage";
 import { continueFromZeroHref, continueWatchHref } from "@/lib/library/continue";
 import { backLabelForPath, safeInternalPath } from "@/lib/navigation/back";
+import { findVodStream } from "@/lib/xtream/catalog-cache";
 import { getVodInfo, watchPath } from "@/lib/xtream/client";
 import { parseMediaDuration } from "@/lib/player/duration";
 import { parseGenres } from "@/lib/xtream/genres";
 import { formatRating } from "@/lib/xtream/rating";
 import { catalogTitle } from "@/lib/xtream/title";
+import {
+  mergeVodInfoWithStream,
+  vodInfoIsSparse,
+} from "@/lib/xtream/vod-detail";
 import type { VodInfo } from "@/lib/xtream/types";
 
 function MovieDetailInner() {
@@ -55,8 +60,20 @@ function MovieDetailInner() {
       setLoading(true);
       setError(null);
       try {
-        const data = await getVodInfo(credentials!, params.id);
-        if (!cancelled) setInfo(data);
+        // Panels often return {"info":{}} for get_vod_info while the catalog
+        // still has name/poster — merge both (live detail already uses catalog).
+        const [data, stream] = await Promise.all([
+          getVodInfo(credentials!, params.id).catch(() => null),
+          findVodStream(credentials!, params.id),
+        ]);
+        if (cancelled) return;
+        const merged = mergeVodInfoWithStream(data, stream);
+        if (vodInfoIsSparse(merged)) {
+          setError("Movie not found");
+          setInfo(null);
+        } else {
+          setInfo(merged);
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load movie");
@@ -71,21 +88,18 @@ function MovieDetailInner() {
     };
   }, [credentials, params.id]);
 
-  const title = catalogTitle({
-    name: info?.info?.name || info?.movie_data?.name,
-    title: undefined,
-  }) || `Movie ${params.id}`;
+  const title =
+    catalogTitle({
+      name: info?.info?.name || info?.movie_data?.name,
+      title: info?.movie_data?.title,
+    }) || `Movie ${params.id}`;
   const image = info?.info?.movie_image;
   const extension = info?.movie_data?.container_extension || "mp4";
   const streamId = info?.movie_data?.stream_id || params.id;
   const genreLabel = parseGenres(info?.info?.genre).join(", ");
   const ratingLabel = formatRating(info?.info?.rating);
-  const meta = [
-    genreLabel || undefined,
-    info?.info?.releasedate,
-    ratingLabel,
-    info?.info?.duration,
-  ]
+  const released = info?.info?.releasedate;
+  const meta = [genreLabel || undefined, released, ratingLabel, info?.info?.duration]
     .filter(Boolean)
     .join(" · ");
 
@@ -182,7 +196,7 @@ function MovieDetailInner() {
       info?.info?.director ||
       genreLabel ||
       info?.info?.duration ||
-      info?.info?.releasedate ||
+      released ||
       ratingLabel ||
       info?.info?.youtube_trailer ? (
         <div className="space-y-4 px-4 pb-5 pt-2 md:px-8">
@@ -193,10 +207,10 @@ function MovieDetailInner() {
                 <dd className="m-0">{genreLabel}</dd>
               </div>
             ) : null}
-            {info?.info?.releasedate ? (
+            {released ? (
               <div>
                 <dt className="text-white/55">{t("metaReleased")}</dt>
-                <dd className="m-0">{info.info.releasedate}</dd>
+                <dd className="m-0">{released}</dd>
               </div>
             ) : null}
             {info?.info?.duration ? (

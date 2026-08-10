@@ -83,13 +83,17 @@ export function TitleHero({
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_40%,rgba(0,0,0,0.35)_100%)]" />
       </div>
 
-      <Link
-        href={backHref}
-        className="fixed left-4 top-[calc(env(safe-area-inset-top)+3.35rem)] z-30 inline-flex cursor-pointer items-center gap-2 rounded-full bg-black/55 px-3 py-2 text-sm text-white backdrop-blur-md"
+      <div
+        className={`pointer-events-none fixed inset-x-0 top-[calc(env(safe-area-inset-top)+3.35rem)] z-30 ${APP_CONTENT}`}
       >
-        <ArrowLeft className="h-4 w-4" />
-        {backLabel}
-      </Link>
+        <Link
+          href={backHref}
+          className="pointer-events-auto inline-flex cursor-pointer items-center gap-2 rounded-full bg-black/55 py-5 pr-3 text-sm text-white backdrop-blur-md"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          {backLabel}
+        </Link>
+      </div>
 
       {/* First viewport: title + actions pinned to the bottom */}
       <section className="relative z-10 flex min-h-dvh w-full flex-col justify-end">

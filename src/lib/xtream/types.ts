@@ -89,18 +89,25 @@ export type VodInfo = {
   info?: {
     name?: string;
     plot?: string;
+    description?: string;
     cast?: string;
+    actors?: string;
     director?: string;
     genre?: string | string[];
+    /** Common Xtream field */
     releasedate?: string;
+    /** Some panels use snake_case instead */
+    release_date?: string;
     rating?: string;
     duration?: string;
     movie_image?: string;
+    cover_big?: string;
     youtube_trailer?: string;
   };
   movie_data?: {
     stream_id?: number;
     name?: string;
+    title?: string;
     container_extension?: string;
   };
 };

@@ -318,6 +318,14 @@ export async function loadAllVodStreams(credentials: XtreamCredentials) {
   return cached(credentials, "vod-all", () => getVodStreams(credentials));
 }
 
+export async function findVodStream(
+  credentials: XtreamCredentials,
+  streamId: string | number,
+): Promise<VodStream | undefined> {
+  const all = await loadAllVodStreams(credentials);
+  return all.find((s) => String(s.stream_id) === String(streamId));
+}
+
 export async function loadAllSeries(credentials: XtreamCredentials) {
   return cached(credentials, "series-all", () => getSeries(credentials));
 }

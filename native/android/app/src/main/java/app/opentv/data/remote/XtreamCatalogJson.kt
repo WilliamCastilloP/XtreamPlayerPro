@@ -259,7 +259,7 @@ internal class JsonTokenReader(input: InputStream) {
 private val JsonElement?.asPrimitiveOrNull: JsonPrimitive?
     get() = this as? JsonPrimitive
 
-internal val JsonElement?.asStringOrNull: String?
+private val JsonElement?.asStringOrNull: String?
     get() = asPrimitiveOrNull?.contentOrNull?.takeIf { it.isNotEmpty() && it != "null" }
 
 private val JsonElement?.firstStringOrNull: String?

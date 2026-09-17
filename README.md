@@ -50,9 +50,25 @@ No server-side secrets are required. Xtream credentials never leave the browser 
 
 The web PWA stays as-is. The Fire Stick client lives in [`native/android`](native/android) — a GPL-3.0 fork of [OpenTV](https://github.com/opentvproject/opentv). It does **not** need the Node proxy; the APK talks to the Xtream panel on the device.
 
+### Install on a Fire Stick (no PC)
+
+1. Enable **Apps from Unknown Sources** (Settings → My Fire TV → Developer Options).
+2. Install **Downloader** from the Amazon Appstore.
+3. Paste this URL (always the latest APK):
+
+```
+https://github.com/WilliamCastilloP/XtreamPlayerPro/releases/latest/download/XTREAM.apk
+```
+
+Package id: `app.xtream.player` — it installs **next to** stock OpenTV, it does not replace it.
+
+GitHub Actions builds that APK on every `android-v*` tag (`.github/workflows/android-apk.yml`).
+
+### Build locally
+
 ```bash
 cd native/android
 ./gradlew assembleDebug   # JDK 17 + Android SDK API 35
 ```
 
-Debug APK: `native/android/app/build/outputs/apk/debug/`. Sideload with Downloader or `adb install`. Package id: `app.xtream.player`.
+Debug APK: `native/android/app/build/outputs/apk/debug/`.

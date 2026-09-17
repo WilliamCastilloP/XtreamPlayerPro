@@ -1,16 +1,20 @@
 # XTREAM for Fire TV / Android TV
 
-This tree is a **GPL-3.0 fork of [OpenTV](https://github.com/opentvproject/opentv)** branded as **XTREAM**.
+This tree is a **GPL-3.0 fork of [OpenTV](https://github.com/opentvproject/opentv)** branded as **XTREAM** (`app.xtream.player`). Native ExoPlayer; no web proxy.
 
-It is a native app (Kotlin, Jetpack Compose, Media3 ExoPlayer). It talks **directly** to your Xtream panel — no Vercel/Oracle proxy.
+## Install on Fire TV
 
-XTREAM-specific changes in this fork:
+GitHub Actions publishes the APK. On the Stick, open **Downloader** and paste:
 
-- App id `app.xtream.player` (installs next to stock OpenTV)
-- Mint accent aligned with the XTREAM PWA
-- VOD catalogue is streamed in batches so huge movie libraries work on a Fire Stick
+```
+https://github.com/WilliamCastilloP/XtreamPlayerPro/releases/latest/download/XTREAM.apk
+```
 
-Upstream OpenTV README follows.
+Local debug build:
+
+```bash
+./gradlew assembleDebug
+```
 
 ---
 

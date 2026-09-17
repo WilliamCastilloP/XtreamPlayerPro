@@ -45,3 +45,14 @@ npm start
 3. Deploy — every push to `main` rebuilds the PWA.
 
 No server-side secrets are required. Xtream credentials never leave the browser except as request headers to your own API proxy, which forwards them to the Xtream panel.
+
+## Fire TV / Android TV (native)
+
+The web PWA stays as-is. The Fire Stick client lives in [`native/android`](native/android) — a GPL-3.0 fork of [OpenTV](https://github.com/opentvproject/opentv). It does **not** need the Node proxy; the APK talks to the Xtream panel on the device.
+
+```bash
+cd native/android
+./gradlew assembleDebug   # JDK 17 + Android SDK API 35
+```
+
+Debug APK: `native/android/app/build/outputs/apk/debug/`. Sideload with Downloader or `adb install`. Package id: `app.xtream.player`.

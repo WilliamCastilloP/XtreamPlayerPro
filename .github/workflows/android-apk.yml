@@ -25,6 +25,9 @@ jobs:
     name: Test and assemble
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     defaults:
       run:
         working-directory: native/android
@@ -38,8 +41,15 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # ubuntu-latest already ships an Android SDK. The setup-android action tries
+      # to install the retired `tools` package and fails. Accept licenses so AGP
+      # can download platform 35 the same way OpenTV's own workflow does.
+      - name: Accept Android SDK licenses
+        working-directory: .
+        run: |
+          set -euo pipefail
+          SM=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | tail -1)
+          yes | "$SM" --licenses >/dev/null || true
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4

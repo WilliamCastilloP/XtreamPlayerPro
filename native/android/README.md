@@ -1,20 +1,32 @@
 # XTREAM for Fire TV / Android TV
 
-This tree is a **GPL-3.0 fork of [OpenTV](https://github.com/opentvproject/opentv)** branded as **XTREAM** (`app.xtream.player`). Native ExoPlayer; no web proxy.
+Fork **GPL-3.0** de [OpenTV](https://github.com/opentvproject/opentv), rebranded as **XTREAM** (`app.xtream.player`). ExoPlayer nativo; sin proxy web.
 
-## Install on Fire TV
+## Instalar (Fire Stick)
 
-GitHub Actions publishes the APK. On the Stick, open **Downloader** and paste:
+En **Downloader** el código es:
+
+```
+8417717
+```
+
+También: [aftv.news/8417717](https://aftv.news/8417717)
+
+APK (siempre la última):
 
 ```
 https://github.com/WilliamCastilloP/XtreamPlayerPro/releases/latest/download/XTREAM.apk
 ```
 
-Local debug build:
+Código del repo: [WilliamCastilloP/XtreamPlayerPro](https://github.com/WilliamCastilloP/XtreamPlayerPro) · carpeta `native/android`.
+
+Build local:
 
 ```bash
 ./gradlew assembleDebug
 ```
+
+Upstream OpenTV README follows.
 
 ---
 

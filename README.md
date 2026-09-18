@@ -55,7 +55,7 @@ cd native/android
 ./gradlew assembleDebug
 ```
 
-APK: `native/android/app/build/outputs/apk/debug/`. GitHub Actions publica Releases en cada tag `android-v*`.
+APK: `native/android/app/build/outputs/apk/debug/`. GitHub Actions publica Releases en cada tag `v*` (p. ej. `v0.14.0`).
 
 ---
 

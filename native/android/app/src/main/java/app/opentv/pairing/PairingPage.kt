@@ -17,7 +17,7 @@ object PairingPage {
 
     fun form(token: String, error: String?): String = page(
         """
-        <h1>Set up OpenTV</h1>
+        <h1>Set up XTREAM</h1>
         <p class="sub">Filling this in here beats using the remote.</p>
 
         ${if (error != null) "<div class=\"error\">${escape(error)}</div>" else ""}
@@ -74,7 +74,7 @@ object PairingPage {
 
         <p class="privacy">
           This page is served by your television, over your own network. What you type goes
-          straight to it and nowhere else — there is no OpenTV account and no OpenTV server.
+          straight to it and nowhere else — there is no XTREAM account and no XTREAM server.
         </p>
 
         <script>
@@ -108,10 +108,10 @@ object PairingPage {
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
         <meta name="robots" content="noindex, nofollow">
-        <title>Set up OpenTV</title>
+        <title>Set up XTREAM</title>
         <style>
           :root { --bg:#07080c; --surface:#12141d; --line:#2a2f3d; --text:#e8eaf0;
-                  --muted:#a8aec0; --accent:#7c93ff; --err:#ff6b6b; }
+                  --muted:#a8aec0; --accent:#2EE6A6; --err:#ff6b6b; }
           * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
           body { margin:0; background:var(--bg); color:var(--text); padding:28px 20px 64px;
                  font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
@@ -133,7 +133,7 @@ object PairingPage {
           .segbtn span { display:block; text-align:center; padding:12px;
             background:var(--surface); border:1px solid var(--line); border-radius:10px;
             font-weight:500; font-size:.95rem; }
-          .segbtn input:checked + span { background:#3a447a; border-color:var(--accent); }
+          .segbtn input:checked + span { background:#0D9F6E; border-color:var(--accent); }
           button { width:100%; margin-top:26px; padding:17px; font-size:17px; font-weight:600;
             background:var(--accent); color:#0a0c14; border:0; border-radius:11px; }
           button:active { opacity:.85; }

@@ -56,6 +56,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import app.opentv.core.AppSettings
 import app.opentv.core.ServiceLocator
+import app.opentv.data.model.Source
 import app.opentv.data.parser.displayTitle
 import app.opentv.ui.MainScreen
 import app.opentv.ui.ProfilesViewModel
@@ -336,7 +337,7 @@ private fun OpenTvApp(isTelevision: Boolean) {
                     },
                     onResume = { key, url, title ->
                         navController.navigate(
-                            Routes.vodPlayer(key, url, title, "OpenTV/0.1 (Android)"),
+                            Routes.vodPlayer(key, url, title, Source.DEFAULT_USER_AGENT),
                         )
                     },
                     onAddSource = { navController.navigate(Routes.ADD_SOURCE) },
@@ -394,7 +395,7 @@ private fun OpenTvApp(isTelevision: Boolean) {
                                 key = "movie:${movie.id}",
                                 url = movie.streamUrl,
                                 title = movie.displayTitle,
-                                ua = "OpenTV/0.1 (Android)",
+                                ua = Source.DEFAULT_USER_AGENT,
                             ),
                         )
                     },
@@ -479,7 +480,7 @@ private fun OpenTvApp(isTelevision: Boolean) {
                     viewModel = vodViewModel,
                     onPlayEpisode = { key, url, title ->
                         navController.navigate(
-                            Routes.vodPlayer(key, url, title, "OpenTV/0.1 (Android)"),
+                            Routes.vodPlayer(key, url, title, Source.DEFAULT_USER_AGENT),
                         )
                     },
                     onOpenSeries = { series -> navController.navigate(Routes.seriesDetail(series.id)) },
@@ -498,13 +499,13 @@ private fun OpenTvApp(isTelevision: Boolean) {
                                 key = "movie:${movie.id}",
                                 url = movie.streamUrl,
                                 title = movie.displayTitle,
-                                ua = "OpenTV/0.1 (Android)",
+                                ua = Source.DEFAULT_USER_AGENT,
                             ),
                         )
                     },
                     onPlayUrl = { key, url, title ->
                         navController.navigate(
-                            Routes.vodPlayer(key = key, url = url, title = title, ua = "OpenTV/0.1 (Android)"),
+                            Routes.vodPlayer(key = key, url = url, title = title, ua = Source.DEFAULT_USER_AGENT),
                         )
                     },
                     onOpenMovie = { movie -> navController.navigate(Routes.movieDetail(movie.id)) },
@@ -531,7 +532,7 @@ private fun OpenTvApp(isTelevision: Boolean) {
                     mediaKey = arg("key"),
                     streamUrl = arg("url"),
                     title = arg("title"),
-                    userAgent = arg("ua").ifEmpty { "OpenTV/0.1 (Android)" },
+                    userAgent = arg("ua").ifEmpty { Source.DEFAULT_USER_AGENT },
                     onBack = { navController.popBackStack() },
                 )
             }

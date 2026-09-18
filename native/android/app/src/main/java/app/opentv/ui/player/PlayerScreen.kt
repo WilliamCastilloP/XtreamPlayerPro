@@ -101,6 +101,7 @@ import app.opentv.core.SleepTimer
 import app.opentv.core.findActivity
 import app.opentv.core.requestIgnoreBatteryOptimizations
 import app.opentv.data.model.Channel
+import app.opentv.data.model.Source
 import app.opentv.data.model.shownName
 import app.opentv.player.PlaybackQueue
 import app.opentv.player.PlayerController
@@ -228,7 +229,7 @@ fun PlayerScreen(
                 PlayerController.Request(
                     url = url,
                     title = channel.shownName,
-                    userAgent = source?.userAgent ?: "OpenTV/0.1 (Android)",
+                    userAgent = source?.userAgent ?: Source.DEFAULT_USER_AGENT,
                     isLive = true,
                 ),
                 debounce = false,

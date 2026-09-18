@@ -73,7 +73,7 @@ class StremioClient(
     }
 
     private fun get(url: HttpUrl): JsonElement? {
-        val request = Request.Builder().url(url).header("User-Agent", "OpenTV").build()
+        val request = Request.Builder().url(url).header("User-Agent", "XTREAM").build()
         return runCatching {
             http.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return null

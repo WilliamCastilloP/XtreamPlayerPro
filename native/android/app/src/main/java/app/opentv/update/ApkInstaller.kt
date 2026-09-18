@@ -56,7 +56,7 @@ class ApkInstaller(private val http: OkHttpClient) {
         // A fixed name means each download overwrites the last rather than piling up copies.
         val out = File(dir, "opentv-update.apk")
 
-        val request = Request.Builder().url(url).header("User-Agent", "OpenTV").build()
+        val request = Request.Builder().url(url).header("User-Agent", "XTREAM").build()
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("Download failed: HTTP ${response.code}")
             val bodyStream = response.body?.byteStream() ?: error("Empty download")

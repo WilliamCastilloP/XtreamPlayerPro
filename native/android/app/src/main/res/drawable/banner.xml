@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Android TV home-screen banner. Must be 320x180; the launcher does not letterbox.
-  Replace with real artwork before a public release.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="320dp"
@@ -9,22 +8,44 @@
     android:viewportWidth="320"
     android:viewportHeight="180">
     <path
-        android:fillColor="#07080C"
+        android:fillColor="#0B0F14"
         android:pathData="M0,0h320v180h-320z" />
     <path
-        android:strokeColor="#4B5DB8"
-        android:strokeWidth="5"
+        android:fillColor="#2EE6A6"
+        android:pathData="M28,50h80a14,14 0,0 1,14 14v52a14,14 0,0 1,-14 14h-80a14,14 0,0 1,-14 -14v-52a14,14 0,0 1,14 -14z" />
+    <path
+        android:strokeColor="#0B0F14"
+        android:strokeWidth="12"
         android:strokeLineCap="round"
-        android:pathData="M138,44 L152,58" />
+        android:pathData="M48,68 L88,108" />
     <path
-        android:strokeColor="#4B5DB8"
-        android:strokeWidth="5"
+        android:strokeColor="#0B0F14"
+        android:strokeWidth="12"
         android:strokeLineCap="round"
-        android:pathData="M166,44 L152,58" />
+        android:pathData="M88,68 L48,108" />
+    <!-- XTREAM wordmark -->
     <path
-        android:fillColor="#7C93FF"
-        android:pathData="M112,58h80a10,10 0,0 1,10 10v44a10,10 0,0 1,-10 10h-80a10,10 0,0 1,-10 -10v-44a10,10 0,0 1,10 -10z" />
+        android:strokeColor="#2EE6A6"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M136,68 L160,112 M160,68 L136,112" />
     <path
-        android:fillColor="#07080C"
-        android:pathData="M142,74l26,16l-26,16z" />
+        android:strokeColor="#2EE6A6"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M172,68 H204 M188,68 V112" />
+    <path
+        android:strokeColor="#2EE6A6"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M216,112 V68 H236 C248,68 248,90 236,90 H216 M232,90 L248,112" />
+    <path
+        android:strokeColor="#2EE6A6"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M260,68 V112 M260,68 H288 M260,90 H282 M260,112 H288" />
 </vector>

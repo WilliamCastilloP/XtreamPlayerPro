@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import app.opentv.data.model.Source
 
 /**
  * Owns the single [ExoPlayer] instance and everything about switching what it is playing.
@@ -373,7 +374,7 @@ class PlayerController(
     }
 
     private companion object {
-        const val DEFAULT_USER_AGENT = "OpenTV/0.1 (Android)"
+        const val DEFAULT_USER_AGENT = Source.DEFAULT_USER_AGENT
 
         /** ExoPlayer's "do not retry" sentinel. */
         const val C_TIME_UNSET = androidx.media3.common.C.TIME_UNSET

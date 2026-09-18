@@ -432,6 +432,14 @@ interface MovieDao {
     @Query("SELECT * FROM movies WHERE favourite = 1 ORDER BY name")
     fun observeFavourites(): Flow<List<Movie>>
 
+    @Query(
+        """
+        SELECT streamId, id, favourite, posterUrl, plot, backdropUrl, `cast`, director, genre, tmdbId
+        FROM movies WHERE sourceId = :sourceId
+        """
+    )
+    suspend fun userStateForSource(sourceId: Long): List<MovieRowState>
+
     @Query("SELECT * FROM movies WHERE name LIKE '%' || :query || '%' ORDER BY name LIMIT :limit")
     fun search(query: String, limit: Int = 200): Flow<List<Movie>>
 
@@ -528,6 +536,17 @@ interface SeriesDao {
         """
     )
     fun observe(categoryId: String?): Flow<List<Series>>
+
+    @Query("SELECT * FROM series WHERE favourite = 1 ORDER BY name")
+    fun observeFavourites(): Flow<List<Series>>
+
+    @Query(
+        """
+        SELECT seriesId, id, favourite, posterUrl, plot, backdropUrl, `cast`, genre, tmdbId
+        FROM series WHERE sourceId = :sourceId
+        """
+    )
+    suspend fun userStateForSource(sourceId: Long): List<SeriesRowState>
 
     @Query("SELECT * FROM series WHERE name LIKE '%' || :query || '%' ORDER BY name LIMIT :limit")
     fun search(query: String, limit: Int = 200): Flow<List<Series>>

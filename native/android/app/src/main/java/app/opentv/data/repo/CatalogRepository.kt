@@ -160,6 +160,10 @@ class CatalogRepository(
 
     fun observeFavouriteChannels(): Flow<List<Channel>> = channelDao.observeFavourites()
 
+    fun observeFavouriteMovies(): Flow<List<Movie>> = movieDao.observeFavourites()
+
+    fun observeFavouriteSeries(): Flow<List<Series>> = seriesDao.observeFavourites()
+
     /** Reactive number of visible channels on disk — the UI uses this to tell "guide still
      * building" (channels exist) apart from "nothing loaded" (a failed or empty sync). */
     fun observeChannelCount(): Flow<Int> = channelDao.observeVisibleCount()
@@ -588,6 +592,9 @@ class CatalogRepository(
     suspend fun setMovieFavourite(id: Long, favourite: Boolean) =
         movieDao.setFavourite(id, favourite)
 
+    suspend fun setSeriesFavourite(id: Long, favourite: Boolean) =
+        seriesDao.setFavourite(id, favourite)
+
     // --- Sync helpers: read/apply curation by stable stream URL ---
     suspend fun favouriteChannelUrls(): List<String> = channelDao.favouriteUrls()
     suspend fun hiddenChannelUrls(): List<String> = channelDao.hiddenUrls()
@@ -729,11 +736,13 @@ class CatalogRepository(
 
         if (moviesOn) {
             // Stream + upsert in batches. Never collect the full VOD list — that is what
-            // emptied Movies on low-RAM sticks with huge libraries.
+            // emptied Movies on low-RAM sticks with huge libraries. Merge user state first so a
+            // refresh cannot un-star a film or wipe TMDB / get_vod_info fields.
+            val previousMovies = movieDao.userStateForSource(source.id).associateBy { it.streamId }
             var movieCount = 0
             runCatching {
                 api.forEachMovieBatch(source) { batch ->
-                    movieDao.upsertAll(batch)
+                    movieDao.upsertAll(batch.map { VodSyncMerge.movie(it, previousMovies[it.streamId]) })
                     movieCount += batch.size
                 }
             }.onFailure { Log.w(TAG, "Full VOD list failed for source ${source.id}", it) }
@@ -744,7 +753,7 @@ class CatalogRepository(
                     var inCategory = 0
                     runCatching {
                         api.forEachMovieBatch(source, categoryId = cat.id) { batch ->
-                            movieDao.upsertAll(batch)
+                            movieDao.upsertAll(batch.map { VodSyncMerge.movie(it, previousMovies[it.streamId]) })
                             inCategory += batch.size
                             movieCount += batch.size
                         }
@@ -760,7 +769,10 @@ class CatalogRepository(
             }
             Log.i(TAG, "VOD movies stored for source ${source.id}: $movieCount")
         }
-        if (series.isNotEmpty()) seriesDao.upsertAll(series)
+        if (series.isNotEmpty()) {
+            val previousSeries = seriesDao.userStateForSource(source.id).associateBy { it.seriesId }
+            seriesDao.upsertAll(series.map { VodSyncMerge.series(it, previousSeries[it.seriesId]) })
+        }
     }
 
     private suspend fun syncM3u(source: Source, nowUtcMillis: Long): SyncResult {

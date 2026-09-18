@@ -2,6 +2,8 @@
 
 Fork **GPL-3.0** de [OpenTV](https://github.com/opentvproject/opentv), rebranded as **XTREAM** (`app.xtream.player`). ExoPlayer nativo; sin proxy web.
 
+Launcher, riel y diálogos dicen **XTREAM** (icono mint). Favoritos de películas y series: chip **★ Favoritos** y fila en el home de cada pestaña.
+
 ## Instalar (Fire Stick)
 
 En **Downloader** el código es:

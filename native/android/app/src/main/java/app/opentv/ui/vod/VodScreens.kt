@@ -85,6 +85,10 @@ fun MoviesScreen(
     val vodLoading by viewModel.vodLoading.collectAsState()
     val sources by viewModel.sources.collectAsState()
     val selectedSource by viewModel.selectedVodSource.collectAsState()
+    val favouriteMoviesRaw by viewModel.favouriteMovies.collectAsState()
+    val favouriteMovies = remember(favouriteMoviesRaw, selectedSource) {
+        if (selectedSource == null) favouriteMoviesRaw else favouriteMoviesRaw.filter { it.sourceId == selectedSource }
+    }
 
     // Pull the movie library the first time this tab is opened, not at login; refresh the computed
     // home rows (recommended, by-genre) on open too — cheap, and covers a library already on disk.
@@ -93,11 +97,11 @@ fun MoviesScreen(
         viewModel.loadHomeFeeds()
     }
 
-    // null = the curated home rows; a category id = that category's full grid.
-    var browseCategory by remember { mutableStateOf<String?>(null) }
+    // Home = curated rows; Favourites = starred grid; otherwise one category's full grid.
+    var browse by remember { mutableStateOf<VodBrowse>(VodBrowse.Home) }
 
-    val hasContent = resume.isNotEmpty() || recommended.isNotEmpty() ||
-        recentlyAdded.isNotEmpty() || genreRows.isNotEmpty()
+    val hasContent = resume.isNotEmpty() || favouriteMovies.isNotEmpty() ||
+        recommended.isNotEmpty() || recentlyAdded.isNotEmpty() || genreRows.isNotEmpty()
 
     Column(Modifier.fillMaxSize()) {
         SearchAffordance(onOpenSearch)
@@ -105,40 +109,55 @@ fun MoviesScreen(
             ProviderChips(
                 sources = sources,
                 selected = selectedSource,
-                onSelectAll = { browseCategory = null; viewModel.selectVodSource(null) },
-                onSelectSource = { id -> browseCategory = null; viewModel.selectVodSource(id) },
+                onSelectAll = { browse = VodBrowse.Home; viewModel.selectVodSource(null) },
+                onSelectSource = { id -> browse = VodBrowse.Home; viewModel.selectVodSource(id) },
             )
         }
         CategoryChips(
             entries = categories.map { it.id to it.name },
-            selected = browseCategory,
-            onSelectHome = { browseCategory = null },
-            onSelectCategory = { id -> browseCategory = id; viewModel.selectMovieCategory(id) },
+            homeSelected = browse is VodBrowse.Home,
+            favouritesSelected = browse is VodBrowse.Favourites,
+            selectedCategoryId = (browse as? VodBrowse.Category)?.id,
+            onSelectHome = { browse = VodBrowse.Home },
+            onSelectFavourites = { browse = VodBrowse.Favourites },
+            onSelectCategory = { id -> browse = VodBrowse.Category(id); viewModel.selectMovieCategory(id) },
         )
         // Weighted so the shelves fill the space under the fixed search + chips header, exactly and
         // unambiguously — the same reason Live TV weights its guide grid.
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            when {
-                browseCategory != null -> MovieCategoryGrid(categoryMovies, viewModel, onOpenMovie)
-                !hasContent -> when {
-                    vodLoading || isSyncing -> LoadingVod(stringResource(R.string.vod_loading_movies))
-                    hasSources -> EmptyVod(stringResource(R.string.vod_no_movies), stringResource(R.string.vod_no_movies_provider))
-                    else -> EmptyVod(stringResource(R.string.vod_no_movies), stringResource(R.string.vod_no_movies_add))
+            when (browse) {
+                is VodBrowse.Favourites -> when {
+                    favouriteMovies.isNotEmpty() -> MovieCategoryGrid(favouriteMovies, viewModel, onOpenMovie)
+                    else -> EmptyVod(
+                        stringResource(R.string.guide_no_favourites_title),
+                        stringResource(R.string.vod_no_favourites_movies_desc),
+                    )
                 }
-                else -> LazyColumn(
-                    contentPadding = PaddingValues(vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    if (resume.isNotEmpty()) item(key = "cw") { ContinueWatchingRow(resume, onResume) }
-                    if (recommended.isNotEmpty()) item(key = "rec") {
-                        MoviePosterRow(stringResource(R.string.vod_recommended), recommended, onOpenMovie)
+                is VodBrowse.Category -> MovieCategoryGrid(categoryMovies, viewModel, onOpenMovie)
+                VodBrowse.Home -> when {
+                    !hasContent -> when {
+                        vodLoading || isSyncing -> LoadingVod(stringResource(R.string.vod_loading_movies))
+                        hasSources -> EmptyVod(stringResource(R.string.vod_no_movies), stringResource(R.string.vod_no_movies_provider))
+                        else -> EmptyVod(stringResource(R.string.vod_no_movies), stringResource(R.string.vod_no_movies_add))
                     }
-                    if (recentlyAdded.isNotEmpty()) item(key = "recent") {
-                        MoviePosterRow(stringResource(R.string.vod_recently_added), recentlyAdded, onOpenMovie)
-                    }
-                    items(genreRows, key = { "g:${it.genre}" }) { group ->
-                        MoviePosterRow(group.genre, group.items, onOpenMovie)
+                    else -> LazyColumn(
+                        contentPadding = PaddingValues(vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        if (resume.isNotEmpty()) item(key = "cw") { ContinueWatchingRow(resume, onResume) }
+                        if (favouriteMovies.isNotEmpty()) item(key = "favs") {
+                            MoviePosterRow(stringResource(R.string.guide_favourites), favouriteMovies, onOpenMovie)
+                        }
+                        if (recommended.isNotEmpty()) item(key = "rec") {
+                            MoviePosterRow(stringResource(R.string.vod_recommended), recommended, onOpenMovie)
+                        }
+                        if (recentlyAdded.isNotEmpty()) item(key = "recent") {
+                            MoviePosterRow(stringResource(R.string.vod_recently_added), recentlyAdded, onOpenMovie)
+                        }
+                        items(genreRows, key = { "g:${it.genre}" }) { group ->
+                            MoviePosterRow(group.genre, group.items, onOpenMovie)
+                        }
                     }
                 }
             }
@@ -169,15 +188,20 @@ fun SeriesScreen(
     val vodLoading by viewModel.vodLoading.collectAsState()
     val sources by viewModel.sources.collectAsState()
     val selectedSource by viewModel.selectedVodSource.collectAsState()
+    val favouriteSeriesRaw by viewModel.favouriteSeries.collectAsState()
+    val favouriteSeries = remember(favouriteSeriesRaw, selectedSource) {
+        if (selectedSource == null) favouriteSeriesRaw else favouriteSeriesRaw.filter { it.sourceId == selectedSource }
+    }
 
     LaunchedEffect(Unit) {
         if (hasSources) viewModel.ensureVodLoaded()
         viewModel.loadHomeFeeds()
     }
 
-    var browseCategory by remember { mutableStateOf<String?>(null) }
+    var browse by remember { mutableStateOf<VodBrowse>(VodBrowse.Home) }
 
-    val hasContent = resume.isNotEmpty() || recentlyAdded.isNotEmpty() || genreRows.isNotEmpty()
+    val hasContent = resume.isNotEmpty() || favouriteSeries.isNotEmpty() ||
+        recentlyAdded.isNotEmpty() || genreRows.isNotEmpty()
 
     Column(Modifier.fillMaxSize()) {
         SearchAffordance(onOpenSearch)
@@ -185,35 +209,50 @@ fun SeriesScreen(
             ProviderChips(
                 sources = sources,
                 selected = selectedSource,
-                onSelectAll = { browseCategory = null; viewModel.selectVodSource(null) },
-                onSelectSource = { id -> browseCategory = null; viewModel.selectVodSource(id) },
+                onSelectAll = { browse = VodBrowse.Home; viewModel.selectVodSource(null) },
+                onSelectSource = { id -> browse = VodBrowse.Home; viewModel.selectVodSource(id) },
             )
         }
         CategoryChips(
             entries = categories.map { it.id to it.name },
-            selected = browseCategory,
-            onSelectHome = { browseCategory = null },
-            onSelectCategory = { id -> browseCategory = id; viewModel.selectSeriesCategory(id) },
+            homeSelected = browse is VodBrowse.Home,
+            favouritesSelected = browse is VodBrowse.Favourites,
+            selectedCategoryId = (browse as? VodBrowse.Category)?.id,
+            onSelectHome = { browse = VodBrowse.Home },
+            onSelectFavourites = { browse = VodBrowse.Favourites },
+            onSelectCategory = { id -> browse = VodBrowse.Category(id); viewModel.selectSeriesCategory(id) },
         )
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            when {
-                browseCategory != null -> SeriesCategoryGrid(categorySeries, onOpenSeries)
-                !hasContent -> when {
-                    vodLoading || isSyncing -> LoadingVod(stringResource(R.string.vod_loading_shows))
-                    hasSources -> EmptyVod(stringResource(R.string.vod_no_shows), stringResource(R.string.vod_no_shows_provider))
-                    else -> EmptyVod(stringResource(R.string.vod_no_shows), stringResource(R.string.vod_no_shows_add))
+            when (browse) {
+                is VodBrowse.Favourites -> when {
+                    favouriteSeries.isNotEmpty() -> SeriesCategoryGrid(favouriteSeries, onOpenSeries)
+                    else -> EmptyVod(
+                        stringResource(R.string.guide_no_favourites_title),
+                        stringResource(R.string.vod_no_favourites_shows_desc),
+                    )
                 }
-                else -> LazyColumn(
-                    contentPadding = PaddingValues(vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    if (resume.isNotEmpty()) item(key = "cw") { ContinueWatchingRow(resume, onResume) }
-                    if (recentlyAdded.isNotEmpty()) item(key = "recent") {
-                        SeriesPosterRow(stringResource(R.string.vod_recently_added), recentlyAdded, onOpenSeries)
+                is VodBrowse.Category -> SeriesCategoryGrid(categorySeries, onOpenSeries)
+                VodBrowse.Home -> when {
+                    !hasContent -> when {
+                        vodLoading || isSyncing -> LoadingVod(stringResource(R.string.vod_loading_shows))
+                        hasSources -> EmptyVod(stringResource(R.string.vod_no_shows), stringResource(R.string.vod_no_shows_provider))
+                        else -> EmptyVod(stringResource(R.string.vod_no_shows), stringResource(R.string.vod_no_shows_add))
                     }
-                    items(genreRows, key = { "g:${it.genre}" }) { group ->
-                        SeriesPosterRow(group.genre, group.items, onOpenSeries)
+                    else -> LazyColumn(
+                        contentPadding = PaddingValues(vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        if (resume.isNotEmpty()) item(key = "cw") { ContinueWatchingRow(resume, onResume) }
+                        if (favouriteSeries.isNotEmpty()) item(key = "favs") {
+                            SeriesPosterRow(stringResource(R.string.guide_favourites), favouriteSeries, onOpenSeries)
+                        }
+                        if (recentlyAdded.isNotEmpty()) item(key = "recent") {
+                            SeriesPosterRow(stringResource(R.string.vod_recently_added), recentlyAdded, onOpenSeries)
+                        }
+                        items(genreRows, key = { "g:${it.genre}" }) { group ->
+                            SeriesPosterRow(group.genre, group.items, onOpenSeries)
+                        }
                     }
                 }
             }
@@ -249,6 +288,7 @@ private fun MovieCategoryGrid(movies: List<Movie>, viewModel: VodViewModel, onOp
                 subtitle = group.primary.year?.toString(),
                 rating = group.primary.rating,
                 qualityBadge = badge,
+                favourite = group.primary.favourite,
                 onClick = { onOpenMovie(group.primary) },
             )
         }
@@ -272,6 +312,7 @@ private fun SeriesCategoryGrid(series: List<Series>, onOpenSeries: (Series) -> U
                 posterUrl = item.posterUrl,
                 subtitle = item.year?.toString(),
                 rating = item.rating,
+                favourite = item.favourite,
                 onClick = { onOpenSeries(item) },
             )
         }
@@ -295,6 +336,7 @@ internal fun MoviePosterRow(title: String, movies: List<Movie>, onOpenMovie: (Mo
                     posterUrl = movie.posterUrl,
                     subtitle = movie.year?.toString(),
                     rating = movie.rating,
+                    favourite = movie.favourite,
                     onClick = { onOpenMovie(movie) },
                 )
             }
@@ -317,6 +359,7 @@ internal fun SeriesPosterRow(title: String, series: List<Series>, onOpenSeries: 
                     posterUrl = item.posterUrl,
                     subtitle = item.year?.toString(),
                     rating = item.rating,
+                    favourite = item.favourite,
                     onClick = { onOpenSeries(item) },
                 )
             }
@@ -353,6 +396,7 @@ internal fun PosterCard(
     rating: Double? = null,
     qualityBadge: String? = null,
     progress: Float? = null,
+    favourite: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "posterScale")
@@ -386,6 +430,13 @@ internal fun PosterCard(
                 Badge(
                     text = "★ ${formatRating(it)}",
                     modifier = Modifier.align(Alignment.BottomStart).padding(6.dp),
+                )
+            }
+            if (favourite) {
+                Badge(
+                    text = "★",
+                    highlight = true,
+                    modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
                 )
             }
             qualityBadge?.let {
@@ -517,8 +568,11 @@ private fun ResumeCard(item: VodViewModel.ResumeItem, onClick: () -> Unit) {
 @Composable
 private fun CategoryChips(
     entries: List<Pair<String, String>>,
-    selected: String?,
+    homeSelected: Boolean,
+    favouritesSelected: Boolean,
+    selectedCategoryId: String?,
     onSelectHome: () -> Unit,
+    onSelectFavourites: () -> Unit,
     onSelectCategory: (String) -> Unit,
 ) {
     LazyRow(
@@ -534,9 +588,12 @@ private fun CategoryChips(
                 modifier = Modifier.padding(end = 4.dp),
             )
         }
-        item(key = "all") { Chip(stringResource(R.string.vod_all), selected == null, onSelectHome) }
+        item(key = "all") { Chip(stringResource(R.string.vod_all), homeSelected, onSelectHome) }
+        item(key = "favs") {
+            Chip(stringResource(R.string.guide_favourites), favouritesSelected, onSelectFavourites)
+        }
         items(entries, key = { it.first }) { (id, name) ->
-            Chip(name, selected == id) { onSelectCategory(id) }
+            Chip(name, selectedCategoryId == id) { onSelectCategory(id) }
         }
     }
 }
@@ -665,6 +722,13 @@ private fun LoadingVod(message: String) {
 
 /** Poster shelf card width; the grid uses an adaptive min size close to this. */
 private val POSTER_WIDTH = 140.dp
+
+/** Home vs starred grid vs a provider category — Movies and Shows share this browse model. */
+private sealed interface VodBrowse {
+    data object Home : VodBrowse
+    data object Favourites : VodBrowse
+    data class Category(val id: String) : VodBrowse
+}
 
 /** Rating to one decimal place, locale-independent (the "★" is drawn beside it). */
 internal fun formatRating(rating: Double): String = String.format(java.util.Locale.US, "%.1f", rating)

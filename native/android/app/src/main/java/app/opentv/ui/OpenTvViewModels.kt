@@ -831,6 +831,14 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         graph.catalogRepository.recentlyAddedSeries()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val favouriteMovies: StateFlow<List<Movie>> =
+        graph.catalogRepository.observeFavouriteMovies()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val favouriteSeries: StateFlow<List<Series>> =
+        graph.catalogRepository.observeFavouriteSeries()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     private val _recommendedMovies = MutableStateFlow<List<Movie>>(emptyList())
     val recommendedMovies: StateFlow<List<Movie>> = _recommendedMovies.asStateFlow()
 
@@ -1057,13 +1065,13 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     /** Star / un-star a whole series. Wraps the series DAO through the shared database — no data-layer change. */
     fun toggleSeriesFavourite(series: Series) {
         viewModelScope.launch {
-            graph.database.series().setFavourite(series.id, !series.favourite)
+            graph.catalogRepository.setSeriesFavourite(series.id, !series.favourite)
         }
     }
 
     /** The user-agent to play a movie/episode with (per source). */
     suspend fun userAgentForSource(sourceId: Long): String =
-        graph.sourceRepository.byId(sourceId)?.userAgent ?: "OpenTV/0.1 (Android)"
+        graph.sourceRepository.byId(sourceId)?.userAgent ?: Source.DEFAULT_USER_AGENT
 }
 
 /**

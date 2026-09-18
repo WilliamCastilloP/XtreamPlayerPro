@@ -13,7 +13,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 /**
- * Checks whether a newer OpenTV release has been published, so a sideloaded install can
+ * Checks whether a newer XTREAM release has been published, so a sideloaded install can
  * update itself.
  *
  * Sideloaded apps get no automatic updates — nothing on the device knows to look. Without
@@ -52,7 +52,7 @@ class UpdateChecker(
             val request = Request.Builder()
                 .url("https://api.github.com/repos/$repoSlug/releases/latest")
                 .header("Accept", "application/vnd.github+json")
-                .header("User-Agent", "OpenTV")
+                .header("User-Agent", "XTREAM")
                 .build()
 
             http.newCall(request).execute().use { response ->
@@ -118,7 +118,10 @@ class UpdateChecker(
         /**
          * True when [tag] names a strictly higher version than [current].
          *
-         * Both are reduced to lists of integers (`v0.2.0` → 0,2,0) and compared left to right.
+         * Both are reduced to lists of integers (`v0.2.0` / `android-v0.2.0` → 0,2,0) and compared
+         * left to right. The `android-v*` tag prefix is the GitHub Actions release scheme for the
+         * Fire TV APK; without stripping it, `android-v0.13.0` would parse as 0.0.13 and never look
+         * newer than `0.12.0`.
          * A missing or non-numeric component counts as 0, so `0.2` and `0.2.0` are equal and a
          * malformed tag simply never wins.
          */
@@ -135,7 +138,9 @@ class UpdateChecker(
         }
 
         private fun versionParts(v: String): List<Int> =
-            v.trim().trimStart('v', 'V')
+            v.trim()
+                .removePrefix("android-")
+                .trimStart('v', 'V')
                 .split('.', '-', '+')
                 .map { part -> part.takeWhile(Char::isDigit).toIntOrNull() ?: 0 }
     }

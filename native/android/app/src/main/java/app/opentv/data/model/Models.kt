@@ -79,7 +79,7 @@ data class Source(
     val lastCatalogSyncMillis: Long = 0,
 ) {
     companion object {
-        const val DEFAULT_USER_AGENT: String = "OpenTV/0.1 (Android)"
+        const val DEFAULT_USER_AGENT: String = "XTREAM/0.13 (Android)"
     }
 }
 

@@ -29,9 +29,11 @@ Enlace directo (si Downloader pide URL):
 https://github.com/WilliamCastilloP/XtreamPlayerPro/releases/latest/download/XTREAM.apk
 ```
 
-Release: [android-v0.12.0](https://github.com/WilliamCastilloP/XtreamPlayerPro/releases/tag/android-v0.12.0)
+Release: la APK más reciente en GitHub Releases (Downloader `8417717`). Versión actual de la app nativa: **0.13.0** (icono/nombre XTREAM, favoritos de películas y series).
 
 Películas con catálogos enormes: la primera sync puede tardar minutos. Si la pestaña queda vacía: **Ajustes → Pantalla y reproducción → Contenido → Películas ↻**.
+
+Favoritos: en Live TV, el chip **★ Favoritos** del guía. En **Películas** y **Series**, la fila **★ Favoritos** arriba del catálogo y el mismo chip junto a Categorías. Se marcan con la estrella en la ficha del título.
 
 ## Enlaces
 

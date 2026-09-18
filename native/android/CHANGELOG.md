@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.13.0
+
+- **XTREAM name and icon.** The launcher, TV banner, nav rail, About, exit dialog and onboarding
+  now say XTREAM with a mint X mark. Remaining "OpenTV" in the UI was leftover copy from the
+  upstream fork (GPL attribution stays in About and the licence).
+- **Movie and series favourites.** Live TV already had a Favourites chip; Movies and Shows now have
+  the same chip plus a **★ Favourites** row on the home shelf. Star a title on its detail page and
+  it appears there. Catalogue refresh no longer wipes those stars.
+
 ## 0.11.8
 
 - **Edit a saved provider.** Settings → Providers now has an **Edit** button on each provider, so you

@@ -173,7 +173,7 @@ fun AboutScreen(onBack: () -> Unit) {
             )
             LinkLine(stringResource(R.string.about_source_code), "github.com/WilliamCastilloP/XtreamPlayerPro")
             LinkLine(stringResource(R.string.about_report_bug), "github.com/WilliamCastilloP/XtreamPlayerPro/issues")
-            LinkLine(stringResource(R.string.about_source_code), "github.com/opentvproject/opentv")
+            LinkLine(stringResource(R.string.about_based_on), "github.com/opentvproject/opentv")
         }
     }
 }

@@ -1,14 +1,26 @@
 # Releasing
 
-Releases are cut by pushing a tag. GitHub Actions does the rest.
+Releases are cut by pushing a **`v*`** tag. GitHub Actions does the rest.
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.14.0
+git push origin v0.14.0
 ```
 
-`.github/workflows/release.yml` runs the tests, assembles the release APK and attaches it to a
-GitHub release.
+`.github/workflows/android-apk.yml` runs the tests, assembles the release APK and attaches it to a
+GitHub release named after the tag. Prefer `v0.14.0` over `android-v0.14.0`: installs still on
+0.12.0 compare tags with a checker that does not strip the `android-` prefix, so `android-v*`
+never looks newer to them.
+
+## Updating on a Fire Stick
+
+**Do not uninstall.** Same package id + higher `versionCode` + the same signing key = Android
+upgrades in place and keeps providers, favourites and history.
+
+- In the app: a prompt appears within ~30 minutes of a new release, or immediately from
+  **Settings → About → Check for updates**.
+- Or open Downloader and enter `8417717` again — that downloads `XTREAM.apk` over the existing
+  install.
 
 ## Signing
 

@@ -12,6 +12,8 @@ En **Downloader** el código es:
 8417717
 ```
 
+**No desinstales para actualizar.** Vuelve a poner el código; Android instala encima y conserva login, favoritos e historial. En la app: Ajustes → Acerca de → Buscar actualizaciones.
+
 También: [aftv.news/8417717](https://aftv.news/8417717)
 
 APK (siempre la última):

@@ -51,6 +51,19 @@
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
+    <!-- Lets FileProvider grant the update APK to the system installer on Android 11+ / Fire OS 8,
+         where package visibility would otherwise hide the installer from queryIntentActivities. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="application/vnd.android.package-archive" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.INSTALL_PACKAGE" />
+            <data android:mimeType="application/vnd.android.package-archive" />
+        </intent>
+    </queries>
+
     <application
         android:name=".OpenTvApp"
         android:allowBackup="true"

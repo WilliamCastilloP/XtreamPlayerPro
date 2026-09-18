@@ -17,15 +17,21 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.opentv.BuildConfig
+import app.opentv.R
 import app.opentv.core.ServiceLocator
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,22 +41,41 @@ import kotlinx.coroutines.launch
  * The one-line entry point: drop [UpdateGate] into the top-level layout and a sideloaded
  * install will notice and offer its own updates. It renders nothing until there is something
  * to say, so it is safe to place unconditionally over the whole app.
+ *
+ * The install is an upgrade in place — same package id, higher versionCode — so providers,
+ * favourites and history stay on the Stick. Never uninstall to take an update.
  */
 @Composable
 fun UpdateGate(viewModel: UpdateViewModel = viewModel()) {
     val state by viewModel.state.collectAsState()
+    val primaryFocus = remember { FocusRequester() }
 
     when (val s = state) {
         UpdateUiState.Idle -> Unit
 
-        is UpdateUiState.Available -> AlertDialog(
+        is UpdateUiState.Available -> {
+            LaunchedEffect(s.update.versionName) { runCatching { primaryFocus.requestFocus() } }
+            AlertDialog(
             onDismissRequest = viewModel::dismiss,
-            confirmButton = { TextButton(onClick = viewModel::install) { Text("Update") } },
-            dismissButton = { TextButton(onClick = viewModel::dismiss) { Text("Later") } },
-            title = { Text("Update available") },
+            confirmButton = {
+                TextButton(
+                    onClick = viewModel::install,
+                    modifier = Modifier.focusRequester(primaryFocus),
+                ) { Text(stringResource(R.string.update_now)) }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismiss) { Text(stringResource(R.string.update_later)) }
+            },
+            title = { Text(stringResource(R.string.update_available_title)) },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
-                    Text("XTREAM ${s.update.versionName} is available. You have ${BuildConfig.VERSION_NAME}.")
+                    Text(
+                        stringResource(
+                            R.string.update_available_body,
+                            s.update.versionName,
+                            BuildConfig.VERSION_NAME,
+                        ),
+                    )
                     if (s.update.notes.isNotBlank()) {
                         Text(
                             text = s.update.notes,
@@ -61,12 +86,13 @@ fun UpdateGate(viewModel: UpdateViewModel = viewModel()) {
                     }
                 }
             },
-        )
+            )
+        }
 
         is UpdateUiState.Downloading -> AlertDialog(
             onDismissRequest = {}, // a download in flight should not be dismissed by a stray click
             confirmButton = {},
-            title = { Text("Downloading update…") },
+            title = { Text(stringResource(R.string.update_downloading)) },
             text = {
                 Column {
                     if (s.fraction >= 0f) {
@@ -82,12 +108,34 @@ fun UpdateGate(viewModel: UpdateViewModel = viewModel()) {
             },
         )
 
+        is UpdateUiState.NeedsPermission -> {
+            LaunchedEffect(Unit) { runCatching { primaryFocus.requestFocus() } }
+            AlertDialog(
+            onDismissRequest = viewModel::dismiss,
+            confirmButton = {
+                TextButton(
+                    onClick = viewModel::install,
+                    modifier = Modifier.focusRequester(primaryFocus),
+                ) { Text(stringResource(R.string.update_now)) }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismiss) { Text(stringResource(R.string.update_later)) }
+            },
+            title = { Text(stringResource(R.string.update_allow_installs_title)) },
+            text = { Text(stringResource(R.string.update_allow_installs_body)) },
+            )
+        }
+
         is UpdateUiState.Failed -> AlertDialog(
             onDismissRequest = viewModel::dismiss,
-            confirmButton = { TextButton(onClick = viewModel::install) { Text("Retry") } },
-            dismissButton = { TextButton(onClick = viewModel::dismiss) { Text("Close") } },
-            title = { Text("Update failed") },
-            text = { Text("Could not download the update. Check the connection and try again.") },
+            confirmButton = {
+                TextButton(onClick = viewModel::install) { Text(stringResource(R.string.update_retry)) }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismiss) { Text(stringResource(R.string.update_close)) }
+            },
+            title = { Text(stringResource(R.string.update_failed_title)) },
+            text = { Text(stringResource(R.string.update_failed_body)) },
         )
     }
 }
@@ -96,6 +144,7 @@ sealed interface UpdateUiState {
     data object Idle : UpdateUiState
     data class Available(val update: UpdateChecker.Update) : UpdateUiState
     data class Downloading(val update: UpdateChecker.Update, val fraction: Float) : UpdateUiState
+    data class NeedsPermission(val update: UpdateChecker.Update) : UpdateUiState
     data class Failed(val update: UpdateChecker.Update) : UpdateUiState
 }
 
@@ -121,9 +170,8 @@ class UpdateViewModel(app: Application) : AndroidViewModel(app) {
     init { checkThrottled() }
 
     /**
-     * Hits the network at most once every [CHECK_INTERVAL_MS]. The guide already re-syncs on
-     * every launch; adding an unconditional GitHub round-trip on top of that would be rude to
-     * both GitHub's rate limit and the user's connection, for information that changes rarely.
+     * Hits GitHub at most once every [CHECK_INTERVAL_MS]. Frequent enough that a Stick left
+     * on overnight sees the next cut, without a GitHub round-trip on every composition.
      */
     private fun checkThrottled() {
         viewModelScope.launch {
@@ -143,6 +191,7 @@ class UpdateViewModel(app: Application) : AndroidViewModel(app) {
             is UpdateUiState.Available -> s.update
             is UpdateUiState.Failed -> s.update
             is UpdateUiState.Downloading -> s.update
+            is UpdateUiState.NeedsPermission -> s.update
             UpdateUiState.Idle -> return
         }
         viewModelScope.launch {
@@ -156,8 +205,12 @@ class UpdateViewModel(app: Application) : AndroidViewModel(app) {
             }.onSuccess {
                 // The system installer is now front-and-centre; step our dialog aside.
                 _state.value = UpdateUiState.Idle
-            }.onFailure {
-                _state.value = UpdateUiState.Failed(update)
+            }.onFailure { error ->
+                _state.value = if (error is NeedsUnknownSourcesException) {
+                    UpdateUiState.NeedsPermission(update)
+                } else {
+                    UpdateUiState.Failed(update)
+                }
             }
         }
     }
@@ -166,6 +219,6 @@ class UpdateViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val KEY_LAST_CHECK = "last_update_check"
-        const val CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000L // 6 hours
+        const val CHECK_INTERVAL_MS = 30 * 60 * 1000L // 30 minutes
     }
 }

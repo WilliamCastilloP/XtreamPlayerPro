@@ -67,7 +67,7 @@ class UpdateChecker(
                 if (!isNewer(release.tagName, currentVersionName)) return@withContext null
 
                 Update(
-                    versionName = release.tagName.trimStart('v', 'V'),
+                    versionName = displayVersion(release.tagName),
                     title = release.name.ifBlank { release.tagName },
                     notes = cleanNotes(release.body),
                     apkUrl = asset.browserDownloadUrl,
@@ -116,6 +116,12 @@ class UpdateChecker(
         }
 
         /**
+         * Tag or versionName reduced to the dotted number (`android-v0.14.0` / `v0.14.0` → `0.14.0`).
+         */
+        fun displayVersion(tag: String): String =
+            tag.trim().removePrefix("android-").trimStart('v', 'V')
+
+        /**
          * True when [tag] names a strictly higher version than [current].
          *
          * Both are reduced to lists of integers (`v0.2.0` / `android-v0.2.0` → 0,2,0) and compared
@@ -138,9 +144,7 @@ class UpdateChecker(
         }
 
         private fun versionParts(v: String): List<Int> =
-            v.trim()
-                .removePrefix("android-")
-                .trimStart('v', 'V')
+            displayVersion(v)
                 .split('.', '-', '+')
                 .map { part -> part.takeWhile(Char::isDigit).toIntOrNull() ?: 0 }
     }

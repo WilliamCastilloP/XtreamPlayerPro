@@ -303,6 +303,17 @@
     <string name="about_up_to_date">Tienes la versión más reciente.</string>
     <string name="about_checking">Comprobando…</string>
     <string name="about_check_updates">Buscar actualizaciones</string>
+    <string name="update_available_title">Actualización disponible</string>
+    <string name="update_available_body">XTREAM %1$s está lista. Tienes la %2$s.\n\nSe instala encima de la app actual: proveedores, favoritos e historial se quedan en el Stick. No hay que desinstalar.</string>
+    <string name="update_now">Actualizar</string>
+    <string name="update_later">Más tarde</string>
+    <string name="update_downloading">Descargando actualización…</string>
+    <string name="update_failed_title">Error al actualizar</string>
+    <string name="update_failed_body">No se pudo descargar la actualización. Revisa la conexión e inténtalo de nuevo. También puedes abrir Downloader y escribir 8417717 — eso también actualiza encima, sin borrar la app.</string>
+    <string name="update_retry">Reintentar</string>
+    <string name="update_close">Cerrar</string>
+    <string name="update_allow_installs_title">Permite que XTREAM instale actualizaciones</string>
+    <string name="update_allow_installs_body">Android necesita permiso para que XTREAM instale su propia APK. Actívalo en la siguiente pantalla, vuelve y pulsa Actualizar. No desinstales.</string>
     <string name="about_what_is_title">Qué es</string>
     <string name="about_what_is_body">Un reproductor de IPTV gratuito y de código abierto para Android TV, Fire TV y teléfonos. Es solo un reproductor — no proporciona canales; tú conectas el servicio que ya pagas. Nada de lo que ingreses sale de tu dispositivo, salvo para comunicarse con tu proveedor.</string>
     <string name="about_built_open_title">Creado de forma abierta</string>

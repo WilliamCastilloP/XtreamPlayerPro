@@ -25,8 +25,10 @@ data class GitHubRelease(
     @SerialName("html_url") val htmlUrl: String = "",
     val assets: List<GitHubAsset> = emptyList(),
 ) {
-    /** The first attached `.apk`, which is the thing we can actually install. */
-    fun apkAsset(): GitHubAsset? = assets.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
+    /** Prefer the stable `XTREAM.apk` name (Downloader + in-app updater), then any other APK. */
+    fun apkAsset(): GitHubAsset? =
+        assets.firstOrNull { it.name.equals("XTREAM.apk", ignoreCase = true) }
+            ?: assets.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
 }
 
 @Serializable

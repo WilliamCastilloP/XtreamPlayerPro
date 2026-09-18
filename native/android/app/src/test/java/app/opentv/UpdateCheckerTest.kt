@@ -23,4 +23,18 @@ class UpdateCheckerTest {
         assertThat(UpdateChecker.isNewer("v0.13.0", "0.12.0")).isTrue()
         assertThat(UpdateChecker.isNewer("v0.12.0", "0.12.0")).isFalse()
     }
+
+    @Test
+    fun `v0_14 is newer than both 0_12 and 0_13 so old and new installs upgrade`() {
+        assertThat(UpdateChecker.isNewer("v0.14.0", "0.12.0")).isTrue()
+        assertThat(UpdateChecker.isNewer("v0.14.0", "0.13.0")).isTrue()
+        assertThat(UpdateChecker.isNewer("v0.14.0", "0.14.0")).isFalse()
+    }
+
+    @Test
+    fun `displayVersion strips android and v prefixes`() {
+        assertThat(UpdateChecker.displayVersion("android-v0.14.0")).isEqualTo("0.14.0")
+        assertThat(UpdateChecker.displayVersion("v0.14.0")).isEqualTo("0.14.0")
+        assertThat(UpdateChecker.displayVersion("0.14.0")).isEqualTo("0.14.0")
+    }
 }

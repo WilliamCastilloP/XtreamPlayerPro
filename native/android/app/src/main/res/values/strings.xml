@@ -335,6 +335,17 @@
     <string name="about_up_to_date">You\'re on the latest version.</string>
     <string name="about_checking">Checking…</string>
     <string name="about_check_updates">Check for updates</string>
+    <string name="update_available_title">Update available</string>
+    <string name="update_available_body">XTREAM %1$s is ready. You have %2$s.\n\nThis installs over the current app — providers, favourites and watch history stay on the Stick. Do not uninstall.</string>
+    <string name="update_now">Update</string>
+    <string name="update_later">Later</string>
+    <string name="update_downloading">Downloading update…</string>
+    <string name="update_failed_title">Update failed</string>
+    <string name="update_failed_body">Could not download the update. Check the connection and try again. You can also open Downloader and enter 8417717 — that upgrades in place too, no need to delete the app.</string>
+    <string name="update_retry">Retry</string>
+    <string name="update_close">Close</string>
+    <string name="update_allow_installs_title">Allow XTREAM to install updates</string>
+    <string name="update_allow_installs_body">Android needs permission for XTREAM to install its own APK. Allow it on the next screen, then come back and tap Update. Do not uninstall.</string>
     <string name="about_what_is_title">What it is</string>
     <string name="about_what_is_body">A free, open-source IPTV player for Android TV, Fire TV and phones. It\'s a player only — it doesn\'t supply channels; you connect the service you already pay for. Nothing you enter leaves your device except to talk to your own provider.</string>
     <string name="about_built_open_title">Built in the open</string>

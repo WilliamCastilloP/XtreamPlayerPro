@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.14.0
+
+- **In-place updates.** A new build installs over the current one — providers, favourites and
+  watch history stay on the Stick. Do not uninstall. The in-app prompt (and Downloader code
+  `8417717`) both upgrade in place. Releases are tagged `v0.14.0` so installs still on 0.12.0
+  can see the update (the old checker ignored `android-v*` tags). Fire TV uses `ACTION_VIEW`
+  to open the system installer.
+
 ## 0.13.0
 
 - **XTREAM name and icon.** The launcher, TV banner, nav rail, About, exit dialog and onboarding

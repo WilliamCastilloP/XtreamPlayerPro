@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.15.0
+
+- **Fire Stick shows XTREAM, not OpenTV.** 0.12.0 hardcoded “OpenTV” in the nav rail and shipped
+  only an adaptive XML icon (the OpenTV TV-set). Fire OS often ignores that XML and keeps the
+  old tile. This cut paints a mint-X **PNG** launcher + TV banner, so *Mis apps* cannot keep
+  looking like OpenTV after an in-place update.
+
 ## 0.14.0
 
 - **In-place updates.** A new build installs over the current one — providers, favourites and

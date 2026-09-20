@@ -29,7 +29,7 @@ Enlace directo (si Downloader pide URL):
 https://github.com/WilliamCastilloP/XtreamPlayerPro/releases/latest/download/XTREAM.apk
 ```
 
-Release: la APK más reciente en GitHub Releases (Downloader `8417717`). Versión actual de la app nativa: **0.14.0**.
+Release: la APK más reciente en GitHub Releases (Downloader `8417717`). Versión actual de la app nativa: **0.15.0**.
 
 **No borres la app para actualizar.** Android instala encima y conserva proveedores, favoritos e historial. En la app: **Ajustes → Acerca de → Buscar actualizaciones**. O vuelve a poner `8417717` en Downloader.
 

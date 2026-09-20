@@ -13,6 +13,8 @@ captures/
 !debug.keystore
 
 .claude/
+__pycache__/
+*.pyc
 
 # Kotlin compiler transient logs
 .kotlin/

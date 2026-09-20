@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.0
+
+- **Movies and series stall less.** VOD used the live player's 2.5s start buffer (and a 15s
+  minimum — below Media3's own 50s default), so a bursty panel looked like "it keeps pausing".
+  Films now wait ~8s before the first frame, keep ~50–120s ahead, rebuild 15s after a hitch, and
+  use a 120s HTTP read timeout so a full buffer sitting idle is not killed as a dead stream.
+  Live TV is unchanged.
+
 ## 0.15.0
 
 - **Fire Stick shows XTREAM, not OpenTV.** 0.12.0 hardcoded “OpenTV” in the nav rail and shipped

@@ -130,12 +130,15 @@ fun VodPlayerScreen(
     // http/file URLs of ordinary VOD.
     val controller = remember {
         PlayerController(
-            context, scope, graph.streamingHttpClient, subtitlesEnabled = false,
+            context.applicationContext, scope,
+            if (growingRec) graph.streamingHttpClient else graph.vodStreamingHttpClient,
+            subtitlesEnabled = false,
             smbDataSourceFactory = app.opentv.player.SmbDataSource.Factory(graph.settings),
             // Lets an `optvrec://<id>` recording play while it's still being written.
             growingDataSourceFactory =
                 app.opentv.player.GrowingRecordingDataSource.Factory(context.applicationContext),
             liveRecording = growingRec,
+            vod = !growingRec,
         )
     }
     // Skip forward/back within the recorded portion. For a growing recording ExoPlayer won't report

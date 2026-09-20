@@ -80,11 +80,17 @@ class PlayerController(
     growingDataSourceFactory: androidx.media3.datasource.DataSource.Factory? = null,
     /**
      * Playing a recording that is still being written (watch-while-recording). Playback is held a
-     * cushion *behind* the file's growing edge (see the LIVE_REC_* constants) so the bursty arrival
-     * of an IPTV source — worst when the recording is read back over SMB from a NAS, where each read
-     * is a network round-trip — rides over the gaps instead of stalling on every one.
+     * cushion *behind* the file's growing edge so the bursty arrival of an IPTV source — worst when
+     * the recording is read back over SMB from a NAS, where each read is a network round-trip —
+     * rides over the gaps instead of stalling on every one.
      */
     private val liveRecording: Boolean = false,
+    /**
+     * Movies and episodes. Uses a deeper [PlaybackBuffers.vod] pool and waits longer before the
+     * first frame. Leave false for Live TV so a channel change does not hoard a minute of the
+     * previous mux. Ignored when [liveRecording] is on.
+     */
+    private val vod: Boolean = false,
 ) {
 
     /** Channel-surf debounce for this controller — longer for the preview so browsing is calm. */
@@ -188,31 +194,8 @@ class PlayerController(
                 .setLoadErrorHandlingPolicy(loadErrorPolicy),
         )
         .setTrackSelector(trackSelector)
-        .setLoadControl(
-            DefaultLoadControl.Builder()
-                .setBufferDurationsMs(
-                    if (preview) PREVIEW_MIN_BUFFER_MILLIS else MIN_BUFFER_MILLIS,
-                    when {
-                        preview -> PREVIEW_MAX_BUFFER_MILLIS
-                        dvr -> DVR_MAX_BUFFER_MILLIS
-                        liveRecording -> LIVE_REC_MAX_BUFFER_MILLIS
-                        else -> MAX_BUFFER_MILLIS
-                    },
-                    when {
-                        preview -> PREVIEW_BUFFER_FOR_PLAYBACK_MILLIS
-                        liveRecording -> LIVE_REC_BUFFER_FOR_PLAYBACK_MILLIS
-                        else -> BUFFER_FOR_PLAYBACK_MILLIS
-                    },
-                    when {
-                        preview -> PREVIEW_BUFFER_AFTER_REBUFFER_MILLIS
-                        liveRecording -> LIVE_REC_BUFFER_AFTER_REBUFFER_MILLIS
-                        else -> BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MILLIS
-                    },
-                )
-                // Retain the last few minutes so pause/rewind of live TV has something to seek into.
-                .apply { if (dvr) setBackBuffer(DVR_BACK_BUFFER_MILLIS, true) }
-                .build(),
-        )
+        .setWakeMode(C.WAKE_MODE_NETWORK)
+        .setLoadControl(buildLoadControl())
         .build()
         .apply {
             addListener(object : Player.Listener {
@@ -373,6 +356,28 @@ class PlayerController(
         player.release()
     }
 
+    private fun buildLoadControl(): DefaultLoadControl {
+        val buffers = PlaybackBuffers.forMode(
+            preview = preview,
+            dvr = dvr,
+            liveRecording = liveRecording,
+            vod = vod,
+        )
+        return DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                buffers.minMs,
+                buffers.maxMs,
+                buffers.forPlaybackMs,
+                buffers.afterRebufferMs,
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .apply {
+                buffers.targetBufferBytes?.let { setTargetBufferBytes(it) }
+                if (buffers.backBufferMs > 0) setBackBuffer(buffers.backBufferMs, true)
+            }
+            .build()
+    }
+
     private companion object {
         const val DEFAULT_USER_AGENT = Source.DEFAULT_USER_AGENT
 
@@ -387,39 +392,6 @@ class PlayerController(
         const val MAX_AUTO_RESTARTS = 3
         const val AUTO_RESTART_DELAY_MILLIS = 1_500L
 
-        /**
-         * Larger than ExoPlayer's defaults. IPTV sources are much twitchier than a CDN, and a
-         * deeper buffer is the difference between a momentary hiccup and a visible stall.
-         */
-        const val MIN_BUFFER_MILLIS = 15_000
-        const val MAX_BUFFER_MILLIS = 60_000
-        const val BUFFER_FOR_PLAYBACK_MILLIS = 2_500
-        const val BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MILLIS = 5_000
-
-        // DVR mode (pause & rewind live TV): keep a couple of minutes behind the live edge to seek
-        // into, and let the forward buffer grow to match so a pause of up to a couple of minutes
-        // resumes cleanly. Deliberately bounded — this is memory the box has to find.
-        const val DVR_BACK_BUFFER_MILLIS = 120_000
-        const val DVR_MAX_BUFFER_MILLIS = 120_000
-
-        // Watch-while-recording: hold playback a cushion *behind* the file's growing edge rather than
-        // right on it. IPTV sources arrive in bursts, so a shallow buffer drains to nothing between
-        // bursts and the picture stalls every second or two — worst over SMB to a NAS, where every
-        // read is a network round-trip. Waiting for ~8s of reservoir before playback (and rebuilding
-        // it after any stall) rides straight over those gaps; because playback and the recorder both
-        // advance at 1x, that cushion holds without ever catching the edge again.
-        const val LIVE_REC_MAX_BUFFER_MILLIS = 60_000
-        const val LIVE_REC_BUFFER_FOR_PLAYBACK_MILLIS = 8_000
-        const val LIVE_REC_BUFFER_AFTER_REBUFFER_MILLIS = 8_000
-
-        // Guide-preview tuning: start fast and don't hoard buffer (the preview is muted and
-        // low-stakes), and debounce channel-surfing harder so scrolling the list doesn't tune to
-        // every channel in passing. Kept within DefaultLoadControl's constraints: min >= both
-        // playback thresholds, max >= min.
-        const val PREVIEW_MIN_BUFFER_MILLIS = 5_000
-        const val PREVIEW_MAX_BUFFER_MILLIS = 15_000
-        const val PREVIEW_BUFFER_FOR_PLAYBACK_MILLIS = 1_000
-        const val PREVIEW_BUFFER_AFTER_REBUFFER_MILLIS = 1_500
         const val PREVIEW_SWITCH_DEBOUNCE_MILLIS = 700L
 
         const val LIVE_TARGET_OFFSET_MILLIS = 10_000L

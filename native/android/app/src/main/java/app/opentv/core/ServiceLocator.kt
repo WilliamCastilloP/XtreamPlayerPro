@@ -76,6 +76,18 @@ object ServiceLocator {
                 .build()
         }
 
+        /**
+         * Movies and episodes. The live client's 30s read timeout is right for a dead linear
+         * stream; on VOD ExoPlayer often pauses the HTTP read once the buffer is full, the panel
+         * goes quiet, and 30s later OkHttp kills the socket — that looks like a stall mid-film.
+         * Two minutes of idle is still a dead connection; a full buffer sitting for a minute is not.
+         */
+        val vodStreamingHttpClient: OkHttpClient by lazy {
+            streamingHttpClient.newBuilder()
+                .readTimeout(120, TimeUnit.SECONDS)
+                .build()
+        }
+
         val xtreamApi: XtreamApi by lazy { XtreamApi(httpClient) }
 
         /** Stalker / Ministra portal client (MAC handshake + create_link). */

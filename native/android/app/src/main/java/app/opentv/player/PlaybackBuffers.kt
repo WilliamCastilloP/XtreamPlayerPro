@@ -42,16 +42,17 @@ internal object PlaybackBuffers {
     )
 
     /**
-     * Movies and episodes. Wait for a real reservoir before the first frame, then keep about a
-     * minute ahead so a quiet stretch from the panel does not drain to a stall. 64 MiB caps RAM
-     * on a Fire Stick if the stream is a fat 1080p progressive file.
+     * Movies and episodes. Wait a bit longer than Live before the first frame so a bursty panel
+     * does not stall immediately — but do **not** hoard 2 minutes / 64 MiB. Fire TV HDMI + Xtream
+     * muxes (MP4/TS with sloppy PTS) drift lipsync when the video queue is that deep; 0.16.0
+     * proved it. ~30–50 s is Media3's own neighbourhood and still larger than the old 15 s live
+     * pool.
      */
     fun vod(): BufferPolicy = BufferPolicy(
-        minMs = 50_000,
-        maxMs = 120_000,
-        forPlaybackMs = 8_000,
-        afterRebufferMs = 15_000,
-        targetBufferBytes = 64 * 1024 * 1024,
+        minMs = 30_000,
+        maxMs = 50_000,
+        forPlaybackMs = 5_000,
+        afterRebufferMs = 8_000,
     )
 
     fun preview(): BufferPolicy = BufferPolicy(

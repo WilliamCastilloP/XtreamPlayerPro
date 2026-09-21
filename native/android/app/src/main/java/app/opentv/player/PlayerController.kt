@@ -183,6 +183,9 @@ class PlayerController(
             .setPreferredTextLanguage(java.util.Locale.getDefault().language)
             .setSelectUndeterminedTextLanguage(true)
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesEnabled)
+            // Fire TV HDMI tunneling lets the audio DSP run off ExoPlayer's clock; with a deep
+            // VOD buffer that shows up as lipsync drift. Stay on the software clock.
+            .setTunnelingEnabled(false)
             .build()
     }
 

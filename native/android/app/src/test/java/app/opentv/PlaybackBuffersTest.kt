@@ -15,17 +15,18 @@ class PlaybackBuffersTest {
     fun `vod waits for a real reservoir before the first frame`() {
         val vod = PlaybackBuffers.vod()
         val live = PlaybackBuffers.live()
-        assertThat(vod.forPlaybackMs).isAtLeast(8_000)
+        assertThat(vod.forPlaybackMs).isAtLeast(5_000)
         assertThat(vod.forPlaybackMs).isGreaterThan(live.forPlaybackMs)
         assertThat(vod.afterRebufferMs).isGreaterThan(live.afterRebufferMs)
     }
 
     @Test
-    fun `vod min buffer matches Media3 default instead of the old 15s live pool`() {
+    fun `vod buffer is deeper than live start but not a 2-minute queue that drifts lipsync`() {
         val vod = PlaybackBuffers.vod()
-        assertThat(vod.minMs).isAtLeast(50_000)
-        assertThat(vod.maxMs).isAtLeast(120_000)
-        assertThat(vod.targetBufferBytes).isEqualTo(64 * 1024 * 1024)
+        assertThat(vod.minMs).isAtLeast(30_000)
+        assertThat(vod.maxMs).isAtMost(60_000)
+        assertThat(vod.maxMs).isLessThan(120_000)
+        assertThat(vod.targetBufferBytes).isNull()
     }
 
     @Test

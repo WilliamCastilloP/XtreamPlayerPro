@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.16.2
+
+- **Lipsync on movies/series.** 0.16.0 gave VOD a 120s / 64 MiB queue so bursty panels stalled
+  less; on Fire TV that queue lets audio and video drift. VOD now keeps ~30–50s ahead (start at
+  5s) and turns HDMI tunneling off so ExoPlayer owns the clock. Live TV numbers are unchanged.
+  Overlay-installs over 0.16.1 (same keystore).
+
 ## 0.16.1
 
 - **Installs over itself again.** Every GitHub Action signed 0.12–0.16.0 with a *new* debug

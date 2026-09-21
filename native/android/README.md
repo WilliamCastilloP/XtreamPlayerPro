@@ -12,7 +12,7 @@ En **Downloader** el código es:
 8417717
 ```
 
-**No desinstales para actualizar.** Vuelve a poner el código; Android instala encima y conserva login, favoritos e historial. En la app: Ajustes → Acerca de → Buscar actualizaciones.
+**No desinstales para actualizar** (desde 0.16.1). Si el Stick rechaza 0.16.0 u otra anterior, desinstala **una vez** e instala 0.16.1 con el código; a partir de ahí Android instala encima y conserva login, favoritos e historial. En la app: Ajustes → Acerca de → Buscar actualizaciones.
 
 También: [aftv.news/8417717](https://aftv.news/8417717)
 

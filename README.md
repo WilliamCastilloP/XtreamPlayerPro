@@ -29,9 +29,11 @@ Enlace directo (si Downloader pide URL):
 https://github.com/WilliamCastilloP/XtreamPlayerPro/releases/latest/download/XTREAM.apk
 ```
 
-Release: la APK más reciente en GitHub Releases (Downloader `8417717`). Versión actual de la app nativa: **0.16.0**.
+Release: la APK más reciente en GitHub Releases (Downloader `8417717`). Versión actual de la app nativa: **0.16.1**.
 
-**No borres la app para actualizar.** Android instala encima y conserva proveedores, favoritos e historial. En la app: **Ajustes → Acerca de → Buscar actualizaciones**. O vuelve a poner `8417717` en Downloader.
+**Actualizar:** a partir de 0.16.1 Android instala encima y conserva proveedores, favoritos e historial. En la app: **Ajustes → Acerca de → Buscar actualizaciones**. O vuelve a poner `8417717` en Downloader.
+
+**Si tienes 0.16.0 o anterior y el Stick rechaza la instalación:** cada release de CI llevaba un sello distinto. Hay que **desinstalar XTREAM una vez**, instalar 0.16.1 con `8417717`, y de ahí en adelante ya no hace falta borrar.
 
 Películas con catálogos enormes: la primera sync puede tardar minutos. Si la pestaña queda vacía: **Ajustes → Pantalla y reproducción → Contenido → Películas ↻**.
 

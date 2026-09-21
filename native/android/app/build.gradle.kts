@@ -14,12 +14,25 @@ android {
         applicationId = "app.xtream.player"
         minSdk = 23
         targetSdk = 35
-        versionCode = 25
-        versionName = "0.16.0"
+        versionCode = 26
+        versionName = "0.16.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
+        // Checked-in sideload key. GitHub Actions used a fresh ~/.android/debug.keystore on
+        // every runner, so 0.12–0.16.0 each had a different stamp and Fire TV refused to
+        // overlay ("app not installed"). This file is the same on every machine until
+        // KEYSTORE_PATH secrets take over.
+        getByName("debug") {
+            val sideload = rootProject.file("debug.keystore")
+            if (sideload.isFile) {
+                storeFile = sideload
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
         create("upload") {
             // Populated from environment variables in CI. Absent locally, which is why the
             // release build type falls back to the debug key below.

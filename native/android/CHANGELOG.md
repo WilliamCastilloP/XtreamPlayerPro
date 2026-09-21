@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.1
+
+- **Installs over itself again.** Every GitHub Action signed 0.12–0.16.0 with a *new* debug
+  keystore, so Android treated 0.16.0 as a different app and Fire TV said it could not install.
+  Releases now sign with `native/android/debug.keystore` in the repo. **If you already have
+  0.16.0 or older, uninstall once**, then install 0.16.1; later updates overlay without
+  deleting.
+
 ## 0.16.0
 
 - **Movies and series stall less.** VOD used the live player's 2.5s start buffer (and a 15s

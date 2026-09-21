@@ -17,6 +17,10 @@ never looks newer to them.
 **Do not uninstall.** Same package id + higher `versionCode` + the same signing key = Android
 upgrades in place and keeps providers, favourites and history.
 
+0.12.0 through 0.16.0 were each signed with a *different* CI debug keystore, so overlaying those
+builds fails. **0.16.1 onwards share `native/android/debug.keystore`.** Anyone still on 0.16.0
+or older has to uninstall once, then install 0.16.1; later cuts overlay again.
+
 - In the app: a prompt appears within ~30 minutes of a new release, or immediately from
   **Settings → About → Check for updates**.
 - Or open Downloader and enter `8417717` again — that downloads `XTREAM.apk` over the existing
@@ -24,19 +28,10 @@ upgrades in place and keeps providers, favourites and history.
 
 ## Signing
 
-**Right now, release builds are signed with the Android debug key.** This is deliberate, and
-it is temporary.
-
-An *unsigned* APK cannot be installed on Android at all — the installer rejects it before the
-user sees anything, with an error that explains nothing. That would mean no one can test the
-app until signing infrastructure exists. So `app/build.gradle.kts` falls back to the debug key
-when no keystore is configured, and the result installs fine.
-
-The cost, stated plainly: **when the project moves to a real keystore, Android will refuse to
-upgrade over a debug-signed install.** Everyone testing today will have to uninstall and
-reinstall, losing their settings. That is fine for a handful of early testers and completely
-unacceptable once there are hundreds. **Set up real signing before announcing the project
-publicly.**
+Release builds use the checked-in **`debug.keystore`** (alias `androiddebugkey`, password
+`android`) unless `KEYSTORE_PATH` secrets are set. That key is public — it only exists so every
+CI run stamps the APK the same way. **Set up a private upload keystore before announcing the
+project publicly.** Switching to that later is another one-time uninstall.
 
 ### Setting up real signing
 

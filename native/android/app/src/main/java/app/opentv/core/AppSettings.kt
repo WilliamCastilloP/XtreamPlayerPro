@@ -213,11 +213,11 @@ class AppSettings private constructor(context: Context) {
     }
 
     fun setMoviesEnabled(enabled: Boolean) {
-        // Also reset the VOD freshness stamp so the next Movies/Shows open re-syncs immediately
-        // rather than waiting out the cache TTL — turning a content type on should show it now.
+        // Reset only the movies freshness stamp so the next Movies open re-syncs that catalogue
+        // without also forcing a full series download.
         prefs.edit()
             .putBoolean(KEY_CONTENT_MOVIES, enabled)
-            .putLong(KEY_VOD_SYNCED_AT, 0L)
+            .putLong(KEY_MOVIES_SYNCED_AT, 0L)
             .apply()
         _moviesEnabled.value = enabled
     }
@@ -225,7 +225,7 @@ class AppSettings private constructor(context: Context) {
     fun setSeriesEnabled(enabled: Boolean) {
         prefs.edit()
             .putBoolean(KEY_CONTENT_SERIES, enabled)
-            .putLong(KEY_VOD_SYNCED_AT, 0L)
+            .putLong(KEY_SERIES_SYNCED_AT, 0L)
             .apply()
         _seriesEnabled.value = enabled
     }
@@ -368,14 +368,31 @@ class AppSettings private constructor(context: Context) {
 
     /**
      * When the VOD (movies + series) catalogue was last fetched from the provider, in epoch
-     * millis; 0 = never. A provider's 40k-title VOD list is expensive to re-download and
-     * re-write, so [app.opentv.ui.VodViewModel.ensureVodLoaded] uses this to skip the sync on a
-     * warm launch and show the already-stored rows instantly — the fetch only runs on first load
-     * or once this goes stale. Not a flow: it is read once when Movies/Shows is first opened.
+     * millis; 0 = never. Kept so an upgrade from 0.16.x still treats a recently synced library
+     * as fresh until the split movie/series stamps take over.
      */
     var vodSyncedAtMillis: Long
         get() = prefs.getLong(KEY_VOD_SYNCED_AT, 0L)
         set(value) { prefs.edit().putLong(KEY_VOD_SYNCED_AT, value).apply() }
+
+    /**
+     * When the movie catalogue was last fetched. Falls back to [vodSyncedAtMillis] so a Stick
+     * that already synced under 0.16.x does not re-download 40k titles on first 0.17 open.
+     */
+    var moviesSyncedAtMillis: Long
+        get() {
+            val split = prefs.getLong(KEY_MOVIES_SYNCED_AT, 0L)
+            return if (split > 0L) split else vodSyncedAtMillis
+        }
+        set(value) { prefs.edit().putLong(KEY_MOVIES_SYNCED_AT, value).apply() }
+
+    /** When the series catalogue was last fetched. See [moviesSyncedAtMillis]. */
+    var seriesSyncedAtMillis: Long
+        get() {
+            val split = prefs.getLong(KEY_SERIES_SYNCED_AT, 0L)
+            return if (split > 0L) split else vodSyncedAtMillis
+        }
+        set(value) { prefs.edit().putLong(KEY_SERIES_SYNCED_AT, value).apply() }
 
     /**
      * The user's own TMDB API key (v3 auth), stored on-device only exactly like provider
@@ -455,6 +472,8 @@ class AppSettings private constructor(context: Context) {
         private const val KEY_SYNC_DEVICE_ID = "sync_device_id"
         private const val KEY_NAS_AUTO_SYNC = "nas_auto_sync"
         private const val KEY_VOD_SYNCED_AT = "vod_synced_at"
+        private const val KEY_MOVIES_SYNCED_AT = "movies_synced_at"
+        private const val KEY_SERIES_SYNCED_AT = "series_synced_at"
         private const val KEY_TMDB_KEY = "tmdb_api_key"
         private const val KEY_STREMIO_ADDONS = "stremio_addons"
         private const val KEY_PAD_START = "rec_pad_start_min"

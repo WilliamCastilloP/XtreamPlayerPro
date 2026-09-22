@@ -455,6 +455,13 @@ interface MovieDao {
     @Query("SELECT * FROM movies ORDER BY addedMillis DESC")
     suspend fun all(): List<Movie>
 
+    /**
+     * Bounded newest-first slice for home shelves. Loading [all] on a 40k-title Stick is what
+     * crashed Movies/Shows — the home rows only need a sample, not the whole table in RAM.
+     */
+    @Query("SELECT * FROM movies ORDER BY addedMillis DESC LIMIT :limit")
+    suspend fun homeFeedSample(limit: Int): List<Movie>
+
     /** How many movies are on disk. A cheap COUNT the home feeds use to tell "the library grew"
      *  from "same as last time" without loading every row (see VodViewModel.loadHomeFeeds). */
     @Query("SELECT COUNT(*) FROM movies")
@@ -558,6 +565,10 @@ interface SeriesDao {
     /** Every series, newest first — working set for the Kotlin-side by-genre / more-like-this feeds. */
     @Query("SELECT * FROM series ORDER BY addedMillis DESC")
     suspend fun all(): List<Series>
+
+    /** Bounded newest-first slice for home shelves. See [MovieDao.homeFeedSample]. */
+    @Query("SELECT * FROM series ORDER BY addedMillis DESC LIMIT :limit")
+    suspend fun homeFeedSample(limit: Int): List<Series>
 
     /** How many series are on disk — the cheap "did the library grow" check for the home feeds. */
     @Query("SELECT COUNT(*) FROM series")

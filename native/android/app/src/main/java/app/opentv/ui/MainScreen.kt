@@ -8,6 +8,7 @@ package app.opentv.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
 import app.opentv.R
+import app.opentv.core.AppSettings
 import app.opentv.core.findActivity
 import app.opentv.core.StatusBus
 import androidx.compose.foundation.Image
@@ -54,7 +55,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import app.opentv.core.AppSettings
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -81,6 +83,14 @@ enum class Tab(val labelRes: Int, val icon: ImageVector) {
     MOVIES(R.string.nav_movies, Icons.Filled.Movie),
     SHOWS(R.string.nav_shows, Icons.Filled.Tv),
     RECORDINGS(R.string.nav_recordings, Icons.Filled.FiberManualRecord),
+}
+
+/**
+ * Survives NavHost disposing [MainScreen] while a movie/series detail is open, so Back
+ * returns to Movies/Shows (and that tab's category) instead of resetting to Live TV.
+ */
+class MainShellViewModel : ViewModel() {
+    var tab: Tab? = null
 }
 
 private val RAIL_COLLAPSED = 76.dp
@@ -124,16 +134,23 @@ fun MainScreen(
     // still switched on (or Recordings if none are).
     val homeTab = visibleTabs.first()
 
-    var tab by remember { mutableStateOf(homeTab) }
+    val shell: MainShellViewModel = viewModel()
+    var tab by remember {
+        mutableStateOf(shell.tab?.takeIf { it in visibleTabs } ?: homeTab)
+    }
+    fun selectTab(next: Tab) {
+        tab = next
+        shell.tab = next
+    }
 
     // If the selected tab gets hidden (its type toggled off while it's open), drop back to the
     // home tab so the content area never tries to show a tab that's no longer there.
     LaunchedEffect(visibleTabs) {
-        if (tab !in visibleTabs) tab = homeTab
+        if (tab !in visibleTabs) selectTab(homeTab)
     }
 
     // Back from a non-home tab returns to the home tab rather than dropping out of the app.
-    BackHandler(enabled = tab != homeTab) { tab = homeTab }
+    BackHandler(enabled = tab != homeTab) { selectTab(homeTab) }
 
     // On the home tab, Back would otherwise drop straight out to the TV launcher — one stray press
     // and you've closed the app. Ask first. (A dialog or panel open in a child screen swallows Back
@@ -164,7 +181,7 @@ fun MainScreen(
         NavRail(
             tabs = visibleTabs,
             current = tab,
-            onSelect = { tab = it },
+            onSelect = { selectTab(it) },
             onOpenSearch = onOpenSearch,
             onOpenSettings = onOpenSettings,
             onOpenProfiles = onOpenProfiles,

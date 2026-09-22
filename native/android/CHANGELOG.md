@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.17.0
+
+- **Movies no longer crash the Stick by also loading Shows.** Opening Películas fetches only
+  movies; opening Series fetches only shows. Home shelves scan a bounded sample instead of the
+  whole 40k-title table in RAM. Series lists stream in batches like movies.
+- **Back returns to where you were.** Starring a title from a category or from Search, then
+  pressing Back, restores that category / the search results — not the Live TV home rail.
+- **VOD starts faster and stalls less.** 0.16.0–0.16.1 waited 5–8s then hoarded 50–120s as
+  “preload”; that spinner-then-stall is gone. Films start at ~2.5s (same as Live) and keep
+  ~18–28s ahead. Overlay-installs over 0.16.1+ (same keystore).
+
 ## 0.16.2
 
 - **Lipsync on movies/series.** 0.16.0 gave VOD a 120s / 64 MiB queue so bursty panels stalled

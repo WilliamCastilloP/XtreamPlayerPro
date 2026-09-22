@@ -70,13 +70,13 @@ import java.util.Locale
 @Composable
 fun SearchScreen(
     onPlayChannel: (Channel) -> Unit,
-    onPlayMovie: (Movie) -> Unit,
+    onOpenMovie: (Movie) -> Unit,
     onOpenSeries: (Series) -> Unit,
     onBack: () -> Unit,
     viewModel: ChannelsViewModel = viewModel(),
     vodViewModel: VodViewModel = viewModel(),
 ) {
-    var query by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf(viewModel.currentSearchQuery.ifBlank { vodViewModel.currentVodSearchQuery }) }
     val channelResults by viewModel.searchResults.collectAsState()
     val movieResults by vodViewModel.movieResults.collectAsState()
     val seriesResults by vodViewModel.seriesResults.collectAsState()
@@ -134,7 +134,7 @@ fun SearchScreen(
                             item { SectionHeader(stringResource(R.string.nav_movies)) }
                             items(movieResults, key = { "m${it.id}" }) { movie ->
                                 VodResultRow(movie.displayTitle, movie.posterUrl, movie.year?.toString()) {
-                                    onPlayMovie(movie)
+                                    onOpenMovie(movie)
                                 }
                             }
                         }

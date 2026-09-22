@@ -6,6 +6,7 @@
 package app.opentv.data.remote
 
 import app.opentv.data.model.Movie
+import app.opentv.data.model.Series
 import app.opentv.data.model.Source
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
@@ -36,13 +37,24 @@ object XtreamCatalogJson {
 
     const val DEFAULT_BATCH_SIZE = 250
 
-    fun movieObjects(input: InputStream, json: Json): Sequence<JsonObject> = sequence {
+    fun movieObjects(input: InputStream, json: Json): Sequence<JsonObject> =
+        catalogObjects(input, json, ::looksLikeMovie)
+
+    /** Same streaming walk as [movieObjects], for `get_series` (keyed on `series_id`). */
+    fun seriesObjects(input: InputStream, json: Json): Sequence<JsonObject> =
+        catalogObjects(input, json, ::looksLikeSeries)
+
+    private fun catalogObjects(
+        input: InputStream,
+        json: Json,
+        looksLike: (JsonObject) -> Boolean,
+    ): Sequence<JsonObject> = sequence {
         val reader = JsonTokenReader(input)
         reader.skipWs()
         when (reader.peek()) {
-            '['.code -> yieldAll(readArray(reader, json))
-            '{'.code -> yieldAll(readObjectPayload(reader, json))
-            else -> { /* empty / HTML / not JSON — caller sees zero movies */ }
+            '['.code -> yieldAll(readArray(reader, json, looksLike))
+            '{'.code -> yieldAll(readObjectPayload(reader, json, looksLike))
+            else -> { /* empty / HTML / not JSON — caller sees zero rows */ }
         }
     }
 
@@ -75,7 +87,31 @@ object XtreamCatalogJson {
         )
     }
 
-    private fun readArray(reader: JsonTokenReader, json: Json): Sequence<JsonObject> = sequence {
+    fun toSeries(source: Source, obj: JsonObject): Series? {
+        val seriesId = obj["series_id"].asStringOrNull ?: return null
+        val name = obj["name"].asStringOrNull ?: return null
+        return Series(
+            sourceId = source.id,
+            seriesId = seriesId,
+            name = name,
+            categoryId = obj["category_id"].asStringOrNull,
+            posterUrl = obj["cover"].asStringOrNull?.takeIf { it.isNotBlank() },
+            rating = obj["rating"].asDoubleOrNull,
+            year = obj["year"].asIntOrNull ?: obj["releaseDate"].asStringOrNull?.take(4)?.toIntOrNull(),
+            plot = obj["plot"].asStringOrNull,
+            addedMillis = obj["last_modified"].asLongOrNull?.times(1000) ?: 0L,
+            backdropUrl = obj.asBackdropUrl("cover_big", "cover"),
+            cast = obj["cast"].asStringOrNull ?: obj["actors"].asStringOrNull,
+            genre = obj["genre"].asStringOrNull,
+            tmdbId = obj["tmdb_id"].asStringOrNull ?: obj["tmdb"].asStringOrNull,
+        )
+    }
+
+    private fun readArray(
+        reader: JsonTokenReader,
+        json: Json,
+        looksLike: (JsonObject) -> Boolean,
+    ): Sequence<JsonObject> = sequence {
         reader.read() // '['
         while (true) {
             reader.skipWs()
@@ -88,13 +124,17 @@ object XtreamCatalogJson {
                 ','.code -> reader.read()
                 else -> {
                     val value = parseValue(reader, json)
-                    yieldAll(objectsFrom(value))
+                    yieldAll(objectsFrom(value, looksLike))
                 }
             }
         }
     }
 
-    private fun readObjectPayload(reader: JsonTokenReader, json: Json): Sequence<JsonObject> = sequence {
+    private fun readObjectPayload(
+        reader: JsonTokenReader,
+        json: Json,
+        looksLike: (JsonObject) -> Boolean,
+    ): Sequence<JsonObject> = sequence {
         reader.read() // '{'
         while (true) {
             reader.skipWs()
@@ -115,11 +155,11 @@ object XtreamCatalogJson {
                     if (reader.peek() == ':'.code) reader.read()
                     reader.skipWs()
                     when (reader.peek()) {
-                        '['.code -> yieldAll(readArray(reader, json))
+                        '['.code -> yieldAll(readArray(reader, json, looksLike))
                         '{'.code -> {
                             // One keyed record (typical `{"123": {movie}}`) — small.
                             val value = parseValue(reader, json)
-                            yieldAll(objectsFrom(value))
+                            yieldAll(objectsFrom(value, looksLike))
                         }
                         else -> parseValue(reader, json) // skip primitives
                     }
@@ -131,19 +171,22 @@ object XtreamCatalogJson {
     private fun parseValue(reader: JsonTokenReader, json: Json): JsonElement =
         json.parseToJsonElement(String(reader.readValueBytes(), Charsets.UTF_8))
 
-    private fun objectsFrom(value: JsonElement): Sequence<JsonObject> = sequence {
+    private fun objectsFrom(
+        value: JsonElement,
+        looksLike: (JsonObject) -> Boolean,
+    ): Sequence<JsonObject> = sequence {
         when (value) {
             is JsonObject -> {
-                if (looksLikeMovie(value)) {
+                if (looksLike(value)) {
                     yield(value)
                 } else {
-                    for ((_, child) in value) yieldAll(objectsFrom(child))
+                    for ((_, child) in value) yieldAll(objectsFrom(child, looksLike))
                 }
             }
             is JsonArray -> {
                 for (el in value) {
                     val obj = el as? JsonObject ?: continue
-                    if (looksLikeMovie(obj)) yield(obj)
+                    if (looksLike(obj)) yield(obj)
                 }
             }
             else -> {}
@@ -152,6 +195,9 @@ object XtreamCatalogJson {
 
     private fun looksLikeMovie(obj: JsonObject): Boolean =
         obj["stream_id"].asStringOrNull != null && obj["name"].asStringOrNull != null
+
+    private fun looksLikeSeries(obj: JsonObject): Boolean =
+        obj["series_id"].asStringOrNull != null && obj["name"].asStringOrNull != null
 }
 
 /** Byte-level JSON scanner. Structural tokens are ASCII; string bodies stay UTF-8. */

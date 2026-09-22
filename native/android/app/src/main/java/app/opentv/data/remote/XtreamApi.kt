@@ -163,28 +163,39 @@ class XtreamApi(
         }
     }
 
+    /**
+     * Full series list. Prefer [forEachSeriesBatch] for real panels — collecting everything
+     * is what OOMs a Stick when Movies and Shows are fetched together.
+     */
     suspend fun series(source: Source): List<Series> = withContext(Dispatchers.IO) {
-        getJson(source, "get_series").arrayOrEmpty.mapNotNull { element ->
-            val obj = element.jsonObjectOrNull ?: return@mapNotNull null
-            val seriesId = obj["series_id"].asStringOrNull ?: return@mapNotNull null
-            val name = obj["name"].asStringOrNull ?: return@mapNotNull null
-            Series(
-                sourceId = source.id,
-                seriesId = seriesId,
-                name = name,
-                categoryId = obj["category_id"].asStringOrNull,
-                posterUrl = obj["cover"].asStringOrNull?.takeIf { it.isNotBlank() },
-                rating = obj["rating"].asDoubleOrNull,
-                year = obj["year"].asIntOrNull ?: obj["releaseDate"].asStringOrNull?.take(4)?.toIntOrNull(),
-                plot = obj["plot"].asStringOrNull,
-                addedMillis = obj["last_modified"].asLongOrNull?.times(1000) ?: 0L,
-                // get_series carries most of this inline on the majority of panels; anything
-                // missing is back-filled from get_series_info on the first detail open.
-                backdropUrl = obj.asBackdropUrl("cover_big", "cover"),
-                cast = obj["cast"].asStringOrNull ?: obj["actors"].asStringOrNull,
-                genre = obj["genre"].asStringOrNull,
-                tmdbId = obj["tmdb_id"].asStringOrNull ?: obj["tmdb"].asStringOrNull,
-            )
+        val all = ArrayList<Series>()
+        forEachSeriesBatch(source) { all.addAll(it) }
+        all
+    }
+
+    /**
+     * Streams `get_series` in small batches so a huge show list never sits in RAM next to a
+     * movie catalogue fetch. Same shapes as [forEachMovieBatch].
+     */
+    suspend fun forEachSeriesBatch(
+        source: Source,
+        categoryId: String? = null,
+        batchSize: Int = XtreamCatalogJson.DEFAULT_BATCH_SIZE,
+        onBatch: suspend (List<Series>) -> Unit,
+    ) = withContext(Dispatchers.IO) {
+        openPlayerApi(source, "get_series") { builder ->
+            if (!categoryId.isNullOrBlank()) builder.addQueryParameter("category_id", categoryId)
+        }.use { stream ->
+            val batch = ArrayList<Series>(batchSize)
+            for (obj in XtreamCatalogJson.seriesObjects(stream, json)) {
+                val item = XtreamCatalogJson.toSeries(source, obj) ?: continue
+                batch.add(item)
+                if (batch.size >= batchSize) {
+                    onBatch(ArrayList(batch))
+                    batch.clear()
+                }
+            }
+            if (batch.isNotEmpty()) onBatch(batch)
         }
     }
 

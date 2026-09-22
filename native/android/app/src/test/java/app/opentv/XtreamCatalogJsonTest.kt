@@ -109,10 +109,45 @@ class XtreamCatalogJsonTest {
         assertThat(movies.single().name).isEqualTo("The \"Godfather\"")
     }
 
+    @Test
+    fun `parses a standard series array without slurping the whole payload as one JsonElement`() {
+        val shows = parseSeries(
+            """
+            [
+              {"series_id": 10, "name": "Alpha Show", "cover": "http://img/a.jpg", "genre": "Drama"},
+              {"series_id": "11", "name": "Beta Show"}
+            ]
+            """.trimIndent(),
+        )
+        assertThat(shows.map { it.name }).containsExactly("Alpha Show", "Beta Show").inOrder()
+        assertThat(shows[0].seriesId).isEqualTo("10")
+        assertThat(shows[0].genre).isEqualTo("Drama")
+        assertThat(shows[1].seriesId).isEqualTo("11")
+    }
+
+    @Test
+    fun `skips series entries without a name or series id`() {
+        val shows = parseSeries(
+            """
+            [
+              {"series_id": "1"},
+              {"name": "No Id"},
+              {"series_id": "3", "name": "Good Show"}
+            ]
+            """.trimIndent(),
+        )
+        assertThat(shows.map { it.name }).containsExactly("Good Show")
+    }
+
     private fun parse(raw: String) =
         XtreamCatalogJson.movieObjects(raw.byteInputStream(), json).mapNotNull { obj ->
             XtreamCatalogJson.toMovie(source, obj) { id, ext ->
                 "${source.url}/movie/${source.username}/${source.password}/$id.${ext ?: "mp4"}"
             }
+        }.toList()
+
+    private fun parseSeries(raw: String) =
+        XtreamCatalogJson.seriesObjects(raw.byteInputStream(), json).mapNotNull { obj ->
+            XtreamCatalogJson.toSeries(source, obj)
         }.toList()
 }

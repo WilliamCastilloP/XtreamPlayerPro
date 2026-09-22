@@ -80,6 +80,9 @@ data class MovieVariantGroup(
 /** A standalone 4-digit release year (19xx/20xx) as it appears inside a VOD title. */
 private val VOD_YEAR = Regex("""\b(19|20)\d{2}\b""")
 
+/** How many titles the home shelves / more-like-this scan. The whole table on a Stick is an OOM. */
+internal const val HOME_FEED_SAMPLE = 1_200
+
 /**
  * Collapses obvious quality variants of the same film — "The Godfather 1972 HD" and
  * "The Godfather 4K" — into one entry with switchable tiers, the VOD analogue of a channel's
@@ -227,6 +230,17 @@ class CatalogRepository(
     /** Every series, newest first. */
     suspend fun allSeries(): List<Series> = withContext(Dispatchers.IO) { seriesDao.all() }
 
+    /**
+     * Newest [limit] movies for home shelves and more-like-this. Never the whole table —
+     * that is what OOM'd Fire Sticks when Movies opened and also scanned Shows.
+     */
+    suspend fun moviesForHomeFeeds(limit: Int = HOME_FEED_SAMPLE): List<Movie> =
+        withContext(Dispatchers.IO) { movieDao.homeFeedSample(limit) }
+
+    /** Newest [limit] series for home shelves. See [moviesForHomeFeeds]. */
+    suspend fun seriesForHomeFeeds(limit: Int = HOME_FEED_SAMPLE): List<Series> =
+        withContext(Dispatchers.IO) { seriesDao.homeFeedSample(limit) }
+
     /** How many movies / series are on disk — a cheap COUNT the home screen uses to tell "the
      *  library grew" from "unchanged since last open" without loading every row. */
     suspend fun movieCount(): Int = withContext(Dispatchers.IO) { movieDao.count() }
@@ -239,11 +253,11 @@ class CatalogRepository(
      * are split on comma and pipe (see [splitGenres]).
      */
     suspend fun moviesByGenre(maxGenres: Int = 12, perGenre: Int = 30): List<GenreGroup<Movie>> =
-        withContext(Dispatchers.IO) { groupByGenre(movieDao.all(), Movie::genre, maxGenres, perGenre) }
+        withContext(Dispatchers.IO) { groupByGenre(movieDao.homeFeedSample(HOME_FEED_SAMPLE), Movie::genre, maxGenres, perGenre) }
 
     /** Series grouped by genre for the by-genre home rows. See [moviesByGenre]. */
     suspend fun seriesByGenre(maxGenres: Int = 12, perGenre: Int = 30): List<GenreGroup<Series>> =
-        withContext(Dispatchers.IO) { groupByGenre(seriesDao.all(), Series::genre, maxGenres, perGenre) }
+        withContext(Dispatchers.IO) { groupByGenre(seriesDao.homeFeedSample(HOME_FEED_SAMPLE), Series::genre, maxGenres, perGenre) }
 
     /**
      * Movies grouped by genre from an ALREADY-LOADED list — the single-scan path the home screen
@@ -267,7 +281,7 @@ class CatalogRepository(
      * only watched movies that carry no genre — it falls back to top-rated, then recently-added.
      */
     suspend fun recommendedMovies(profileId: Long, limit: Int = 30): List<Movie> =
-        withContext(Dispatchers.IO) { recommendFrom(movieDao.all(), watchedMovieIds(profileId), limit) }
+        withContext(Dispatchers.IO) { recommendFrom(movieDao.homeFeedSample(HOME_FEED_SAMPLE), watchedMovieIds(profileId), limit) }
 
     /**
      * "Recommended for you" from an ALREADY-LOADED movie list — the single-scan path (see
@@ -324,7 +338,7 @@ class CatalogRepository(
         if (genres.isEmpty()) {
             return@withContext movieDao.similarByCategory(movie.sourceId, movie.categoryId, movie.id, limit)
         }
-        movieDao.all().asSequence()
+        movieDao.homeFeedSample(HOME_FEED_SAMPLE).asSequence()
             .filter { it.id != movie.id }
             .map { it to sharedGenreCount(it.genre, genres) }
             .filter { it.second > 0 }
@@ -386,7 +400,7 @@ class CatalogRepository(
         if (genres.isEmpty()) {
             return@withContext seriesDao.similarByCategory(series.sourceId, series.categoryId, series.id, limit)
         }
-        seriesDao.all().asSequence()
+        seriesDao.homeFeedSample(HOME_FEED_SAMPLE).asSequence()
             .filter { it.id != series.id }
             .map { it to sharedGenreCount(it.genre, genres) }
             .filter { it.second > 0 }
@@ -628,8 +642,10 @@ class CatalogRepository(
             if (settings.liveEnabled.value) syncLive(source, nowUtcMillis)
             else SyncResult.Success(0, 0, 0)
         if (live is SyncResult.Success && source.kind == SourceKind.XTREAM) {
-            runCatching { syncXtreamVod(source, nowUtcMillis) }
-                .onFailure { Log.w(TAG, "VOD sync failed for source ${source.id}", it) }
+            runCatching { syncMovies(source, nowUtcMillis) }
+                .onFailure { Log.w(TAG, "Movie sync failed for source ${source.id}", it) }
+            runCatching { syncSeries(source, nowUtcMillis) }
+                .onFailure { Log.w(TAG, "Series sync failed for source ${source.id}", it) }
         }
         live
     }
@@ -651,10 +667,23 @@ class CatalogRepository(
     }
 
     /** Movies + series — best-effort, meant to run in the background so a huge VOD list never
-     * blocks live TV. Silent on failure: an account with no VOD is normal, not an error. */
+     * blocks live TV. Silent on failure: an account with no VOD is normal, not an error.
+     * Movies then series, never both JSON payloads in RAM at once. */
     suspend fun syncVod(source: Source, nowUtcMillis: Long) = withContext(Dispatchers.IO) {
-        runCatching { if (source.kind == SourceKind.XTREAM) syncXtreamVod(source, nowUtcMillis) }
-            .onFailure { Log.w(TAG, "VOD sync failed for source ${source.id}", it) }
+        syncMovies(source, nowUtcMillis)
+        syncSeries(source, nowUtcMillis)
+    }
+
+    /** Movies only — opening the Movies tab must not also download Shows. */
+    suspend fun syncMovies(source: Source, nowUtcMillis: Long) = withContext(Dispatchers.IO) {
+        runCatching { if (source.kind == SourceKind.XTREAM) syncXtreamMovies(source, nowUtcMillis) }
+            .onFailure { Log.w(TAG, "Movie sync failed for source ${source.id}", it) }
+    }
+
+    /** Series only — opening Shows must not also download the movie list. */
+    suspend fun syncSeries(source: Source, nowUtcMillis: Long) = withContext(Dispatchers.IO) {
+        runCatching { if (source.kind == SourceKind.XTREAM) syncXtreamSeries(source, nowUtcMillis) }
+            .onFailure { Log.w(TAG, "Series sync failed for source ${source.id}", it) }
     }
 
     private suspend fun syncXtreamLive(source: Source, nowUtcMillis: Long): SyncResult {
@@ -712,67 +741,84 @@ class CatalogRepository(
         return runCatching { stalkerApi.createLink(source, cmd) }.getOrNull() ?: channel.streamUrl
     }
 
-    private suspend fun syncXtreamVod(source: Source, nowUtcMillis: Long) {
-        // VOD is optional: plenty of accounts have live TV only, and a 404 on get_vod_streams
-        // must not cost the user their channel list. Movies and series are gated independently so
-        // a user who only turned off, say, Series still gets their movie library refreshed.
-        val moviesOn = settings.moviesEnabled.value
-        val seriesOn = settings.seriesEnabled.value
-        if (!moviesOn && !seriesOn) return
+    private suspend fun syncXtreamMovies(source: Source, nowUtcMillis: Long) {
+        if (!settings.moviesEnabled.value) return
 
         val movieCategories =
-            if (moviesOn) runCatching { api.movieCategories(source) }.getOrDefault(emptyList())
-            else emptyList()
-        val seriesCategories =
-            if (seriesOn) runCatching { api.seriesCategories(source) }.getOrDefault(emptyList())
-            else emptyList()
-        val series =
-            if (seriesOn) runCatching { api.series(source) }.getOrDefault(emptyList())
-            else emptyList()
+            runCatching { api.movieCategories(source) }.getOrDefault(emptyList())
+        if (movieCategories.isNotEmpty()) categoryDao.upsertAll(movieCategories)
 
-        if (movieCategories.isNotEmpty() || seriesCategories.isNotEmpty()) {
-            categoryDao.upsertAll(movieCategories + seriesCategories)
-        }
+        // Stream + upsert in batches. Never collect the full VOD list — that is what
+        // emptied Movies on low-RAM sticks with huge libraries. Merge user state first so a
+        // refresh cannot un-star a film or wipe TMDB / get_vod_info fields.
+        val previousMovies = movieDao.userStateForSource(source.id).associateBy { it.streamId }
+        var movieCount = 0
+        runCatching {
+            api.forEachMovieBatch(source) { batch ->
+                movieDao.upsertAll(batch.map { VodSyncMerge.movie(it, previousMovies[it.streamId]) })
+                movieCount += batch.size
+            }
+        }.onFailure { Log.w(TAG, "Full VOD list failed for source ${source.id}", it) }
 
-        if (moviesOn) {
-            // Stream + upsert in batches. Never collect the full VOD list — that is what
-            // emptied Movies on low-RAM sticks with huge libraries. Merge user state first so a
-            // refresh cannot un-star a film or wipe TMDB / get_vod_info fields.
-            val previousMovies = movieDao.userStateForSource(source.id).associateBy { it.streamId }
-            var movieCount = 0
-            runCatching {
-                api.forEachMovieBatch(source) { batch ->
-                    movieDao.upsertAll(batch.map { VodSyncMerge.movie(it, previousMovies[it.streamId]) })
-                    movieCount += batch.size
+        if (movieCount == 0 && movieCategories.isNotEmpty()) {
+            Log.i(TAG, "get_vod_streams empty; retrying per category (${movieCategories.size})")
+            for (cat in movieCategories) {
+                var inCategory = 0
+                runCatching {
+                    api.forEachMovieBatch(source, categoryId = cat.id) { batch ->
+                        movieDao.upsertAll(batch.map { VodSyncMerge.movie(it, previousMovies[it.streamId]) })
+                        inCategory += batch.size
+                        movieCount += batch.size
+                    }
+                }.onFailure {
+                    Log.w(TAG, "VOD category ${cat.id} failed for source ${source.id}", it)
                 }
-            }.onFailure { Log.w(TAG, "Full VOD list failed for source ${source.id}", it) }
-
-            if (movieCount == 0 && movieCategories.isNotEmpty()) {
-                Log.i(TAG, "get_vod_streams empty; retrying per category (${movieCategories.size})")
-                for (cat in movieCategories) {
-                    var inCategory = 0
-                    runCatching {
-                        api.forEachMovieBatch(source, categoryId = cat.id) { batch ->
-                            movieDao.upsertAll(batch.map { VodSyncMerge.movie(it, previousMovies[it.streamId]) })
-                            inCategory += batch.size
-                            movieCount += batch.size
-                        }
-                    }.onFailure {
-                        Log.w(TAG, "VOD category ${cat.id} failed for source ${source.id}", it)
-                    }
-                    // Panel ignored category_id and dumped the whole library on the first call.
-                    if (inCategory > 8_000 && movieCategories.size > 1) {
-                        Log.w(TAG, "category_id appears ignored; stopping extra category fetches")
-                        break
-                    }
+                // Panel ignored category_id and dumped the whole library on the first call.
+                if (inCategory > 8_000 && movieCategories.size > 1) {
+                    Log.w(TAG, "category_id appears ignored; stopping extra category fetches")
+                    break
                 }
             }
-            Log.i(TAG, "VOD movies stored for source ${source.id}: $movieCount")
         }
-        if (series.isNotEmpty()) {
-            val previousSeries = seriesDao.userStateForSource(source.id).associateBy { it.seriesId }
-            seriesDao.upsertAll(series.map { VodSyncMerge.series(it, previousSeries[it.seriesId]) })
+        Log.i(TAG, "VOD movies stored for source ${source.id}: $movieCount")
+    }
+
+    private suspend fun syncXtreamSeries(source: Source, nowUtcMillis: Long) {
+        if (!settings.seriesEnabled.value) return
+
+        val seriesCategories =
+            runCatching { api.seriesCategories(source) }.getOrDefault(emptyList())
+        if (seriesCategories.isNotEmpty()) categoryDao.upsertAll(seriesCategories)
+
+        val previousSeries = seriesDao.userStateForSource(source.id).associateBy { it.seriesId }
+        var seriesCount = 0
+        runCatching {
+            api.forEachSeriesBatch(source) { batch ->
+                seriesDao.upsertAll(batch.map { VodSyncMerge.series(it, previousSeries[it.seriesId]) })
+                seriesCount += batch.size
+            }
+        }.onFailure { Log.w(TAG, "Full series list failed for source ${source.id}", it) }
+
+        if (seriesCount == 0 && seriesCategories.isNotEmpty()) {
+            Log.i(TAG, "get_series empty; retrying per category (${seriesCategories.size})")
+            for (cat in seriesCategories) {
+                var inCategory = 0
+                runCatching {
+                    api.forEachSeriesBatch(source, categoryId = cat.id) { batch ->
+                        seriesDao.upsertAll(batch.map { VodSyncMerge.series(it, previousSeries[it.seriesId]) })
+                        inCategory += batch.size
+                        seriesCount += batch.size
+                    }
+                }.onFailure {
+                    Log.w(TAG, "Series category ${cat.id} failed for source ${source.id}", it)
+                }
+                if (inCategory > 8_000 && seriesCategories.size > 1) {
+                    Log.w(TAG, "series category_id appears ignored; stopping extra category fetches")
+                    break
+                }
+            }
         }
+        Log.i(TAG, "VOD series stored for source ${source.id}: $seriesCount")
     }
 
     private suspend fun syncM3u(source: Source, nowUtcMillis: Long): SyncResult {

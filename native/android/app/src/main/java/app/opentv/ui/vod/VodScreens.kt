@@ -5,6 +5,7 @@
  */
 package app.opentv.ui.vod
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -58,6 +59,7 @@ import app.opentv.data.model.Movie
 import app.opentv.data.model.Series
 import app.opentv.data.model.Source
 import app.opentv.data.parser.displayTitle
+import app.opentv.ui.VodBrowse
 import app.opentv.ui.VodViewModel
 import coil.compose.AsyncImage
 
@@ -82,23 +84,24 @@ fun MoviesScreen(
     val recentlyAdded by viewModel.recentlyAddedMovies.collectAsState()
     val genreRows by viewModel.movieGenreRows.collectAsState()
     val categoryMovies by viewModel.movies.collectAsState()
-    val vodLoading by viewModel.vodLoading.collectAsState()
+    val vodLoading by viewModel.moviesLoading.collectAsState()
     val sources by viewModel.sources.collectAsState()
     val selectedSource by viewModel.selectedVodSource.collectAsState()
     val favouriteMoviesRaw by viewModel.favouriteMovies.collectAsState()
     val favouriteMovies = remember(favouriteMoviesRaw, selectedSource) {
         if (selectedSource == null) favouriteMoviesRaw else favouriteMoviesRaw.filter { it.sourceId == selectedSource }
     }
+    val browse by viewModel.movieBrowse.collectAsState()
 
-    // Pull the movie library the first time this tab is opened, not at login; refresh the computed
-    // home rows (recommended, by-genre) on open too — cheap, and covers a library already on disk.
+    // Pull the movie library the first time this tab is opened — movies only, never series.
     LaunchedEffect(Unit) {
-        if (hasSources) viewModel.ensureVodLoaded()
-        viewModel.loadHomeFeeds()
+        if (hasSources) viewModel.ensureMoviesLoaded()
+        viewModel.loadMovieHomeFeeds()
     }
 
-    // Home = curated rows; Favourites = starred grid; otherwise one category's full grid.
-    var browse by remember { mutableStateOf<VodBrowse>(VodBrowse.Home) }
+    BackHandler(enabled = browse !is VodBrowse.Home) {
+        viewModel.setMovieBrowse(VodBrowse.Home)
+    }
 
     val hasContent = resume.isNotEmpty() || favouriteMovies.isNotEmpty() ||
         recommended.isNotEmpty() || recentlyAdded.isNotEmpty() || genreRows.isNotEmpty()
@@ -109,8 +112,8 @@ fun MoviesScreen(
             ProviderChips(
                 sources = sources,
                 selected = selectedSource,
-                onSelectAll = { browse = VodBrowse.Home; viewModel.selectVodSource(null) },
-                onSelectSource = { id -> browse = VodBrowse.Home; viewModel.selectVodSource(id) },
+                onSelectAll = { viewModel.setMovieBrowse(VodBrowse.Home); viewModel.selectVodSource(null) },
+                onSelectSource = { id -> viewModel.setMovieBrowse(VodBrowse.Home); viewModel.selectVodSource(id) },
             )
         }
         CategoryChips(
@@ -118,9 +121,9 @@ fun MoviesScreen(
             homeSelected = browse is VodBrowse.Home,
             favouritesSelected = browse is VodBrowse.Favourites,
             selectedCategoryId = (browse as? VodBrowse.Category)?.id,
-            onSelectHome = { browse = VodBrowse.Home },
-            onSelectFavourites = { browse = VodBrowse.Favourites },
-            onSelectCategory = { id -> browse = VodBrowse.Category(id); viewModel.selectMovieCategory(id) },
+            onSelectHome = { viewModel.setMovieBrowse(VodBrowse.Home) },
+            onSelectFavourites = { viewModel.setMovieBrowse(VodBrowse.Favourites) },
+            onSelectCategory = { id -> viewModel.setMovieBrowse(VodBrowse.Category(id)) },
         )
         // Weighted so the shelves fill the space under the fixed search + chips header, exactly and
         // unambiguously — the same reason Live TV weights its guide grid.
@@ -185,20 +188,23 @@ fun SeriesScreen(
     val recentlyAdded by viewModel.recentlyAddedSeries.collectAsState()
     val genreRows by viewModel.seriesGenreRows.collectAsState()
     val categorySeries by viewModel.series.collectAsState()
-    val vodLoading by viewModel.vodLoading.collectAsState()
+    val vodLoading by viewModel.seriesLoading.collectAsState()
     val sources by viewModel.sources.collectAsState()
     val selectedSource by viewModel.selectedVodSource.collectAsState()
     val favouriteSeriesRaw by viewModel.favouriteSeries.collectAsState()
     val favouriteSeries = remember(favouriteSeriesRaw, selectedSource) {
         if (selectedSource == null) favouriteSeriesRaw else favouriteSeriesRaw.filter { it.sourceId == selectedSource }
     }
+    val browse by viewModel.seriesBrowse.collectAsState()
 
     LaunchedEffect(Unit) {
-        if (hasSources) viewModel.ensureVodLoaded()
-        viewModel.loadHomeFeeds()
+        if (hasSources) viewModel.ensureSeriesLoaded()
+        viewModel.loadSeriesHomeFeeds()
     }
 
-    var browse by remember { mutableStateOf<VodBrowse>(VodBrowse.Home) }
+    BackHandler(enabled = browse !is VodBrowse.Home) {
+        viewModel.setSeriesBrowse(VodBrowse.Home)
+    }
 
     val hasContent = resume.isNotEmpty() || favouriteSeries.isNotEmpty() ||
         recentlyAdded.isNotEmpty() || genreRows.isNotEmpty()
@@ -209,8 +215,8 @@ fun SeriesScreen(
             ProviderChips(
                 sources = sources,
                 selected = selectedSource,
-                onSelectAll = { browse = VodBrowse.Home; viewModel.selectVodSource(null) },
-                onSelectSource = { id -> browse = VodBrowse.Home; viewModel.selectVodSource(id) },
+                onSelectAll = { viewModel.setSeriesBrowse(VodBrowse.Home); viewModel.selectVodSource(null) },
+                onSelectSource = { id -> viewModel.setSeriesBrowse(VodBrowse.Home); viewModel.selectVodSource(id) },
             )
         }
         CategoryChips(
@@ -218,9 +224,9 @@ fun SeriesScreen(
             homeSelected = browse is VodBrowse.Home,
             favouritesSelected = browse is VodBrowse.Favourites,
             selectedCategoryId = (browse as? VodBrowse.Category)?.id,
-            onSelectHome = { browse = VodBrowse.Home },
-            onSelectFavourites = { browse = VodBrowse.Favourites },
-            onSelectCategory = { id -> browse = VodBrowse.Category(id); viewModel.selectSeriesCategory(id) },
+            onSelectHome = { viewModel.setSeriesBrowse(VodBrowse.Home) },
+            onSelectFavourites = { viewModel.setSeriesBrowse(VodBrowse.Favourites) },
+            onSelectCategory = { id -> viewModel.setSeriesBrowse(VodBrowse.Category(id)) },
         )
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (browse) {
@@ -722,13 +728,6 @@ private fun LoadingVod(message: String) {
 
 /** Poster shelf card width; the grid uses an adaptive min size close to this. */
 private val POSTER_WIDTH = 140.dp
-
-/** Home vs starred grid vs a provider category — Movies and Shows share this browse model. */
-private sealed interface VodBrowse {
-    data object Home : VodBrowse
-    data object Favourites : VodBrowse
-    data class Category(val id: String) : VodBrowse
-}
 
 /** Rating to one decimal place, locale-independent (the "★" is drawn beside it). */
 internal fun formatRating(rating: Double): String = String.format(java.util.Locale.US, "%.1f", rating)

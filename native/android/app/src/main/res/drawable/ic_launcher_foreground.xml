@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive-icon foreground. Safe zone is the centre 66dp of the 108dp canvas.
+  Mint "X" on a rounded tile — XTREAM, not the upstream TV-set mark.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#2EE6A6"
+        android:pathData="M30,30h48a10,10 0,0 1,10 10v48a10,10 0,0 1,-10 10h-48a10,10 0,0 1,-10 -10v-48a10,10 0,0 1,10 -10z" />
+    <path
+        android:strokeColor="#0B0F14"
+        android:strokeWidth="9"
+        android:strokeLineCap="round"
+        android:pathData="M42,42 L66,66" />
+    <path
+        android:strokeColor="#0B0F14"
+        android:strokeWidth="9"
+        android:strokeLineCap="round"
+        android:pathData="M66,42 L42,66" />
+</vector>

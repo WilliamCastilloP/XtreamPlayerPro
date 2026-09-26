@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.17.1
+
+- **Focus is purple.** The remote highlight was the same mint as a selected chip, so a focused
+  button looked already chosen. Focus is now purple; mint stays for the item that is actually
+  selected.
+- **A category lists the newest titles first.** Series and movies in a category (Netflix, and the
+  rest) sort by release year, then by when the panel added them. Titles with no year sink to the end.
+- **Back from a series or movie lands on that poster**, not on the search box.
+- **Movies and series stop less often.** 0.17.0 kept only ~18–28s ahead, so a bursty panel drained
+  the queue and paused constantly. Playback still starts after ~3s, then holds ~40–50s (not the
+  120s queue that drifted lipsync). Live TV is unchanged.
+
 ## 0.17.0
 
 - **Movies no longer crash the Stick by also loading Shows.** Opening Películas fetches only

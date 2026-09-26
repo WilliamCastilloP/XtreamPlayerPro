@@ -27,6 +27,16 @@ import androidx.compose.ui.unit.sp
 private val Accent = Color(0xFF2EE6A6)
 private val AccentDim = Color(0xFF0D9F6E)
 
+/**
+ * D-pad focus. Mint is the "this is selected / filled" accent, so using it for focus made a
+ * highlighted chip look like the category that was already open. Purple is the remote.
+ */
+object XtreamFocus {
+    val fill = Color(0xFF7C3AED)
+    val onFill = Color(0xFFFFFFFF)
+    val ring = Color(0xFFE9D5FF)
+}
+
 private val DarkScheme = darkColorScheme(
     primary = Accent,
     onPrimary = Color(0xFF0B0F14),

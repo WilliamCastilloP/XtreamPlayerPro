@@ -86,9 +86,9 @@ class PlayerController(
      */
     private val liveRecording: Boolean = false,
     /**
-     * Movies and episodes. Uses [PlaybackBuffers.vod]: start with Live's 2.5s so Watch is not a
-     * spinner, keep a modest reservoir ahead. Leave false for Live TV so a channel change does
-     * not hoard a minute of the previous mux. Ignored when [liveRecording] is on.
+     * Movies and episodes. Uses [PlaybackBuffers.vod]: start after ~3s, keep ~40–50s ahead.
+     * Leave false for Live TV so a channel change does not hoard the previous mux.
+     * Ignored when [liveRecording] is on.
      */
     private val vod: Boolean = false,
 ) {

@@ -12,23 +12,16 @@ import org.junit.Test
 class PlaybackBuffersTest {
 
     @Test
-    fun `vod starts as soon as live so Watch is not a long spinner`() {
+    fun `vod starts quickly and keeps enough ahead to ride a bursty panel`() {
         val vod = PlaybackBuffers.vod()
         val live = PlaybackBuffers.live()
-        assertThat(vod.forPlaybackMs).isEqualTo(live.forPlaybackMs)
-        assertThat(vod.forPlaybackMs).isEqualTo(2_500)
-        assertThat(vod.afterRebufferMs).isAtMost(5_000)
-        assertThat(vod.afterRebufferMs).isLessThan(live.afterRebufferMs + 1)
-    }
-
-    @Test
-    fun `vod keeps a modest reservoir without a 2-minute queue that stalls then fills`() {
-        val vod = PlaybackBuffers.vod()
-        assertThat(vod.minMs).isAtLeast(15_000)
-        assertThat(vod.minMs).isAtMost(25_000)
-        assertThat(vod.maxMs).isGreaterThan(vod.minMs)
-        assertThat(vod.maxMs).isAtMost(40_000)
+        assertThat(vod.forPlaybackMs).isAtMost(4_000)
+        assertThat(vod.forPlaybackMs).isAtLeast(live.forPlaybackMs)
+        assertThat(vod.minMs).isAtLeast(35_000)
+        assertThat(vod.maxMs).isAtLeast(45_000)
+        assertThat(vod.maxMs).isAtMost(55_000)
         assertThat(vod.maxMs).isLessThan(120_000)
+        assertThat(vod.afterRebufferMs).isAtLeast(6_000)
         assertThat(vod.targetBufferBytes).isNull()
     }
 

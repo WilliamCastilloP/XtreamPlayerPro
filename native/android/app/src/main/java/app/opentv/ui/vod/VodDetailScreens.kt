@@ -63,6 +63,7 @@ import app.opentv.data.model.Series
 import app.opentv.data.model.StremioStream
 import app.opentv.data.parser.displayTitle
 import app.opentv.ui.VodViewModel
+import app.opentv.ui.theme.XtreamFocus
 import coil.compose.AsyncImage
 import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.delay
@@ -289,11 +290,13 @@ fun SeriesDetailScreen(
     }
 
     // Group episodes by season (seasons ascending, episodes ordered within each) — the classic
-    // "episode-by-season" list.
-    val seasons = remember(episodes) {
-        episodes.groupBy { it.season }
-            .mapValues { (_, eps) -> eps.sortedBy { it.episodeNumber } }
-            .toSortedMap()
+    // "episode-by-season" list. A concrete List, not a Map: iterating a Map inside LazyColumn
+    // makes iterator()/forEach ambiguous against the list scope.
+    val seasonRows: List<Pair<Int, List<app.opentv.data.model.Episode>>> = remember(episodes) {
+        val grouped = episodes.groupBy { it.season }
+        grouped.keys.sorted().map { season ->
+            season to grouped.getValue(season).sortedBy { it.episodeNumber }
+        }
     }
 
     LazyColumn(Modifier.fillMaxSize()) {
@@ -329,14 +332,18 @@ fun SeriesDetailScreen(
                 )
             }
         } else {
-            seasons.forEach { (season, eps) ->
+            var seasonIndex = 0
+            while (seasonIndex < seasonRows.size) {
+                val season = seasonRows[seasonIndex].first
+                val eps = seasonRows[seasonIndex].second
                 item(key = "season:$season") {
                     Spacer(Modifier.height(8.dp))
                     SectionHeader(stringResource(R.string.vod_season, season))
                 }
-                items(eps, key = { it.id }) { ep ->
+                items(items = eps, key = { ep -> ep.id }) { ep ->
                     EpisodeRow(ep, onPlayEpisode)
                 }
+                seasonIndex++
             }
         }
 
@@ -587,8 +594,8 @@ private fun GenreChip(label: String) {
 @Composable
 private fun PersonChip(name: String, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    val container = if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
-    val content = if (focused) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    val container = if (focused) XtreamFocus.fill else MaterialTheme.colorScheme.surfaceVariant
+    val content = if (focused) XtreamFocus.onFill else MaterialTheme.colorScheme.onSurface
     Text(
         name,
         style = MaterialTheme.typography.titleSmall,
@@ -600,7 +607,7 @@ private fun PersonChip(name: String, onClick: () -> Unit) {
             .clip(RoundedCornerShape(22.dp))
             .background(container)
             .then(
-                if (focused) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(22.dp))
+                if (focused) Modifier.border(2.dp, XtreamFocus.ring, RoundedCornerShape(22.dp))
                 else Modifier,
             )
             .clickable(onClick = onClick)
@@ -619,12 +626,12 @@ private fun DetailButton(
 ) {
     var focused by remember { mutableStateOf(false) }
     val container = when {
-        focused -> MaterialTheme.colorScheme.primary
+        focused -> XtreamFocus.fill
         primary -> MaterialTheme.colorScheme.primaryContainer
         else -> Color.White.copy(alpha = 0.16f)
     }
     val content = when {
-        focused -> MaterialTheme.colorScheme.onPrimary
+        focused -> XtreamFocus.onFill
         primary -> MaterialTheme.colorScheme.onPrimaryContainer
         else -> Color.White
     }
@@ -634,7 +641,7 @@ private fun DetailButton(
             .clip(RoundedCornerShape(12.dp))
             .background(container)
             .then(
-                if (focused) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
+                if (focused) Modifier.border(2.dp, XtreamFocus.ring, RoundedCornerShape(12.dp))
                 else Modifier,
             )
             .clickable(onClick = onClick)
@@ -657,12 +664,9 @@ private fun EpisodeRow(ep: Episode, onPlay: (mediaKey: String, url: String, titl
             .padding(horizontal = 24.dp, vertical = 3.dp)
             .onFocusChanged { focused = it.isFocused }
             .clip(RoundedCornerShape(8.dp))
-            .background(
-                if (focused) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.surface,
-            )
+            .background(if (focused) XtreamFocus.fill else MaterialTheme.colorScheme.surface)
             .then(
-                if (focused) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                if (focused) Modifier.border(2.dp, XtreamFocus.ring, RoundedCornerShape(8.dp))
                 else Modifier,
             )
             .clickable {

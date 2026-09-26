@@ -9,9 +9,9 @@ package app.opentv.player
  * ExoPlayer [androidx.media3.exoplayer.DefaultLoadControl] durations per playback mode.
  *
  * Media3's own defaults are 50s/50s with a 2.5s start. The live path keeps a shallower pool so a
- * channel change does not hoard a minute of the previous mux. VOD is the opposite: a movie is a
- * long finite download from a bursty panel, and starting at 2.5s is what looks like "my internet
- * is fine but it keeps pausing".
+ * channel change does not hoard a minute of the previous mux. VOD holds a deeper pool than that
+ * start threshold: a movie is a long finite download from a bursty panel, and a queue that only
+ * covers a few seconds drains and pauses. The cap stays near 50s so Fire TV lipsync does not drift.
  *
  * [DefaultLoadControl] requires min ≥ both playback thresholds and max ≥ min. The constructor
  * checks that so a bad edit fails in tests, not on a Stick.
@@ -42,18 +42,22 @@ internal object PlaybackBuffers {
     )
 
     /**
-     * Movies and episodes. Start as soon as Live would (first ~2.5 s of media) so Watch is not a
-     * long spinner. Keep a modest reservoir ahead so a bursty panel hitch does not freeze the
-     * film — but do **not** wait 5–8 s before the first frame, and do **not** hoard 50–120 s /
-     * 64 MiB. 0.16.0–0.16.1 did that as “preload”; it felt like a wait, then stalled anyway
-     * while the queue kept filling. A second ExoPlayer on the detail page would also count
-     * against Xtream `max_connections`, so preload is this on-player buffer, not a hidden stream.
+     * Movies and episodes.
+     *
+     * 0.16.1 waited ~8s then tried to hold 50–120s / 64 MiB: long spinner, then a stall while the
+     * queue kept filling, and on Fire TV the deep queue drifted lipsync. 0.17.0 swung the other
+     * way (start at 2.5s, only 18–28s ahead) and a bursty Xtream file drained that pool constantly,
+     * so the film "stopped all the time".
+     *
+     * Start once ~3s is buffered (still a short spinner). Keep ~40–50s ahead while playing — enough
+     * runway for a panel that sends data in bursts, short of the 2-minute queue that desynced A/V.
+     * After a hitch, rebuild 8s before resuming so it does not stutter every few seconds.
      */
     fun vod(): BufferPolicy = BufferPolicy(
-        minMs = 18_000,
-        maxMs = 28_000,
-        forPlaybackMs = 2_500,
-        afterRebufferMs = 4_000,
+        minMs = 40_000,
+        maxMs = 50_000,
+        forPlaybackMs = 3_000,
+        afterRebufferMs = 8_000,
     )
 
     fun preview(): BufferPolicy = BufferPolicy(

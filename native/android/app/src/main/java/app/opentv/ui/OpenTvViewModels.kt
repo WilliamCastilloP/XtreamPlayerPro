@@ -853,6 +853,18 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         seriesCategory.value = (browse as? VodBrowse.Category)?.id
     }
 
+    /** Poster to refocus when Back returns from a detail page. Survives the tab leaving composition. */
+    private val _movieReturnId = MutableStateFlow<Long?>(null)
+    val movieReturnId: StateFlow<Long?> = _movieReturnId.asStateFlow()
+
+    private val _seriesReturnId = MutableStateFlow<Long?>(null)
+    val seriesReturnId: StateFlow<Long?> = _seriesReturnId.asStateFlow()
+
+    fun markMovieOpened(id: Long) { _movieReturnId.value = id }
+    fun markSeriesOpened(id: Long) { _seriesReturnId.value = id }
+    fun clearMovieReturnFocus() { _movieReturnId.value = null }
+    fun clearSeriesReturnFocus() { _seriesReturnId.value = null }
+
     // ---- Netflix-style home rows ----------------------------------------------------------------
     // "Recently added" is reactive: it fills in live as a VOD sync lands. The computed feeds
     // (recommended, by-genre) are rebuilt from a *bounded* sample of that one library — never

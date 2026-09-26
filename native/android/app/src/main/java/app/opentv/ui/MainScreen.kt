@@ -71,6 +71,7 @@ import app.opentv.ui.channels.HomeScreen
 import app.opentv.ui.recordings.RecordingsScreen
 import app.opentv.ui.vod.MoviesScreen
 import app.opentv.ui.vod.SeriesScreen
+import app.opentv.ui.theme.XtreamFocus
 
 /**
  * The shell: a slim navigation rail down the left over a content area. The rail sits collapsed as
@@ -345,11 +346,11 @@ private fun RailItem(
 ) {
     var focused by remember { mutableStateOf(false) }
     val bg = when {
-        focused -> MaterialTheme.colorScheme.primary
+        focused -> XtreamFocus.fill
         selected -> MaterialTheme.colorScheme.surfaceVariant
         else -> MaterialTheme.colorScheme.surface
     }
-    val tint = if (focused) MaterialTheme.colorScheme.onPrimary
+    val tint = if (focused) XtreamFocus.onFill
     else if (selected) MaterialTheme.colorScheme.onSurface
     else MaterialTheme.colorScheme.onSurfaceVariant
 

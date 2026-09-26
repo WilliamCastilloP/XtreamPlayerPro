@@ -24,8 +24,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -46,6 +48,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -61,7 +66,10 @@ import app.opentv.data.model.Source
 import app.opentv.data.parser.displayTitle
 import app.opentv.ui.VodBrowse
 import app.opentv.ui.VodViewModel
+import app.opentv.data.repo.GenreGroup
+import app.opentv.ui.theme.XtreamFocus
 import coil.compose.AsyncImage
+import kotlinx.coroutines.delay
 
 /**
  * Movies: a modern, row-based home — Continue Watching, Recommended, Recently added and a row per
@@ -92,6 +100,7 @@ fun MoviesScreen(
         if (selectedSource == null) favouriteMoviesRaw else favouriteMoviesRaw.filter { it.sourceId == selectedSource }
     }
     val browse by viewModel.movieBrowse.collectAsState()
+    val returnId by viewModel.movieReturnId.collectAsState()
 
     // Pull the movie library the first time this tab is opened — movies only, never series.
     LaunchedEffect(Unit) {
@@ -107,11 +116,12 @@ fun MoviesScreen(
         recommended.isNotEmpty() || recentlyAdded.isNotEmpty() || genreRows.isNotEmpty()
 
     Column(Modifier.fillMaxSize()) {
-        SearchAffordance(onOpenSearch)
+        SearchAffordance(onOpenSearch, allowFocus = returnId == null)
         if (sources.size > 1) {
             ProviderChips(
                 sources = sources,
                 selected = selectedSource,
+                allowFocus = returnId == null,
                 onSelectAll = { viewModel.setMovieBrowse(VodBrowse.Home); viewModel.selectVodSource(null) },
                 onSelectSource = { id -> viewModel.setMovieBrowse(VodBrowse.Home); viewModel.selectVodSource(id) },
             )
@@ -121,6 +131,7 @@ fun MoviesScreen(
             homeSelected = browse is VodBrowse.Home,
             favouritesSelected = browse is VodBrowse.Favourites,
             selectedCategoryId = (browse as? VodBrowse.Category)?.id,
+            allowFocus = returnId == null,
             onSelectHome = { viewModel.setMovieBrowse(VodBrowse.Home) },
             onSelectFavourites = { viewModel.setMovieBrowse(VodBrowse.Favourites) },
             onSelectCategory = { id -> viewModel.setMovieBrowse(VodBrowse.Category(id)) },
@@ -143,24 +154,61 @@ fun MoviesScreen(
                         hasSources -> EmptyVod(stringResource(R.string.vod_no_movies), stringResource(R.string.vod_no_movies_provider))
                         else -> EmptyVod(stringResource(R.string.vod_no_movies), stringResource(R.string.vod_no_movies_add))
                     }
-                    else -> LazyColumn(
+                    else -> {
+                        val homeState = rememberLazyListState()
+                        val restoreFocus = remember { FocusRequester() }
+                        val restoreKey = movieHomeRestoreKey(returnId, favouriteMovies, recommended, recentlyAdded, genreRows)
+                        LaunchedEffect(returnId, restoreKey) {
+                            val id = returnId ?: return@LaunchedEffect
+                            val index = movieHomeIndex(id, resume.isNotEmpty(), favouriteMovies, recommended, recentlyAdded, genreRows)
+                            if (index >= 0) homeState.scrollToItem(index)
+                            restoreFocus.focusWhenAttached()
+                            viewModel.clearMovieReturnFocus()
+                        }
+                        LazyColumn(
+                        state = homeState,
                         contentPadding = PaddingValues(vertical = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp),
                         modifier = Modifier.fillMaxSize(),
                     ) {
                         if (resume.isNotEmpty()) item(key = "cw") { ContinueWatchingRow(resume, onResume) }
                         if (favouriteMovies.isNotEmpty()) item(key = "favs") {
-                            MoviePosterRow(stringResource(R.string.guide_favourites), favouriteMovies, onOpenMovie)
+                            MoviePosterRow(
+                                stringResource(R.string.guide_favourites),
+                                favouriteMovies,
+                                { movie -> viewModel.markMovieOpened(movie.id); onOpenMovie(movie) },
+                                restoreId = if (restoreKey == "favs") returnId else null,
+                                restoreFocus = restoreFocus,
+                            )
                         }
                         if (recommended.isNotEmpty()) item(key = "rec") {
-                            MoviePosterRow(stringResource(R.string.vod_recommended), recommended, onOpenMovie)
+                            MoviePosterRow(
+                                stringResource(R.string.vod_recommended),
+                                recommended,
+                                { movie -> viewModel.markMovieOpened(movie.id); onOpenMovie(movie) },
+                                restoreId = if (restoreKey == "rec") returnId else null,
+                                restoreFocus = restoreFocus,
+                            )
                         }
                         if (recentlyAdded.isNotEmpty()) item(key = "recent") {
-                            MoviePosterRow(stringResource(R.string.vod_recently_added), recentlyAdded, onOpenMovie)
+                            MoviePosterRow(
+                                stringResource(R.string.vod_recently_added),
+                                recentlyAdded,
+                                { movie -> viewModel.markMovieOpened(movie.id); onOpenMovie(movie) },
+                                restoreId = if (restoreKey == "recent") returnId else null,
+                                restoreFocus = restoreFocus,
+                            )
                         }
                         items(genreRows, key = { "g:${it.genre}" }) { group ->
-                            MoviePosterRow(group.genre, group.items, onOpenMovie)
+                            MoviePosterRow(
+                                group.genre,
+                                group.items,
+                                { movie -> viewModel.markMovieOpened(movie.id); onOpenMovie(movie) },
+                                restoreId = if (restoreKey == "g:${group.genre}") returnId else null,
+                                restoreFocus = restoreFocus,
+                            )
                         }
+                    }
                     }
                 }
             }
@@ -196,6 +244,7 @@ fun SeriesScreen(
         if (selectedSource == null) favouriteSeriesRaw else favouriteSeriesRaw.filter { it.sourceId == selectedSource }
     }
     val browse by viewModel.seriesBrowse.collectAsState()
+    val returnId by viewModel.seriesReturnId.collectAsState()
 
     LaunchedEffect(Unit) {
         if (hasSources) viewModel.ensureSeriesLoaded()
@@ -210,11 +259,12 @@ fun SeriesScreen(
         recentlyAdded.isNotEmpty() || genreRows.isNotEmpty()
 
     Column(Modifier.fillMaxSize()) {
-        SearchAffordance(onOpenSearch)
+        SearchAffordance(onOpenSearch, allowFocus = returnId == null)
         if (sources.size > 1) {
             ProviderChips(
                 sources = sources,
                 selected = selectedSource,
+                allowFocus = returnId == null,
                 onSelectAll = { viewModel.setSeriesBrowse(VodBrowse.Home); viewModel.selectVodSource(null) },
                 onSelectSource = { id -> viewModel.setSeriesBrowse(VodBrowse.Home); viewModel.selectVodSource(id) },
             )
@@ -224,6 +274,7 @@ fun SeriesScreen(
             homeSelected = browse is VodBrowse.Home,
             favouritesSelected = browse is VodBrowse.Favourites,
             selectedCategoryId = (browse as? VodBrowse.Category)?.id,
+            allowFocus = returnId == null,
             onSelectHome = { viewModel.setSeriesBrowse(VodBrowse.Home) },
             onSelectFavourites = { viewModel.setSeriesBrowse(VodBrowse.Favourites) },
             onSelectCategory = { id -> viewModel.setSeriesBrowse(VodBrowse.Category(id)) },
@@ -231,34 +282,65 @@ fun SeriesScreen(
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (browse) {
                 is VodBrowse.Favourites -> when {
-                    favouriteSeries.isNotEmpty() -> SeriesCategoryGrid(favouriteSeries, onOpenSeries)
+                    favouriteSeries.isNotEmpty() -> SeriesCategoryGrid(favouriteSeries, viewModel, onOpenSeries)
                     else -> EmptyVod(
                         stringResource(R.string.guide_no_favourites_title),
                         stringResource(R.string.vod_no_favourites_shows_desc),
                     )
                 }
-                is VodBrowse.Category -> SeriesCategoryGrid(categorySeries, onOpenSeries)
+                is VodBrowse.Category -> SeriesCategoryGrid(categorySeries, viewModel, onOpenSeries)
                 VodBrowse.Home -> when {
                     !hasContent -> when {
                         vodLoading || isSyncing -> LoadingVod(stringResource(R.string.vod_loading_shows))
                         hasSources -> EmptyVod(stringResource(R.string.vod_no_shows), stringResource(R.string.vod_no_shows_provider))
                         else -> EmptyVod(stringResource(R.string.vod_no_shows), stringResource(R.string.vod_no_shows_add))
                     }
-                    else -> LazyColumn(
+                    else -> {
+                        val homeState = rememberLazyListState()
+                        val restoreFocus = remember { FocusRequester() }
+                        val restoreKey = seriesHomeRestoreKey(returnId, favouriteSeries, recentlyAdded, genreRows)
+                        LaunchedEffect(returnId, restoreKey) {
+                            val id = returnId ?: return@LaunchedEffect
+                            val index = seriesHomeIndex(id, resume.isNotEmpty(), favouriteSeries, recentlyAdded, genreRows)
+                            if (index >= 0) homeState.scrollToItem(index)
+                            restoreFocus.focusWhenAttached()
+                            viewModel.clearSeriesReturnFocus()
+                        }
+                        LazyColumn(
+                        state = homeState,
                         contentPadding = PaddingValues(vertical = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp),
                         modifier = Modifier.fillMaxSize(),
                     ) {
                         if (resume.isNotEmpty()) item(key = "cw") { ContinueWatchingRow(resume, onResume) }
                         if (favouriteSeries.isNotEmpty()) item(key = "favs") {
-                            SeriesPosterRow(stringResource(R.string.guide_favourites), favouriteSeries, onOpenSeries)
+                            SeriesPosterRow(
+                                stringResource(R.string.guide_favourites),
+                                favouriteSeries,
+                                { show -> viewModel.markSeriesOpened(show.id); onOpenSeries(show) },
+                                restoreId = if (restoreKey == "favs") returnId else null,
+                                restoreFocus = restoreFocus,
+                            )
                         }
                         if (recentlyAdded.isNotEmpty()) item(key = "recent") {
-                            SeriesPosterRow(stringResource(R.string.vod_recently_added), recentlyAdded, onOpenSeries)
+                            SeriesPosterRow(
+                                stringResource(R.string.vod_recently_added),
+                                recentlyAdded,
+                                { show -> viewModel.markSeriesOpened(show.id); onOpenSeries(show) },
+                                restoreId = if (restoreKey == "recent") returnId else null,
+                                restoreFocus = restoreFocus,
+                            )
                         }
                         items(genreRows, key = { "g:${it.genre}" }) { group ->
-                            SeriesPosterRow(group.genre, group.items, onOpenSeries)
+                            SeriesPosterRow(
+                                group.genre,
+                                group.items,
+                                { show -> viewModel.markSeriesOpened(show.id); onOpenSeries(show) },
+                                restoreId = if (restoreKey == "g:${group.genre}") returnId else null,
+                                restoreFocus = restoreFocus,
+                            )
                         }
+                    }
                     }
                 }
             }
@@ -273,8 +355,19 @@ fun SeriesScreen(
 private fun MovieCategoryGrid(movies: List<Movie>, viewModel: VodViewModel, onOpenMovie: (Movie) -> Unit) {
     if (movies.isEmpty()) { LoadingVod(stringResource(R.string.vod_loading_movies)); return }
     val groups = remember(movies) { viewModel.collapseVariants(movies) }
+    val returnId by viewModel.movieReturnId.collectAsState()
+    val gridState = rememberLazyGridState()
+    val restoreFocus = remember { FocusRequester() }
+    LaunchedEffect(returnId, groups) {
+        val id = returnId ?: return@LaunchedEffect
+        val index = groups.indexOfFirst { it.primary.id == id }
+        if (index >= 0) gridState.scrollToItem(index)
+        restoreFocus.focusWhenAttached()
+        viewModel.clearMovieReturnFocus()
+    }
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 140.dp),
+        state = gridState,
         contentPadding = PaddingValues(16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -295,18 +388,33 @@ private fun MovieCategoryGrid(movies: List<Movie>, viewModel: VodViewModel, onOp
                 rating = group.primary.rating,
                 qualityBadge = badge,
                 favourite = group.primary.favourite,
-                onClick = { onOpenMovie(group.primary) },
+                modifier = if (group.primary.id == returnId) Modifier.focusRequester(restoreFocus) else Modifier,
+                onClick = {
+                    viewModel.markMovieOpened(group.primary.id)
+                    onOpenMovie(group.primary)
+                },
             )
         }
     }
 }
 
-/** One category's shows as a poster grid. */
+/** One category's shows as a poster grid, newest release year first. */
 @Composable
-private fun SeriesCategoryGrid(series: List<Series>, onOpenSeries: (Series) -> Unit) {
+private fun SeriesCategoryGrid(series: List<Series>, viewModel: VodViewModel, onOpenSeries: (Series) -> Unit) {
     if (series.isEmpty()) { LoadingVod(stringResource(R.string.vod_loading_shows)); return }
+    val returnId by viewModel.seriesReturnId.collectAsState()
+    val gridState = rememberLazyGridState()
+    val restoreFocus = remember { FocusRequester() }
+    LaunchedEffect(returnId, series) {
+        val id = returnId ?: return@LaunchedEffect
+        val index = series.indexOfFirst { it.id == id }
+        if (index >= 0) gridState.scrollToItem(index)
+        restoreFocus.focusWhenAttached()
+        viewModel.clearSeriesReturnFocus()
+    }
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 140.dp),
+        state = gridState,
         contentPadding = PaddingValues(16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -319,7 +427,11 @@ private fun SeriesCategoryGrid(series: List<Series>, onOpenSeries: (Series) -> U
                 subtitle = item.year?.toString(),
                 rating = item.rating,
                 favourite = item.favourite,
-                onClick = { onOpenSeries(item) },
+                modifier = if (item.id == returnId) Modifier.focusRequester(restoreFocus) else Modifier,
+                onClick = {
+                    viewModel.markSeriesOpened(item.id)
+                    onOpenSeries(item)
+                },
             )
         }
     }
@@ -329,10 +441,23 @@ private fun SeriesCategoryGrid(series: List<Series>, onOpenSeries: (Series) -> U
 
 /** A titled horizontal shelf of movie poster cards. Shared by the home and the detail's "more like this". */
 @Composable
-internal fun MoviePosterRow(title: String, movies: List<Movie>, onOpenMovie: (Movie) -> Unit) {
+internal fun MoviePosterRow(
+    title: String,
+    movies: List<Movie>,
+    onOpenMovie: (Movie) -> Unit,
+    restoreId: Long? = null,
+    restoreFocus: FocusRequester? = null,
+) {
     Column(Modifier.fillMaxWidth()) {
         SectionHeader(title)
+        val rowState = rememberLazyListState()
+        LaunchedEffect(restoreId, movies) {
+            val id = restoreId ?: return@LaunchedEffect
+            val index = movies.indexOfFirst { it.id == id }
+            if (index >= 0) rowState.scrollToItem(index)
+        }
         LazyRow(
+            state = rowState,
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -343,6 +468,11 @@ internal fun MoviePosterRow(title: String, movies: List<Movie>, onOpenMovie: (Mo
                     subtitle = movie.year?.toString(),
                     rating = movie.rating,
                     favourite = movie.favourite,
+                    modifier = if (movie.id == restoreId && restoreFocus != null) {
+                        Modifier.focusRequester(restoreFocus)
+                    } else {
+                        Modifier
+                    },
                     onClick = { onOpenMovie(movie) },
                 )
             }
@@ -352,10 +482,23 @@ internal fun MoviePosterRow(title: String, movies: List<Movie>, onOpenMovie: (Mo
 
 /** A titled horizontal shelf of series poster cards. */
 @Composable
-internal fun SeriesPosterRow(title: String, series: List<Series>, onOpenSeries: (Series) -> Unit) {
+internal fun SeriesPosterRow(
+    title: String,
+    series: List<Series>,
+    onOpenSeries: (Series) -> Unit,
+    restoreId: Long? = null,
+    restoreFocus: FocusRequester? = null,
+) {
     Column(Modifier.fillMaxWidth()) {
         SectionHeader(title)
+        val rowState = rememberLazyListState()
+        LaunchedEffect(restoreId, series) {
+            val id = restoreId ?: return@LaunchedEffect
+            val index = series.indexOfFirst { it.id == id }
+            if (index >= 0) rowState.scrollToItem(index)
+        }
         LazyRow(
+            state = rowState,
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -366,6 +509,11 @@ internal fun SeriesPosterRow(title: String, series: List<Series>, onOpenSeries: 
                     subtitle = item.year?.toString(),
                     rating = item.rating,
                     favourite = item.favourite,
+                    modifier = if (item.id == restoreId && restoreFocus != null) {
+                        Modifier.focusRequester(restoreFocus)
+                    } else {
+                        Modifier
+                    },
                     onClick = { onOpenSeries(item) },
                 )
             }
@@ -422,7 +570,7 @@ internal fun PosterCard(
                 .clip(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant)
                 .then(
-                    if (focused) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                    if (focused) Modifier.border(4.dp, XtreamFocus.fill, RoundedCornerShape(8.dp))
                     else Modifier,
                 ),
         ) {
@@ -538,7 +686,7 @@ private fun ResumeCard(item: VodViewModel.ResumeItem, onClick: () -> Unit) {
                 .clip(RoundedCornerShape(6.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant)
                 .then(
-                    if (focused) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
+                    if (focused) Modifier.border(4.dp, XtreamFocus.fill, RoundedCornerShape(6.dp))
                     else Modifier,
                 ),
         ) {
@@ -577,6 +725,7 @@ private fun CategoryChips(
     homeSelected: Boolean,
     favouritesSelected: Boolean,
     selectedCategoryId: String?,
+    allowFocus: Boolean = true,
     onSelectHome: () -> Unit,
     onSelectFavourites: () -> Unit,
     onSelectCategory: (String) -> Unit,
@@ -594,12 +743,12 @@ private fun CategoryChips(
                 modifier = Modifier.padding(end = 4.dp),
             )
         }
-        item(key = "all") { Chip(stringResource(R.string.vod_all), homeSelected, onSelectHome) }
+        item(key = "all") { Chip(stringResource(R.string.vod_all), homeSelected, onSelectHome, allowFocus) }
         item(key = "favs") {
-            Chip(stringResource(R.string.guide_favourites), favouritesSelected, onSelectFavourites)
+            Chip(stringResource(R.string.guide_favourites), favouritesSelected, onSelectFavourites, allowFocus)
         }
         items(entries, key = { it.first }) { (id, name) ->
-            Chip(name, selectedCategoryId == id) { onSelectCategory(id) }
+            Chip(name, selectedCategoryId == id, { onSelectCategory(id) }, allowFocus)
         }
     }
 }
@@ -612,6 +761,7 @@ private fun CategoryChips(
 private fun ProviderChips(
     sources: List<Source>,
     selected: Long?,
+    allowFocus: Boolean = true,
     onSelectAll: () -> Unit,
     onSelectSource: (Long) -> Unit,
 ) {
@@ -629,24 +779,24 @@ private fun ProviderChips(
             )
         }
         item(key = "pall") {
-            Chip(stringResource(R.string.channels_manager_all_sources), selected == null, onSelectAll)
+            Chip(stringResource(R.string.channels_manager_all_sources), selected == null, onSelectAll, allowFocus)
         }
         items(sources, key = { it.id }) { source ->
-            Chip(source.name, selected == source.id) { onSelectSource(source.id) }
+            Chip(source.name, selected == source.id, { onSelectSource(source.id) }, allowFocus)
         }
     }
 }
 
 @Composable
-private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun Chip(label: String, selected: Boolean, onClick: () -> Unit, allowFocus: Boolean = true) {
     var focused by remember { mutableStateOf(false) }
     val bg = when {
-        focused -> MaterialTheme.colorScheme.primary
+        focused -> XtreamFocus.fill
         selected -> MaterialTheme.colorScheme.primaryContainer
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
     val fg = when {
-        focused -> MaterialTheme.colorScheme.onPrimary
+        focused -> XtreamFocus.onFill
         selected -> MaterialTheme.colorScheme.onPrimaryContainer
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
@@ -657,8 +807,13 @@ private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
         maxLines = 1,
         modifier = Modifier
             .onFocusChanged { focused = it.isFocused }
+            .focusProperties { canFocus = allowFocus }
             .clip(RoundedCornerShape(20.dp))
             .background(bg)
+            .then(
+                if (focused) Modifier.border(2.dp, XtreamFocus.ring, RoundedCornerShape(20.dp))
+                else Modifier,
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 8.dp),
     )
@@ -672,23 +827,20 @@ private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
  * tappable on touch, it just opens the existing search screen.
  */
 @Composable
-private fun SearchAffordance(onOpenSearch: () -> Unit) {
+private fun SearchAffordance(onOpenSearch: () -> Unit, allowFocus: Boolean = true) {
     var focused by remember { mutableStateOf(false) }
     Row(
         Modifier
             .padding(horizontal = 16.dp, vertical = 12.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(
-                if (focused) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.surfaceVariant,
-            )
+            .background(if (focused) XtreamFocus.fill else MaterialTheme.colorScheme.surfaceVariant)
             .onFocusChanged { focused = it.isFocused }
+            .focusProperties { canFocus = allowFocus }
             .clickable(onClick = onOpenSearch)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val tint = if (focused) MaterialTheme.colorScheme.onPrimary
-        else MaterialTheme.colorScheme.onSurfaceVariant
+        val tint = if (focused) XtreamFocus.onFill else MaterialTheme.colorScheme.onSurfaceVariant
         Icon(Icons.Filled.Search, contentDescription = null, tint = tint)
         Spacer(Modifier.width(12.dp))
         Text(
@@ -726,8 +878,96 @@ private fun LoadingVod(message: String) {
     }
 }
 
+/**
+ * Ask for focus until the poster is in the tree. This Compose version's [FocusRequester.requestFocus]
+ * throws while the lazy item is still off-screen and returns [Unit] once the node is attached.
+ */
+private suspend fun FocusRequester.focusWhenAttached(attempts: Int = 24) {
+    repeat(attempts) {
+        delay(50)
+        if (runCatching { requestFocus() }.isSuccess) return
+    }
+}
+
 /** Poster shelf card width; the grid uses an adaptive min size close to this. */
 private val POSTER_WIDTH = 140.dp
+
+private fun movieHomeRestoreKey(
+    id: Long?,
+    favourites: List<Movie>,
+    recommended: List<Movie>,
+    recent: List<Movie>,
+    genres: List<GenreGroup<Movie>>,
+): String? {
+    if (id == null) return null
+    if (favourites.any { it.id == id }) return "favs"
+    if (recommended.any { it.id == id }) return "rec"
+    if (recent.any { it.id == id }) return "recent"
+    return genres.firstOrNull { group -> group.items.any { it.id == id } }?.let { "g:${it.genre}" }
+}
+
+private fun movieHomeIndex(
+    id: Long,
+    hasResume: Boolean,
+    favourites: List<Movie>,
+    recommended: List<Movie>,
+    recent: List<Movie>,
+    genres: List<GenreGroup<Movie>>,
+): Int {
+    var index = if (hasResume) 1 else 0
+    if (favourites.isNotEmpty()) {
+        if (favourites.any { it.id == id }) return index
+        index++
+    }
+    if (recommended.isNotEmpty()) {
+        if (recommended.any { it.id == id }) return index
+        index++
+    }
+    if (recent.isNotEmpty()) {
+        if (recent.any { it.id == id }) return index
+        index++
+    }
+    for (group in genres) {
+        if (group.items.any { it.id == id }) return index
+        index++
+    }
+    return -1
+}
+
+private fun seriesHomeRestoreKey(
+    id: Long?,
+    favourites: List<Series>,
+    recent: List<Series>,
+    genres: List<GenreGroup<Series>>,
+): String? {
+    if (id == null) return null
+    if (favourites.any { it.id == id }) return "favs"
+    if (recent.any { it.id == id }) return "recent"
+    return genres.firstOrNull { group -> group.items.any { it.id == id } }?.let { "g:${it.genre}" }
+}
+
+private fun seriesHomeIndex(
+    id: Long,
+    hasResume: Boolean,
+    favourites: List<Series>,
+    recent: List<Series>,
+    genres: List<GenreGroup<Series>>,
+): Int {
+    var index = if (hasResume) 1 else 0
+    if (favourites.isNotEmpty()) {
+        if (favourites.any { it.id == id }) return index
+        index++
+    }
+    if (recent.isNotEmpty()) {
+        if (recent.any { it.id == id }) return index
+        index++
+    }
+    for (group in genres) {
+        if (group.items.any { it.id == id }) return index
+        index++
+    }
+    return -1
+}
 
 /** Rating to one decimal place, locale-independent (the "★" is drawn beside it). */
 internal fun formatRating(rating: Double): String = String.format(java.util.Locale.US, "%.1f", rating)

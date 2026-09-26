@@ -7,6 +7,7 @@ package app.opentv.ui.channels
 
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -83,6 +84,7 @@ import app.opentv.reminders.ReminderScheduler
 import app.opentv.player.PlaybackQueue
 import app.opentv.player.PlayerController
 import app.opentv.ui.ChannelsViewModel
+import app.opentv.ui.theme.XtreamFocus
 import app.opentv.ui.RecordingBackgroundDialog
 import app.opentv.ui.RecordingBackgroundPrompt
 import coil.compose.AsyncImage
@@ -832,12 +834,12 @@ private suspend fun setReminder(
 private fun RecordActionRow(label: String, primary: Boolean = false, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val bg = when {
-        focused -> MaterialTheme.colorScheme.primary
+        focused -> XtreamFocus.fill
         primary -> MaterialTheme.colorScheme.primaryContainer
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
     val fg = when {
-        focused -> MaterialTheme.colorScheme.onPrimary
+        focused -> XtreamFocus.onFill
         primary -> MaterialTheme.colorScheme.onPrimaryContainer
         else -> MaterialTheme.colorScheme.onSurface
     }
@@ -862,12 +864,12 @@ private fun RecordActionRow(label: String, primary: Boolean = false, onClick: ()
 private fun QualityChip(label: String, selected: Boolean, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val bg = when {
-        focused -> MaterialTheme.colorScheme.primary
+        focused -> XtreamFocus.fill
         selected -> MaterialTheme.colorScheme.primaryContainer
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
     val fg = when {
-        focused -> MaterialTheme.colorScheme.onPrimary
+        focused -> XtreamFocus.onFill
         selected -> MaterialTheme.colorScheme.onPrimaryContainer
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
@@ -887,20 +889,32 @@ private fun QualityChip(label: String, selected: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun RailEntry(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    var focused by remember { mutableStateOf(false) }
     Text(
         text = label,
         style = MaterialTheme.typography.titleMedium,
-        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-        color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-        else MaterialTheme.colorScheme.onSurfaceVariant,
+        fontWeight = if (selected || focused) FontWeight.SemiBold else FontWeight.Normal,
+        color = when {
+            focused -> XtreamFocus.onFill
+            selected -> MaterialTheme.colorScheme.onPrimaryContainer
+            else -> MaterialTheme.colorScheme.onSurfaceVariant
+        },
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = modifier
             .fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
             .clip(RoundedCornerShape(8.dp))
             .background(
-                if (selected) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.surface,
+                when {
+                    focused -> XtreamFocus.fill
+                    selected -> MaterialTheme.colorScheme.primaryContainer
+                    else -> MaterialTheme.colorScheme.surface
+                },
+            )
+            .then(
+                if (focused) Modifier.border(2.dp, XtreamFocus.ring, RoundedCornerShape(8.dp))
+                else Modifier,
             )
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
@@ -914,16 +928,26 @@ private fun ChannelRow(
     onClick: () -> Unit,
     onToggleFavourite: () -> Unit,
 ) {
+    var focused by remember { mutableStateOf(false) }
     val now = System.currentTimeMillis()
-    val background =
-        if (isSelected) MaterialTheme.colorScheme.surfaceVariant
-        else MaterialTheme.colorScheme.background
+    val background = when {
+        focused -> XtreamFocus.fill
+        isSelected -> MaterialTheme.colorScheme.surfaceVariant
+        else -> MaterialTheme.colorScheme.background
+    }
+    val titleColor = if (focused) XtreamFocus.onFill else MaterialTheme.colorScheme.onSurface
+    val metaColor = if (focused) XtreamFocus.onFill.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
             .clip(RoundedCornerShape(10.dp))
             .background(background)
+            .then(
+                if (focused) Modifier.border(2.dp, XtreamFocus.ring, RoundedCornerShape(10.dp))
+                else Modifier,
+            )
             .clickable(onClick = onClick)
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -943,6 +967,7 @@ private fun ChannelRow(
             Text(
                 row.primary.shownName,
                 style = MaterialTheme.typography.titleMedium,
+                color = titleColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -953,7 +978,7 @@ private fun ChannelRow(
                     // the guide is the problem, not their provider.
                     ?: stringResource(R.string.guide_no_info),
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = metaColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -971,7 +996,7 @@ private fun ChannelRow(
                 Text(
                     stringResource(R.string.guide_next_prefix, formatTime(next.startUtcMillis), next.title),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    color = metaColor.copy(alpha = 0.8f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )

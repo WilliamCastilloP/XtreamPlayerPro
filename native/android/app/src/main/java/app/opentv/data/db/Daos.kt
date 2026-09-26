@@ -424,7 +424,8 @@ interface MovieDao {
         """
         SELECT * FROM movies
         WHERE (:categoryId IS NULL OR categoryId = :categoryId)
-        ORDER BY addedMillis DESC, name
+        ORDER BY CASE WHEN year IS NULL OR year < 1900 THEN 0 ELSE year END DESC,
+                 addedMillis DESC, name
         """
     )
     fun observe(categoryId: String?): Flow<List<Movie>>
@@ -539,7 +540,8 @@ interface SeriesDao {
         """
         SELECT * FROM series
         WHERE (:categoryId IS NULL OR categoryId = :categoryId)
-        ORDER BY addedMillis DESC, name
+        ORDER BY CASE WHEN year IS NULL OR year < 1900 THEN 0 ELSE year END DESC,
+                 addedMillis DESC, name
         """
     )
     fun observe(categoryId: String?): Flow<List<Series>>

@@ -55,6 +55,7 @@ import app.opentv.data.model.shownName
 import app.opentv.data.parser.displayTitle
 import app.opentv.ui.ChannelsViewModel
 import app.opentv.ui.VodViewModel
+import app.opentv.ui.theme.XtreamFocus
 import coil.compose.AsyncImage
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -178,9 +179,9 @@ private fun VodResultRow(name: String, posterUrl: String?, subtitle: String?, on
             .fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
             .clip(RoundedCornerShape(10.dp))
-            .background(if (focused) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)
+            .background(if (focused) XtreamFocus.fill else MaterialTheme.colorScheme.surface)
             .then(
-                if (focused) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp))
+                if (focused) Modifier.border(2.dp, XtreamFocus.ring, RoundedCornerShape(10.dp))
                 else Modifier,
             )
             .clickable(onClick = onClick)
@@ -210,9 +211,9 @@ private fun SearchResultRow(row: ChannelsViewModel.Row, onClick: () -> Unit) {
             .fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
             .clip(RoundedCornerShape(10.dp))
-            .background(if (focused) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)
+            .background(if (focused) XtreamFocus.fill else MaterialTheme.colorScheme.surface)
             .then(
-                if (focused) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp))
+                if (focused) Modifier.border(2.dp, XtreamFocus.ring, RoundedCornerShape(10.dp))
                 else Modifier,
             )
             .clickable(onClick = onClick)

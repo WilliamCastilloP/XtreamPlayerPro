@@ -454,6 +454,9 @@
     <string name="vod_no_favourites_movies_desc">Press the star on any movie and it lands here.</string>
     <string name="vod_no_favourites_shows_desc">Press the star on any show and it lands here.</string>
     <string name="vod_watch_now">Watch now</string>
+    <string name="vod_switch_server">Switch server</string>
+    <string name="vod_server_trying">Trying %1$s</string>
+    <string name="vod_server_unstable">This server keeps stalling. Switch to another copy if you have one.</string>
     <string name="vod_resume">Resume</string>
     <string name="vod_addon_sources">Add-on sources</string>
     <string name="vod_addon_pick_title">Choose a stream</string>

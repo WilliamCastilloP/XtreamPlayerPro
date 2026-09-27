@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.18.0
+
+- **VOD/series preload (Netflix-XP).** On a series page, the episode that is in progress is warmed
+  from its saved position; otherwise the first unfinished episode in season order (not "after the
+  highest finished one", so out-of-order viewing still resumes the gap). A finished series is not
+  warmed. Movies use the same in-progress vs new rule, with no next-episode step.
+- **Next episode.** Crossing 70% of a chapter preloads the next target, after a ranged throughput
+  probe against that file's own server. The probe is skipped when the link is slower than the
+  bitrate with margin, and the download is cancelled if the active buffer falls under 8s.
+- **Adaptive buffer.** Target length follows throughput ÷ bitrate, clamped to 15–50s. Live TV
+  keeps the previous pool. A short rebuffer burst opens a circuit breaker and tries the next
+  quality/server copy instead of restarting in a loop.
+- **Local log.** `vod-session-log.txt` records title, episode, server (credentials stripped),
+  throughput and rebuffer count. Overlay-installs over 0.16.1+.
+
 ## 0.17.1
 
 - **Focus is purple.** The remote highlight was the same mint as a selected chip, so a focused

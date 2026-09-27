@@ -58,6 +58,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -92,6 +93,15 @@ import app.opentv.core.ServiceLocator
 import app.opentv.core.SleepTimer
 import app.opentv.core.findActivity
 import app.opentv.player.PlayerController
+import app.opentv.player.vod.RebufferBreaker
+import app.opentv.player.vod.VodBufferMath
+import app.opentv.player.vod.VodPlaybackExtras
+import app.opentv.player.vod.VodPlaybackTuning
+import app.opentv.player.vod.VodResumePlanner
+import app.opentv.player.vod.VodServerFailover
+import app.opentv.player.vod.VodServerOption
+import app.opentv.player.vod.VodStreamLog
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -139,8 +149,17 @@ fun VodPlayerScreen(
                 app.opentv.player.GrowingRecordingDataSource.Factory(context.applicationContext),
             liveRecording = growingRec,
             vod = !growingRec,
+            vodCache = if (growingRec) null else graph.vodCache,
         )
     }
+    var playUrl by remember(mediaKey) { mutableStateOf(streamUrl) }
+    val breaker = remember(mediaKey) { RebufferBreaker() }
+    var rebuffers by remember(mediaKey) { mutableIntStateOf(0) }
+    var seenReady by remember(mediaKey) { mutableStateOf(false) }
+    var nextArmed by remember(mediaKey) { mutableStateOf(false) }
+    var serverNote by remember(mediaKey) { mutableStateOf<String?>(null) }
+    var alternates by remember(mediaKey) { mutableStateOf<List<VodServerOption>>(emptyList()) }
+    val triedUrls = remember(mediaKey) { mutableSetOf<String>() }
     // Skip forward/back within the recorded portion. For a growing recording ExoPlayer won't report
     // the item as seekable (no fixed length), so we seek directly, clamped to what's on disk.
     fun seekRelative(deltaMs: Long) {
@@ -194,6 +213,20 @@ fun VodPlayerScreen(
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             view.keepScreenOn = false
             scope.launch { savePosition() }
+            if (!growingRec) {
+                graph.vodPreloader.notePlayback(null, 0L)
+                graph.vodSessionLog.append(
+                    VodStreamLog.Event(
+                        atMillis = System.currentTimeMillis(),
+                        title = title,
+                        episode = mediaKey,
+                        server = VodStreamLog.describeServer(playUrl),
+                        throughputBps = graph.vodPreloader.rememberedThroughput(playUrl),
+                        rebuffers = rebuffers,
+                        note = "session end",
+                    ),
+                )
+            }
             controller.release()
             scope.cancel()
         }
@@ -202,9 +235,20 @@ fun VodPlayerScreen(
     LaunchedEffect(mediaKey) {
         val resumeFrom = graph.playbackPositions.get(settings.activeProfileId.value, mediaKey)
             ?.takeIf { !it.isFinished }?.positionMillis ?: 0L
+        if (!growingRec) {
+            controller.allowVodRetries()
+            graph.vodPreloader.stopForPlayback()
+            graph.vodPreloader.rememberedThroughput(playUrl)?.takeIf { it > 0L }?.let { bps ->
+                controller.setVodBufferPolicy(
+                    VodBufferMath.policyFor(bps, VodPlaybackTuning.ASSUMED_BITRATE_BPS),
+                )
+            }
+            alternates = graph.catalogRepository.serverOptionsFor(mediaKey, VodPlaybackExtras.options)
+            VodPlaybackExtras.options = emptyList()
+        }
         controller.play(
             PlayerController.Request(
-                url = streamUrl,
+                url = playUrl,
                 title = title,
                 userAgent = userAgent,
                 startPositionMillis = resumeFrom,
@@ -238,7 +282,70 @@ fun VodPlayerScreen(
                 durationMs = if (growingRec) controller.player.bufferedPosition.coerceAtLeast(0)
                 else controller.player.duration.takeIf { it > 0 } ?: 0
             }
+            if (!growingRec && durationMs > 0L) {
+                val ahead = (controller.player.bufferedPosition - positionMs).coerceAtLeast(0L)
+                graph.vodPreloader.notePlayback(playUrl, ahead)
+                val bitrate = selectedVideoBitrate(tracks).takeIf { it > 0 }
+                    ?: VodPlaybackTuning.ASSUMED_BITRATE_BPS.toInt()
+                graph.vodPreloader.rememberedThroughput(playUrl)?.takeIf { it > 0L }?.let { bps ->
+                    controller.setVodBufferPolicy(VodBufferMath.policyFor(bps, bitrate.toLong()))
+                }
+                val fraction = positionMs.toDouble() / durationMs
+                if (ahead >= VodPlaybackTuning.HEALTHY_BUFFER_MS) {
+                    graph.vodPreloader.sampleWhenHealthy(playUrl, userAgent)
+                }
+                if (!nextArmed &&
+                    mediaKey.startsWith("ep:") &&
+                    fraction >= VodPlaybackTuning.NEXT_EPISODE_FRACTION_START &&
+                    fraction < VodPlaybackTuning.NEXT_EPISODE_FRACTION_END
+                ) {
+                    nextArmed = true
+                    scope.launch {
+                        preloadNextEpisode(
+                            graph, settings.activeProfileId.value, mediaKey, userAgent, bitrate.toLong(),
+                        )
+                    }
+                }
+            }
             delay(500)
+        }
+    }
+
+    LaunchedEffect(state, mediaKey) {
+        if (growingRec) return@LaunchedEffect
+        when (state) {
+            is PlayerController.State.Playing -> seenReady = true
+            is PlayerController.State.Buffering -> if (seenReady) {
+                rebuffers++
+                val now = System.currentTimeMillis()
+                val opened = breaker.onRebuffer(now)
+                graph.vodSessionLog.append(
+                    VodStreamLog.Event(
+                        atMillis = now,
+                        title = title,
+                        episode = mediaKey,
+                        server = VodStreamLog.describeServer(playUrl),
+                        throughputBps = graph.vodPreloader.rememberedThroughput(playUrl),
+                        rebuffers = rebuffers,
+                        note = if (opened) "circuit open" else "rebuffer",
+                    ),
+                )
+                if (opened) {
+                    controller.haltVodRetries()
+                    val next = VodServerFailover.next(playUrl, alternates, triedUrls)
+                    if (next != null) {
+                        triedUrls.add(playUrl)
+                        triedUrls.add(next.url)
+                        seenReady = false
+                        playUrl = next.url
+                        serverNote = next.label
+                        controller.playUrl(next.url)
+                    } else {
+                        serverNote = ""
+                    }
+                }
+            }
+            else -> Unit
         }
     }
 
@@ -382,6 +489,28 @@ fun VodPlayerScreen(
                         )
                     }
                     Spacer(Modifier.height(4.dp))
+                }
+                if (!growingRec && serverNote != null) {
+                    Text(
+                        if (serverNote!!.isEmpty()) stringResource(R.string.vod_server_unstable)
+                        else stringResource(R.string.vod_server_trying, serverNote!!),
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    val manual = VodServerFailover.next(playUrl, alternates, triedUrls)
+                    if (manual != null) {
+                        Spacer(Modifier.height(8.dp))
+                        VodChip(Icons.Filled.PlayArrow, stringResource(R.string.vod_switch_server)) {
+                            triedUrls.add(playUrl)
+                            triedUrls.add(manual.url)
+                            seenReady = false
+                            playUrl = manual.url
+                            serverNote = manual.label
+                            controller.playUrl(manual.url)
+                            interaction++
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
                 }
                 Text(title, style = MaterialTheme.typography.headlineSmall, color = Color.White)
                 Spacer(Modifier.height(8.dp))
@@ -552,6 +681,45 @@ private fun vodTrackLabel(label: String?, language: String?, index: Int): String
         return runCatching { java.util.Locale(language).displayLanguage.ifBlank { language } }.getOrDefault(language)
     }
     return "Track ${index + 1}"
+}
+
+@OptIn(androidx.media3.common.util.UnstableApi::class)
+private fun selectedVideoBitrate(tracks: Tracks): Int {
+    for (group in tracks.groups) {
+        if (group.type != C.TRACK_TYPE_VIDEO) continue
+        for (i in 0 until group.length) {
+            if (!group.isTrackSelected(i)) continue
+            val bitrate = group.getTrackFormat(i).bitrate
+            if (bitrate > 0) return bitrate
+        }
+    }
+    return 0
+}
+
+private suspend fun preloadNextEpisode(
+    graph: ServiceLocator.Graph,
+    profileId: Long,
+    mediaKey: String,
+    userAgent: String,
+    bitrateBps: Long,
+) {
+    val id = mediaKey.removePrefix("ep:").toLongOrNull() ?: return
+    val current = graph.catalogRepository.episode(id) ?: return
+    val episodes = graph.catalogRepository.observeEpisodes(current.sourceId, current.seriesId).first()
+    val marks = graph.playbackPositions.forProfile(profileId).map {
+        VodResumePlanner.WatchMark(it.mediaKey, it.positionMillis, it.durationMillis, it.updatedAtMillis)
+    }
+    val candidates = episodes.map {
+        VodResumePlanner.EpisodeCandidate(
+            mediaKey = "ep:${it.id}",
+            season = it.season,
+            episodeNumber = it.episodeNumber,
+            title = "S${it.season}E${it.episodeNumber} · ${it.title}",
+            streamUrl = it.streamUrl,
+        )
+    }
+    val target = VodResumePlanner.nextAfter(mediaKey, candidates, marks) ?: return
+    graph.vodPreloader.preload(target, userAgent, bitrateBps)
 }
 
 private fun formatDuration(ms: Long): String {

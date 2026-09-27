@@ -405,6 +405,9 @@
     <string name="vod_no_favourites_movies_desc">Presiona la estrella en cualquier película y aparecerá aquí.</string>
     <string name="vod_no_favourites_shows_desc">Presiona la estrella en cualquier serie y aparecerá aquí.</string>
     <string name="vod_watch_now">Ver ahora</string>
+    <string name="vod_switch_server">Cambiar servidor</string>
+    <string name="vod_server_trying">Probando %1$s</string>
+    <string name="vod_server_unstable">Este servidor se corta seguido. Cambia a otra copia si hay una.</string>
     <string name="vod_resume">Reanudar</string>
     <string name="vod_addon_sources">Fuentes de complementos</string>
     <string name="vod_addon_pick_title">Elige una transmisión</string>

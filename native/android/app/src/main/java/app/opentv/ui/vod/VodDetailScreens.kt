@@ -42,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -57,6 +58,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.opentv.R
+import app.opentv.core.ServiceLocator
+import app.opentv.data.model.Source
+import app.opentv.player.vod.VodPlaybackExtras
+import app.opentv.player.vod.VodResumePlanner
+import app.opentv.player.vod.VodServerOption
 import app.opentv.data.model.Episode
 import app.opentv.data.model.Movie
 import app.opentv.data.model.Series
@@ -75,6 +81,7 @@ import kotlinx.coroutines.launch
  * enriches the row from the provider (backdrop/cast/genre) if those fields are still bare, so a card
  * that was plain in a grid fills out here.
  */
+@OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun MovieDetailScreen(
     movieId: Long,
@@ -88,6 +95,7 @@ fun MovieDetailScreen(
     var moreLike by remember(movieId) { mutableStateOf<List<Movie>>(emptyList()) }
     var resumeExists by remember(movieId) { mutableStateOf(false) }
     val playFocus = remember { FocusRequester() }
+    val context = LocalContext.current
     val hasAddons by viewModel.hasAddons.collectAsState()
     val scope = rememberCoroutineScope()
     // null = the add-on picker is closed; a (possibly empty) list = show it. Separate flag for the spinner.
@@ -111,6 +119,19 @@ fun MovieDetailScreen(
         runCatching { playFocus.requestFocus() }
     }
 
+    // Warm the in-progress point, or the start of a new film. Nothing is playing on this page,
+    // so the preload holds one connection and closes it. Live TV never reaches here.
+    LaunchedEffect(m.id) {
+        val graph = ServiceLocator.get(context)
+        val mark = viewModel.resumePosition("movie:${m.id}")?.let {
+            VodResumePlanner.WatchMark(it.mediaKey, it.positionMillis, it.durationMillis, it.updatedAtMillis)
+        }
+        val target = VodResumePlanner.movieTarget("movie:${m.id}", m.displayTitle, m.streamUrl, mark)
+        val ua = graph.sourceRepository.byId(m.sourceId)?.userAgent ?: Source.DEFAULT_USER_AGENT
+        if (target == null) graph.vodPreloader.cancel()
+        else graph.vodPreloader.preload(target, ua)
+    }
+
     LazyColumn(Modifier.fillMaxSize()) {
         item(key = "header") {
             DetailBackdrop(title = m.displayTitle, backdropUrl = m.backdropUrl, posterUrl = m.posterUrl, meta = movieMeta(m)) {
@@ -119,7 +140,10 @@ fun MovieDetailScreen(
                     label = stringResource(if (resumeExists) R.string.vod_resume else R.string.vod_watch_now),
                     primary = true,
                     modifier = Modifier.focusRequester(playFocus),
-                ) { onPlay(m) }
+                ) {
+                    VodPlaybackExtras.options = emptyList()
+                    onPlay(m)
+                }
                 DetailButton(
                     icon = if (m.favourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
                     label = stringResource(if (m.favourite) R.string.common_remove_favourite else R.string.common_favourite),
@@ -164,6 +188,9 @@ fun MovieDetailScreen(
             loading = addonLoading,
             streams = addonStreams.orEmpty(),
             onPick = { stream ->
+                VodPlaybackExtras.options = addonStreams.orEmpty()
+                    .filter { it.url != stream.url }
+                    .map { VodServerOption(it.title.ifBlank { it.addonName }, it.url) }
                 addonStreams = null
                 onPlayUrl("movie:${m.id}", stream.url, m.displayTitle)
             },
@@ -257,6 +284,7 @@ private fun AddonStreamRow(stream: StremioStream, onPick: (StremioStream) -> Uni
  * are fetched on demand — pulling every episode of every series up front is what makes a first sync
  * take twenty minutes on a large provider, and most of it is never looked at.
  */
+@OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun SeriesDetailScreen(
     seriesId: Long,
@@ -268,6 +296,7 @@ fun SeriesDetailScreen(
     var series by remember(seriesId) { mutableStateOf<Series?>(null) }
     var moreLike by remember(seriesId) { mutableStateOf<List<Series>>(emptyList()) }
     val favFocus = remember { FocusRequester() }
+    val context = LocalContext.current
 
     LaunchedEffect(seriesId) {
         val loaded = viewModel.seriesDetail(seriesId)
@@ -283,6 +312,28 @@ fun SeriesDetailScreen(
         .collectAsState(initial = emptyList())
 
     if (s == null) { LoadingDetail(); return }
+
+    LaunchedEffect(s.id, episodes) {
+        if (episodes.isEmpty()) return@LaunchedEffect
+        val graph = ServiceLocator.get(context)
+        val profileId = graph.settings.activeProfileId.value
+        val marks = graph.playbackPositions.forProfile(profileId).map {
+            VodResumePlanner.WatchMark(it.mediaKey, it.positionMillis, it.durationMillis, it.updatedAtMillis)
+        }
+        val candidates = episodes.map {
+            VodResumePlanner.EpisodeCandidate(
+                mediaKey = "ep:${it.id}",
+                season = it.season,
+                episodeNumber = it.episodeNumber,
+                title = "S${it.season}E${it.episodeNumber} · ${it.title}",
+                streamUrl = it.streamUrl,
+            )
+        }
+        val target = VodResumePlanner.seriesTarget(candidates, marks)
+        val ua = graph.sourceRepository.byId(s.sourceId)?.userAgent ?: Source.DEFAULT_USER_AGENT
+        if (target == null) graph.vodPreloader.cancel()
+        else graph.vodPreloader.preload(target, ua)
+    }
 
     LaunchedEffect(s.id) {
         delay(60)

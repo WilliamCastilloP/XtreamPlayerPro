@@ -16,6 +16,8 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.HttpDataSource
+import androidx.media3.datasource.cache.Cache
+import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -23,6 +25,9 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
+import app.opentv.data.model.Source
+import app.opentv.player.vod.TunableVodLoadControl
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -31,7 +36,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
-import app.opentv.data.model.Source
 
 /**
  * Owns the single [ExoPlayer] instance and everything about switching what it is playing.
@@ -91,6 +95,11 @@ class PlayerController(
      * Ignored when [liveRecording] is on.
      */
     private val vod: Boolean = false,
+    /**
+     * Disk cache shared with the VOD preloader. Null on Live TV, the preview, and recordings —
+     * those players must not read or write the movie cache.
+     */
+    private val vodCache: Cache? = null,
 ) {
 
     /** Channel-surf debounce for this controller — longer for the preview so browsing is calm. */
@@ -124,6 +133,12 @@ class PlayerController(
     private var current: Request? = null
     private var consecutiveFailures = 0
 
+    /** VOD only. Live never writes this, and [buildLoadControl] stays the live pool. */
+    private val vodPolicy = AtomicReference(PlaybackBuffers.vod())
+
+    /** Set when the VOD rebuffer breaker trips so we stop the silent restart loop. */
+    @Volatile private var vodHaltRetries = false
+
     /**
      * Held so the User-Agent can be swapped per source before each tune.
      *
@@ -136,13 +151,27 @@ class PlayerController(
         setDefaultRequestProperties(mapOf("User-Agent" to DEFAULT_USER_AGENT))
     }
 
-    private val dataSourceFactory: androidx.media3.datasource.DataSource.Factory =
+    private val upstreamDataSourceFactory: androidx.media3.datasource.DataSource.Factory =
         DefaultDataSource.Factory(context, httpFactory).let { default ->
             val custom = buildMap<String, androidx.media3.datasource.DataSource.Factory> {
                 if (smbDataSourceFactory != null) put("smb", smbDataSourceFactory)
                 if (growingDataSourceFactory != null) put("optvrec", growingDataSourceFactory)
             }
             if (custom.isEmpty()) default else RoutingDataSourceFactory(default, custom)
+        }
+
+    /**
+     * Live and recordings use [upstreamDataSourceFactory] unchanged. Movies and episodes read
+     * through the preload cache when one was supplied, and ignore it if a span is corrupt.
+     */
+    private val dataSourceFactory: androidx.media3.datasource.DataSource.Factory =
+        if (vod && vodCache != null) {
+            CacheDataSource.Factory()
+                .setCache(vodCache)
+                .setUpstreamDataSourceFactory(upstreamDataSourceFactory)
+                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+        } else {
+            upstreamDataSourceFactory
         }
 
     /**
@@ -167,7 +196,8 @@ class PlayerController(
             }
         }
 
-        override fun getMinimumLoadableRetryCount(dataType: Int): Int = MAX_LOAD_RETRIES
+        override fun getMinimumLoadableRetryCount(dataType: Int): Int =
+            if (vodHaltRetries) 1 else MAX_LOAD_RETRIES
 
         private fun backoffFor(errorCount: Int): Long =
             if (errorCount > MAX_LOAD_RETRIES) C_TIME_UNSET
@@ -198,7 +228,7 @@ class PlayerController(
         )
         .setTrackSelector(trackSelector)
         .setWakeMode(C.WAKE_MODE_NETWORK)
-        .setLoadControl(buildLoadControl())
+        .setLoadControl(if (vod) TunableVodLoadControl(vodPolicy) else buildLoadControl())
         .build()
         .apply {
             addListener(object : Player.Listener {
@@ -230,7 +260,7 @@ class PlayerController(
                     )
                     // One silent restart covers the common case of a provider dropping the
                     // connection when another device on the account starts streaming.
-                    if (consecutiveFailures < MAX_AUTO_RESTARTS && request != null) {
+                    if (!vodHaltRetries && consecutiveFailures < MAX_AUTO_RESTARTS && request != null) {
                         scope.launch {
                             delay(AUTO_RESTART_DELAY_MILLIS)
                             if (current == request) play(request, debounce = false)
@@ -288,7 +318,33 @@ class PlayerController(
     }
 
     fun retry() {
+        allowVodRetries()
         current?.let { play(it, debounce = false) }
+    }
+
+    /** A new movie or episode may retry again. The breaker sets [haltVodRetries] later if it must. */
+    fun allowVodRetries() {
+        vodHaltRetries = false
+    }
+
+    /**
+     * Movies and episodes only. Replaces the VOD buffer target from a throughput sample.
+     * Live calls are ignored so a channel change keeps [PlaybackBuffers.live].
+     */
+    internal fun setVodBufferPolicy(policy: BufferPolicy) {
+        if (!vod) return
+        vodPolicy.set(policy)
+    }
+
+    /** Stop the silent restart loop after the VOD rebuffer breaker opens. No effect on Live. */
+    fun haltVodRetries() {
+        if (!vod) return
+        vodHaltRetries = true
+    }
+
+    fun playUrl(url: String) {
+        val request = current ?: return
+        play(request.copy(url = url), debounce = false)
     }
 
     /**

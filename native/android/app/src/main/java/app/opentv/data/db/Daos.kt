@@ -510,6 +510,19 @@ interface MovieDao {
     )
     suspend fun moviesByDirector(name: String, limit: Int): List<Movie>
 
+    /**
+     * Other copies whose title contains [token] — used to find HD/SD siblings of one film when a
+     * VOD server fails. Bounded so a huge catalogue is not loaded to switch one movie.
+     */
+    @Query(
+        """
+        SELECT * FROM movies
+        WHERE sourceId = :sourceId AND id != :excludeId AND name LIKE '%' || :token || '%'
+        LIMIT 20
+        """
+    )
+    suspend fun withTitleToken(sourceId: Long, excludeId: Long, token: String): List<Movie>
+
     @Query("SELECT * FROM movies WHERE id = :id")
     suspend fun byId(id: Long): Movie?
 

@@ -17,6 +17,7 @@ import app.opentv.data.db.SourceDao
 import app.opentv.data.model.Category
 import app.opentv.data.model.Channel
 import app.opentv.data.model.Episode
+import app.opentv.player.vod.VodServerOption
 import app.opentv.data.model.LiveStreamFormat
 import app.opentv.data.model.Movie
 import app.opentv.data.model.Series
@@ -82,6 +83,23 @@ private val VOD_YEAR = Regex("""\b(19|20)\d{2}\b""")
 
 /** How many titles the home shelves / more-like-this scan. The whole table on a Stick is an OOM. */
 internal const val HOME_FEED_SAMPLE = 1_200
+
+/** Quality copies of one film, plus any add-on URLs, as failover targets. */
+internal fun movieServerOptions(
+    movie: Movie,
+    siblings: List<Movie>,
+    extras: List<VodServerOption>,
+): List<VodServerOption> {
+    val group = collapseMovieVariants(siblings + movie)
+        .firstOrNull { g -> g.variants.any { it.movie.id == movie.id } }
+    val fromCatalog = group?.variants.orEmpty().map { variant ->
+        val label = variant.qualityLabel.ifBlank {
+            runCatching { java.net.URI(variant.movie.streamUrl).host }.getOrNull() ?: variant.movie.name
+        }
+        VodServerOption(label = label, url = variant.movie.streamUrl)
+    }
+    return (fromCatalog + extras).distinctBy { it.url }
+}
 
 /**
  * Collapses obvious quality variants of the same film — "The Godfather 1972 HD" and
@@ -521,6 +539,21 @@ class CatalogRepository(
      * show. Kept here as the discoverable entry point for the VOD UI.
      */
     fun collapseVariants(movies: List<Movie>): List<MovieVariantGroup> = collapseMovieVariants(movies)
+
+    /**
+     * Playable copies of a movie: catalogue quality siblings plus any add-on URLs already loaded.
+     * Episodes have a single panel URL, so a series key returns [extras] only.
+     */
+    suspend fun serverOptionsFor(mediaKey: String, extras: List<VodServerOption>): List<VodServerOption> {
+        val parts = mediaKey.split(":", limit = 2)
+        if (parts.size != 2 || parts[0] != "movie") return extras.distinctBy { it.url }
+        val id = parts[1].toLongOrNull() ?: return extras
+        val movie = movieDao.byId(id) ?: return extras
+        val token = ChannelNameNormalizer.normalize(VOD_YEAR.replace(movie.name, " ")).baseName.trim()
+        val siblings = if (token.length < 6) emptyList()
+        else movieDao.withTitleToken(movie.sourceId, movie.id, token)
+        return movieServerOptions(movie, siblings, extras)
+    }
 
     // -- feed helpers --
 

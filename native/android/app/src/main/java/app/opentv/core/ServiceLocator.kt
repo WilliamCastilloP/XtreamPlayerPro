@@ -3,6 +3,8 @@
  * Copyright (C) 2026 The OpenTV Contributors
  * Licensed under the GNU General Public License v3.0 or later.
  */
+@file:OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package app.opentv.core
 
 import android.content.Context
@@ -15,8 +17,19 @@ import app.opentv.data.repo.EpgRepository
 import app.opentv.data.repo.RecordingRepository
 import app.opentv.data.repo.ReminderRepository
 import app.opentv.data.repo.SourceRepository
+import app.opentv.player.vod.StreamThroughputProbe
+import app.opentv.player.vod.VodPlaybackTuning
+import app.opentv.player.vod.VodPreloader
+import app.opentv.player.vod.VodStreamLog
 import app.opentv.recording.RecordingEngine
+import androidx.media3.datasource.cache.Cache
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.SimpleCache
+import java.io.File
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
 
 /**
@@ -86,6 +99,32 @@ object ServiceLocator {
             streamingHttpClient.newBuilder()
                 .readTimeout(120, TimeUnit.SECONDS)
                 .build()
+        }
+
+        /**
+         * Disk cache for movie/episode preloads. Live playback never receives this instance.
+         * A failed open disables preload; the player still starts.
+         */
+        val vodCache: Cache? by lazy {
+            runCatching {
+                val dir = File(appContext.cacheDir, "vod-preload")
+                SimpleCache(dir, LeastRecentlyUsedCacheEvictor(VodPlaybackTuning.CACHE_MAX_BYTES))
+            }.getOrNull()
+        }
+
+        val vodSessionLog: VodStreamLog.Store by lazy {
+            VodStreamLog.Store(File(appContext.filesDir, "vod-session-log.txt"))
+        }
+
+        val vodPreloader: VodPreloader by lazy {
+            VodPreloader(
+                context = appContext,
+                cache = vodCache,
+                httpClient = vodStreamingHttpClient,
+                probe = StreamThroughputProbe(httpClient),
+                log = vodSessionLog,
+                scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+            )
         }
 
         val xtreamApi: XtreamApi by lazy { XtreamApi(httpClient) }

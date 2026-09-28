@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.1
+
+- **Movies and series open again.** 0.18.0's adaptive buffer left Media3's LoadControl defaults
+  in place. Those throw as soon as ExoPlayer is created, so tapping play on a film or episode
+  closed the app. The VOD control now implements the same callbacks DefaultLoadControl does.
+  Live TV was already on DefaultLoadControl and is unchanged.
+
 ## 0.18.0
 
 - **VOD/series preload (Netflix-XP).** On a series page, the episode that is in progress is warmed

@@ -101,12 +101,14 @@ fun MovieDetailScreen(
     // null = the add-on picker is closed; a (possibly empty) list = show it. Separate flag for the spinner.
     var addonStreams by remember(movieId) { mutableStateOf<List<StremioStream>?>(null) }
     var addonLoading by remember(movieId) { mutableStateOf(false) }
+    var languages by remember(movieId) { mutableStateOf<List<String>>(emptyList()) }
 
     LaunchedEffect(movieId) {
         val loaded = viewModel.movieDetail(movieId)
         movie = loaded
         if (loaded != null) {
             resumeExists = viewModel.resumePosition("movie:${loaded.id}")?.let { !it.isFinished } == true
+            launch { languages = viewModel.movieLanguageCodes(loaded.id) }
             moreLike = viewModel.moreLikeThis(loaded)
         }
     }
@@ -172,6 +174,7 @@ fun MovieDetailScreen(
                 cast = m.cast,
                 director = m.director,
                 genre = m.genre,
+                languages = languages,
                 onOpenPerson = onOpenPerson,
             )
         }
@@ -295,6 +298,7 @@ fun SeriesDetailScreen(
 ) {
     var series by remember(seriesId) { mutableStateOf<Series?>(null) }
     var moreLike by remember(seriesId) { mutableStateOf<List<Series>>(emptyList()) }
+    var languages by remember(seriesId) { mutableStateOf<List<String>>(emptyList()) }
     val favFocus = remember { FocusRequester() }
     val context = LocalContext.current
 
@@ -303,6 +307,7 @@ fun SeriesDetailScreen(
         series = loaded
         if (loaded != null) {
             viewModel.loadEpisodes(loaded)
+            launch { languages = viewModel.seriesLanguageCodes(loaded.id) }
             moreLike = viewModel.moreLikeThisSeries(loaded)
         }
     }
@@ -370,6 +375,7 @@ fun SeriesDetailScreen(
                 cast = s.cast,
                 director = null,
                 genre = s.genre,
+                languages = languages,
                 onOpenPerson = onOpenPerson,
             )
         }
@@ -553,6 +559,7 @@ private fun DetailInfo(
     director: String?,
     genre: String?,
     onOpenPerson: (String) -> Unit,
+    languages: List<String> = emptyList(),
 ) {
     val genres = remember(genre) { splitNames(genre, ',', '|', '/') }
     val castList = remember(cast) { splitNames(cast, ',') }
@@ -561,6 +568,12 @@ private fun DetailInfo(
     Column(Modifier.fillMaxWidth().padding(vertical = 16.dp)) {
         if (genres.isNotEmpty()) {
             ChipRow(genres.size, key = { genres[it] }) { GenreChip(genres[it]) }
+            Spacer(Modifier.height(16.dp))
+        }
+        if (languages.isNotEmpty()) {
+            SectionLabel(stringResource(R.string.vod_languages))
+            Spacer(Modifier.height(8.dp))
+            ChipRow(languages.size, key = { languages[it] }) { GenreChip(languageLabel(languages[it])) }
             Spacer(Modifier.height(16.dp))
         }
         plot?.takeIf { it.isNotBlank() }?.let { LabeledBlock(stringResource(R.string.vod_synopsis), it) }
@@ -619,6 +632,21 @@ private fun ChipRow(count: Int, key: (Int) -> Any, chip: @Composable (Int) -> Un
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(count, key = key) { chip(it) }
+    }
+}
+
+@Composable
+private fun languageLabel(code: String): String = when (code) {
+    "lat" -> stringResource(R.string.vod_lang_lat)
+    "sub" -> stringResource(R.string.vod_lang_sub)
+    "dub" -> stringResource(R.string.vod_lang_dub)
+    "multi" -> stringResource(R.string.vod_lang_multi)
+    "vo" -> stringResource(R.string.vod_lang_vo)
+    else -> {
+        val locale = java.util.Locale.getDefault()
+        val name = java.util.Locale.forLanguageTag(code).getDisplayLanguage(locale)
+        if (name.isBlank() || name.equals(code, ignoreCase = true)) code.uppercase()
+        else name.replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }
     }
 }
 

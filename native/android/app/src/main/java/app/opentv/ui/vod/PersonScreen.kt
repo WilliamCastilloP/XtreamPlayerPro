@@ -102,9 +102,10 @@ fun PersonScreen(
                                 is PersonTitle.SeriesItem -> PosterCard(
                                     title = item.series.displayTitle,
                                     posterUrl = item.series.posterUrl,
-                                    subtitle = item.series.year?.toString(),
+                                    subtitle = item.series.listedYear?.toString(),
                                     rating = item.series.rating,
                                     favourite = item.series.favourite,
+                                    newEpisodes = item.series.hasNewEpisodes,
                                     onClick = { onOpenSeries(item.series) },
                                 )
                             }

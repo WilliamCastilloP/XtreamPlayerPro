@@ -34,4 +34,6 @@ data class SeriesRowState(
     val cast: String?,
     val genre: String?,
     val tmdbId: String?,
+    /** Newest season year already learned from `get_series_info`. Null until that payload is read. */
+    val contentYear: Int? = null,
 )

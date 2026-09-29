@@ -463,10 +463,17 @@
     <string name="vod_addon_loading">Finding streams from your add-ons…</string>
     <string name="vod_addon_none">No streams found from your add-ons for this title. It needs a TMDB key set (for the IMDb match) and an add-on that has it.</string>
     <string name="vod_more_like_this">More like this</string>
+    <string name="vod_languages">Languages</string>
+    <string name="vod_lang_lat">Latino</string>
+    <string name="vod_lang_sub">Subtitled</string>
+    <string name="vod_lang_dub">Dubbed</string>
+    <string name="vod_lang_multi">Multiple</string>
+    <string name="vod_lang_vo">Original version</string>
     <string name="vod_synopsis">Synopsis</string>
     <string name="vod_cast">Cast</string>
     <string name="vod_director">Director</string>
     <string name="vod_season">Season %1$d</string>
+    <string name="vod_new_episodes">New episodes</string>
     <string name="vod_detail_loading">Loading…</string>
     <string name="vod_person_title">With %1$s</string>
     <string name="vod_person_empty">Nothing else with %1$s in your library.</string>

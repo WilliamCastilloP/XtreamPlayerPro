@@ -553,7 +553,10 @@ interface SeriesDao {
         """
         SELECT * FROM series
         WHERE (:categoryId IS NULL OR categoryId = :categoryId)
-        ORDER BY CASE WHEN year IS NULL OR year < 1900 THEN 0 ELSE year END DESC,
+        ORDER BY CASE
+                   WHEN MAX(IFNULL(contentYear, 0), IFNULL(year, 0)) < 1900 THEN 0
+                   ELSE MAX(IFNULL(contentYear, 0), IFNULL(year, 0))
+                 END DESC,
                  addedMillis DESC, name
         """
     )
@@ -564,7 +567,7 @@ interface SeriesDao {
 
     @Query(
         """
-        SELECT seriesId, id, favourite, posterUrl, plot, backdropUrl, `cast`, genre, tmdbId
+        SELECT seriesId, id, favourite, posterUrl, plot, backdropUrl, `cast`, genre, tmdbId, contentYear
         FROM series WHERE sourceId = :sourceId
         """
     )
@@ -615,6 +618,22 @@ interface SeriesDao {
 
     @Query("SELECT * FROM series WHERE id = :id")
     suspend fun byId(id: Long): Series?
+
+    @Query("SELECT * FROM series WHERE sourceId = :sourceId AND seriesId = :seriesId LIMIT 1")
+    suspend fun byProviderId(sourceId: Long, seriesId: String): Series?
+
+    /**
+     * Remember a newer season year learned from `get_series_info`. Never lowers a year already
+     * stored, and never touches the premiere [app.opentv.data.model.Series.year].
+     */
+    @Query(
+        """
+        UPDATE series SET contentYear = :year
+        WHERE sourceId = :sourceId AND seriesId = :seriesId
+          AND (contentYear IS NULL OR contentYear < :year)
+        """
+    )
+    suspend fun raiseContentYear(sourceId: Long, seriesId: String, year: Int)
 
     @Query("UPDATE series SET favourite = :favourite WHERE id = :id")
     suspend fun setFavourite(id: Long, favourite: Boolean)

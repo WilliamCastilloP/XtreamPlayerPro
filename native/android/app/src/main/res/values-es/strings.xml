@@ -414,10 +414,17 @@
     <string name="vod_addon_loading">Buscando transmisiones en tus complementos…</string>
     <string name="vod_addon_none">No se encontraron transmisiones de tus complementos para este título. Se necesita una clave TMDB configurada (para la coincidencia con IMDb) y un complemento que la tenga.</string>
     <string name="vod_more_like_this">Más como esto</string>
+    <string name="vod_languages">Idiomas</string>
+    <string name="vod_lang_lat">Latino</string>
+    <string name="vod_lang_sub">Subtitulada</string>
+    <string name="vod_lang_dub">Doblada</string>
+    <string name="vod_lang_multi">Varios</string>
+    <string name="vod_lang_vo">Versión original</string>
     <string name="vod_synopsis">Sinopsis</string>
     <string name="vod_cast">Reparto</string>
     <string name="vod_director">Director</string>
     <string name="vod_season">Temporada %1$d</string>
+    <string name="vod_new_episodes">Nuevos episodios</string>
     <string name="vod_detail_loading">Cargando…</string>
     <string name="vod_person_title">Con %1$s</string>
     <string name="vod_person_empty">No hay nada más con %1$s en tu biblioteca.</string>

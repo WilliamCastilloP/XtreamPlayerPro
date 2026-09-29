@@ -54,6 +54,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -101,12 +102,14 @@ fun MovieDetailScreen(
     // null = the add-on picker is closed; a (possibly empty) list = show it. Separate flag for the spinner.
     var addonStreams by remember(movieId) { mutableStateOf<List<StremioStream>?>(null) }
     var addonLoading by remember(movieId) { mutableStateOf(false) }
+    var languages by remember(movieId) { mutableStateOf<List<String>>(emptyList()) }
 
     LaunchedEffect(movieId) {
         val loaded = viewModel.movieDetail(movieId)
         movie = loaded
         if (loaded != null) {
             resumeExists = viewModel.resumePosition("movie:${loaded.id}")?.let { !it.isFinished } == true
+            launch { languages = viewModel.movieLanguageCodes(loaded.id) }
             moreLike = viewModel.moreLikeThis(loaded)
         }
     }
@@ -172,6 +175,7 @@ fun MovieDetailScreen(
                 cast = m.cast,
                 director = m.director,
                 genre = m.genre,
+                languages = languages,
                 onOpenPerson = onOpenPerson,
             )
         }
@@ -295,6 +299,7 @@ fun SeriesDetailScreen(
 ) {
     var series by remember(seriesId) { mutableStateOf<Series?>(null) }
     var moreLike by remember(seriesId) { mutableStateOf<List<Series>>(emptyList()) }
+    var languages by remember(seriesId) { mutableStateOf<List<String>>(emptyList()) }
     val favFocus = remember { FocusRequester() }
     val context = LocalContext.current
 
@@ -302,8 +307,15 @@ fun SeriesDetailScreen(
         val loaded = viewModel.seriesDetail(seriesId)
         series = loaded
         if (loaded != null) {
-            viewModel.loadEpisodes(loaded)
+            launch { languages = viewModel.seriesLanguageCodes(loaded.id) }
             moreLike = viewModel.moreLikeThisSeries(loaded)
+            val year = viewModel.refreshSeriesEpisodes(loaded)
+            if (year != null) {
+                series = series?.let { current ->
+                    if (current.id != loaded.id) current
+                    else current.copy(contentYear = listOfNotNull(current.contentYear, year).maxOrNull())
+                }
+            }
         }
     }
 
@@ -352,7 +364,13 @@ fun SeriesDetailScreen(
 
     LazyColumn(Modifier.fillMaxSize()) {
         item(key = "header") {
-            DetailBackdrop(title = s.displayTitle, backdropUrl = s.backdropUrl, posterUrl = s.posterUrl, meta = seriesMeta(s)) {
+            DetailBackdrop(
+                title = s.displayTitle,
+                backdropUrl = s.backdropUrl,
+                posterUrl = s.posterUrl,
+                meta = seriesMeta(s),
+                newEpisodes = s.hasNewEpisodes,
+            ) {
                 DetailButton(
                     icon = if (s.favourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
                     label = stringResource(if (s.favourite) R.string.common_remove_favourite else R.string.common_favourite),
@@ -370,6 +388,7 @@ fun SeriesDetailScreen(
                 cast = s.cast,
                 director = null,
                 genre = s.genre,
+                languages = languages,
                 onOpenPerson = onOpenPerson,
             )
         }
@@ -427,6 +446,7 @@ private fun DetailBackdrop(
     backdropUrl: String?,
     posterUrl: String?,
     meta: String,
+    newEpisodes: Boolean = false,
     actions: @Composable RowScope.() -> Unit,
 ) {
     Box(
@@ -477,6 +497,19 @@ private fun DetailBackdrop(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (newEpisodes) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        stringResource(R.string.vod_new_episodes),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.primary)
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                    )
+                }
                 if (meta.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
                     Text(meta, style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = 0.85f))
@@ -553,6 +586,7 @@ private fun DetailInfo(
     director: String?,
     genre: String?,
     onOpenPerson: (String) -> Unit,
+    languages: List<String> = emptyList(),
 ) {
     val genres = remember(genre) { splitNames(genre, ',', '|', '/') }
     val castList = remember(cast) { splitNames(cast, ',') }
@@ -561,6 +595,12 @@ private fun DetailInfo(
     Column(Modifier.fillMaxWidth().padding(vertical = 16.dp)) {
         if (genres.isNotEmpty()) {
             ChipRow(genres.size, key = { genres[it] }) { GenreChip(genres[it]) }
+            Spacer(Modifier.height(16.dp))
+        }
+        if (languages.isNotEmpty()) {
+            SectionLabel(stringResource(R.string.vod_languages))
+            Spacer(Modifier.height(8.dp))
+            ChipRow(languages.size, key = { languages[it] }) { GenreChip(languageLabel(languages[it])) }
             Spacer(Modifier.height(16.dp))
         }
         plot?.takeIf { it.isNotBlank() }?.let { LabeledBlock(stringResource(R.string.vod_synopsis), it) }
@@ -619,6 +659,21 @@ private fun ChipRow(count: Int, key: (Int) -> Any, chip: @Composable (Int) -> Un
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(count, key = key) { chip(it) }
+    }
+}
+
+@Composable
+private fun languageLabel(code: String): String = when (code) {
+    "lat" -> stringResource(R.string.vod_lang_lat)
+    "sub" -> stringResource(R.string.vod_lang_sub)
+    "dub" -> stringResource(R.string.vod_lang_dub)
+    "multi" -> stringResource(R.string.vod_lang_multi)
+    "vo" -> stringResource(R.string.vod_lang_vo)
+    else -> {
+        val locale = java.util.Locale.getDefault()
+        val name = java.util.Locale.forLanguageTag(code).getDisplayLanguage(locale)
+        if (name.isBlank() || name.equals(code, ignoreCase = true)) code.uppercase()
+        else name.replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }
     }
 }
 

@@ -102,6 +102,64 @@ class VodSyncMergeTest {
         assertThat(merged.genre).isEqualTo("Drama")
     }
 
+    @Test
+    fun `series refresh keeps a content year the list did not send`() {
+        val incoming = Series(
+            sourceId = 1,
+            seriesId = "s1",
+            name = "Show",
+            categoryId = "5",
+            posterUrl = null,
+            rating = null,
+            year = 2025,
+            plot = null,
+        )
+        val existing = SeriesRowState(
+            seriesId = "s1",
+            id = 7L,
+            favourite = false,
+            posterUrl = null,
+            plot = null,
+            backdropUrl = null,
+            cast = null,
+            genre = null,
+            tmdbId = null,
+            contentYear = 2026,
+        )
+
+        assertThat(VodSyncMerge.series(incoming, existing).contentYear).isEqualTo(2026)
+        assertThat(VodSyncMerge.series(incoming, existing).year).isEqualTo(2025)
+    }
+
+    @Test
+    fun `a newer content year from the list replaces an older one`() {
+        val incoming = Series(
+            sourceId = 1,
+            seriesId = "s1",
+            name = "Show",
+            categoryId = "5",
+            posterUrl = null,
+            rating = null,
+            year = 2025,
+            plot = null,
+            contentYear = 2026,
+        )
+        val existing = SeriesRowState(
+            seriesId = "s1",
+            id = 7L,
+            favourite = false,
+            posterUrl = null,
+            plot = null,
+            backdropUrl = null,
+            cast = null,
+            genre = null,
+            tmdbId = null,
+            contentYear = 2025,
+        )
+
+        assertThat(VodSyncMerge.series(incoming, existing).contentYear).isEqualTo(2026)
+    }
+
     private fun movie(
         streamId: String,
         id: Long = 0,

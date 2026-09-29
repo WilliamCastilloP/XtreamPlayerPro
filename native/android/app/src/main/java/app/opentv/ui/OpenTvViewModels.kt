@@ -1127,11 +1127,13 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
      * Pulling every episode of every series up front is what makes a first sync take twenty
      * minutes on a large provider, and most of it is never looked at.
      */
-    fun loadEpisodes(series: Series) {
-        viewModelScope.launch {
-            val source = graph.sourceRepository.byId(series.sourceId) ?: return@launch
-            graph.catalogRepository.ensureEpisodes(source, series.seriesId)
-        }
+    /**
+     * Fetches episodes and returns the newest season year from that same payload, or null when
+     * the panel sent no air dates. The year is persisted so the category can file the show later.
+     */
+    suspend fun refreshSeriesEpisodes(series: Series): Int? {
+        val source = graph.sourceRepository.byId(series.sourceId) ?: return null
+        return graph.catalogRepository.ensureEpisodes(source, series.seriesId)
     }
 
     fun episodes(series: Series) =

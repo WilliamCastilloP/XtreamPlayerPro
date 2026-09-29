@@ -424,6 +424,7 @@
     <string name="vod_cast">Reparto</string>
     <string name="vod_director">Director</string>
     <string name="vod_season">Temporada %1$d</string>
+    <string name="vod_new_episodes">Nuevos episodios</string>
     <string name="vod_detail_loading">Cargando…</string>
     <string name="vod_person_title">Con %1$s</string>
     <string name="vod_person_empty">No hay nada más con %1$s en tu biblioteca.</string>

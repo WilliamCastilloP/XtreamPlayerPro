@@ -54,6 +54,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -306,9 +307,15 @@ fun SeriesDetailScreen(
         val loaded = viewModel.seriesDetail(seriesId)
         series = loaded
         if (loaded != null) {
-            viewModel.loadEpisodes(loaded)
             launch { languages = viewModel.seriesLanguageCodes(loaded.id) }
             moreLike = viewModel.moreLikeThisSeries(loaded)
+            val year = viewModel.refreshSeriesEpisodes(loaded)
+            if (year != null) {
+                series = series?.let { current ->
+                    if (current.id != loaded.id) current
+                    else current.copy(contentYear = listOfNotNull(current.contentYear, year).maxOrNull())
+                }
+            }
         }
     }
 
@@ -357,7 +364,13 @@ fun SeriesDetailScreen(
 
     LazyColumn(Modifier.fillMaxSize()) {
         item(key = "header") {
-            DetailBackdrop(title = s.displayTitle, backdropUrl = s.backdropUrl, posterUrl = s.posterUrl, meta = seriesMeta(s)) {
+            DetailBackdrop(
+                title = s.displayTitle,
+                backdropUrl = s.backdropUrl,
+                posterUrl = s.posterUrl,
+                meta = seriesMeta(s),
+                newEpisodes = s.hasNewEpisodes,
+            ) {
                 DetailButton(
                     icon = if (s.favourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
                     label = stringResource(if (s.favourite) R.string.common_remove_favourite else R.string.common_favourite),
@@ -433,6 +446,7 @@ private fun DetailBackdrop(
     backdropUrl: String?,
     posterUrl: String?,
     meta: String,
+    newEpisodes: Boolean = false,
     actions: @Composable RowScope.() -> Unit,
 ) {
     Box(
@@ -483,6 +497,19 @@ private fun DetailBackdrop(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (newEpisodes) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        stringResource(R.string.vod_new_episodes),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.primary)
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                    )
+                }
                 if (meta.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
                     Text(meta, style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = 0.85f))

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.3
+
+- **New episodes.** Opening a series reads the season and episode air dates the panel already sends. A 2025 show that added a season in 2026 gets a small “New episodes” banner, and the category files it with 2026. The premiere year stays on the detail page. A show you have not opened yet stays on its premiere year — reading every series would be one request per title.
+
 ## 0.18.2
 
 - **Poster focus no longer shoves the row.** Cards keep a fixed size. The purple ring is drawn in a gutter that is always there, so moving between titles does not grow the card or shift its neighbours.

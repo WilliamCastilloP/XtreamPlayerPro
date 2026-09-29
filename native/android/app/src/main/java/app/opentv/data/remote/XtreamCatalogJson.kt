@@ -8,6 +8,7 @@ package app.opentv.data.remote
 import app.opentv.data.model.Movie
 import app.opentv.data.model.Series
 import app.opentv.data.model.Source
+import app.opentv.data.parser.SeriesContentYear
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
@@ -104,6 +105,7 @@ object XtreamCatalogJson {
             cast = obj["cast"].asStringOrNull ?: obj["actors"].asStringOrNull,
             genre = obj["genre"].asStringOrNull,
             tmdbId = obj["tmdb_id"].asStringOrNull ?: obj["tmdb"].asStringOrNull,
+            contentYear = SeriesContentYear.latest(obj),
         )
     }
 

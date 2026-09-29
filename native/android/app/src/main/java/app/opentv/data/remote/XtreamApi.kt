@@ -11,6 +11,7 @@ import app.opentv.data.model.Episode
 import app.opentv.data.model.Movie
 import app.opentv.data.model.Series
 import app.opentv.data.model.Source
+import app.opentv.data.parser.SeriesContentYear
 import app.opentv.data.parser.VodLanguages
 import app.opentv.data.model.StreamKind
 import java.io.InputStream
@@ -201,16 +202,20 @@ class XtreamApi(
     }
 
     /**
-     * Episode list for one series.
+     * Episodes plus the newest season/episode year from the same `get_series_info` body.
      *
      * `episodes` is an object keyed by season number whose values are arrays — except on some
      * panels, where it is an array of arrays, and on others where a season with a single
      * episode collapses to a bare object. All three shapes are handled.
+     * [EpisodeListing.contentYear] stays null when the panel sent no air dates.
      */
-    suspend fun episodes(source: Source, seriesId: String): List<Episode> =
+    data class EpisodeListing(val episodes: List<Episode>, val contentYear: Int?)
+
+    suspend fun episodes(source: Source, seriesId: String): EpisodeListing =
         withContext(Dispatchers.IO) {
             val body = getJson(source, "get_series_info") { it.addQueryParameter("series_id", seriesId) }
-            val episodesNode = body.jsonObjectOrNull?.get("episodes") ?: return@withContext emptyList()
+            val contentYear = SeriesContentYear.latest(body)
+            val episodesNode = body.jsonObjectOrNull?.get("episodes") ?: return@withContext EpisodeListing(emptyList(), contentYear)
 
             val seasonBuckets: List<Pair<Int?, JsonElement>> = when (episodesNode) {
                 is JsonObject -> episodesNode.entries.map { it.key.toIntOrNull() to it.value }
@@ -218,7 +223,7 @@ class XtreamApi(
                 else -> emptyList()
             }
 
-            seasonBuckets.flatMap { (seasonHint, bucket) ->
+            val episodes = seasonBuckets.flatMap { (seasonHint, bucket) ->
                 val items: List<JsonElement> = when (bucket) {
                     is JsonArray -> bucket.toList()
                     is JsonObject -> listOf(bucket)
@@ -244,6 +249,7 @@ class XtreamApi(
                     )
                 }
             }
+            EpisodeListing(episodes, contentYear)
         }
 
     /**

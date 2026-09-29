@@ -56,6 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -501,9 +502,10 @@ private fun SeriesCategoryGrid(
             PosterCard(
                 title = item.displayTitle,
                 posterUrl = item.posterUrl,
-                subtitle = item.year?.toString(),
+                subtitle = item.listedYear?.toString(),
                 rating = item.rating,
                 favourite = item.favourite,
+                newEpisodes = item.hasNewEpisodes,
                 focusable = cardCanFocus(returnId, item.id),
                 modifier = if (item.id == returnId) Modifier.focusRequester(restoreFocus) else Modifier,
                 onFocused = { if (item.id == returnId) viewModel.clearSeriesReturnFocus() },
@@ -612,9 +614,10 @@ internal fun SeriesPosterRow(
                 PosterCard(
                     title = item.displayTitle,
                     posterUrl = item.posterUrl,
-                    subtitle = item.year?.toString(),
+                    subtitle = item.listedYear?.toString(),
                     rating = item.rating,
                     favourite = item.favourite,
+                    newEpisodes = item.hasNewEpisodes,
                     focusable = cardCanFocus(blockExcept, item.id),
                     modifier = if (item.id == restoreId && restoreFocus != null) {
                         Modifier.focusRequester(restoreFocus)
@@ -658,6 +661,7 @@ internal fun PosterCard(
     qualityBadge: String? = null,
     progress: Float? = null,
     favourite: Boolean = false,
+    newEpisodes: Boolean = false,
     focusable: Boolean = true,
     onFocused: () -> Unit = {},
 ) {
@@ -694,7 +698,9 @@ internal fun PosterCard(
             rating?.takeIf { it > 0.0 }?.let {
                 Badge(
                     text = "★ ${formatRating(it)}",
-                    modifier = Modifier.align(Alignment.BottomStart).padding(6.dp),
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = if (newEpisodes) 26.dp else 6.dp),
                 )
             }
             if (favourite) {
@@ -715,6 +721,23 @@ internal fun PosterCard(
                 LinearProgressIndicator(
                     progress = { it },
                     modifier = Modifier.fillMaxWidth().height(4.dp).align(Alignment.BottomCenter),
+                )
+            }
+            if (newEpisodes) {
+                Text(
+                    stringResource(R.string.vod_new_episodes),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = if (progress != null) 4.dp else 0.dp)
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.primary)
+                        .padding(horizontal = 4.dp, vertical = 3.dp),
                 )
             }
             }

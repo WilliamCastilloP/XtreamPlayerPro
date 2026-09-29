@@ -705,12 +705,21 @@ class CatalogRepository(
     suspend fun markSeriesFavouriteBySeriesId(seriesId: String) =
         seriesDao.markFavouriteBySeriesId(seriesId)
 
-    /** Series episodes are fetched lazily — panels are slow and most series are never opened. */
-    suspend fun ensureEpisodes(source: Source, seriesId: String) {
-        if (source.kind != SourceKind.XTREAM) return
-        runCatching { api.episodes(source, seriesId) }
-            .onSuccess { if (it.isNotEmpty()) episodeDao.upsertAll(it) }
+    /**
+     * Series episodes are fetched lazily — panels are slow and most series are never opened.
+     * The same payload's season/episode dates are stored as [app.opentv.data.model.Series.contentYear]
+     * so the category can later file the show with that year. Returns that year, or null.
+     */
+    suspend fun ensureEpisodes(source: Source, seriesId: String): Int? {
+        if (source.kind != SourceKind.XTREAM) return null
+        return runCatching { api.episodes(source, seriesId) }
+            .onSuccess { listing ->
+                if (listing.episodes.isNotEmpty()) episodeDao.upsertAll(listing.episodes)
+                listing.contentYear?.let { seriesDao.raiseContentYear(source.id, seriesId, it) }
+            }
             .onFailure { Log.w(TAG, "Episode fetch failed for series $seriesId", it) }
+            .getOrNull()
+            ?.contentYear
     }
 
     /**

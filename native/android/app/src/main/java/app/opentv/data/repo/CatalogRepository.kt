@@ -26,10 +26,12 @@ import app.opentv.data.model.SourceKind
 import app.opentv.data.model.StreamKind
 import app.opentv.data.parser.ChannelNameNormalizer
 import app.opentv.data.parser.M3uParser
+import app.opentv.data.parser.VodLanguages
 import app.opentv.data.parser.VodTitleCleaner
 import app.opentv.data.remote.StalkerApi
 import app.opentv.data.remote.TmdbClient
 import app.opentv.data.remote.XtreamApi
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -155,6 +157,9 @@ class CatalogRepository(
     /** TMDB back-fill for VOD detail pages, gated on a user-supplied key. See [TmdbClient]. */
     private val tmdb = TmdbClient(http, settings)
 
+    /** Panel audio languages seen this process, so a second open of the same title does not re-probe. */
+    private val languageCache = ConcurrentHashMap<String, List<String>>()
+
     sealed interface SyncResult {
         data class Success(
             val channelCount: Int,
@@ -227,6 +232,51 @@ class CatalogRepository(
     suspend fun episodeByStreamUrl(url: String): Episode? = episodeDao.byStreamUrl(url)
 
     suspend fun series(id: Long): app.opentv.data.model.Series? = seriesDao.byId(id)
+
+    suspend fun seriesByProvider(sourceId: Long, seriesId: String): Series? =
+        seriesDao.byProviderId(sourceId, seriesId)
+
+    /**
+     * Languages for a film: codes stamped on its title and on quality/language siblings, plus
+     * whatever `get_vod_info` lists as audio. Does not open the media file.
+     */
+    suspend fun movieLanguageCodes(id: Long): List<String> = withContext(Dispatchers.IO) {
+        val movie = movieDao.byId(id) ?: return@withContext emptyList()
+        val codes = LinkedHashSet<String>()
+        codes += VodLanguages.codesInTitle(movie.name)
+        val token = ChannelNameNormalizer.normalize(VOD_YEAR.replace(movie.name, " ")).baseName.trim()
+        if (token.length >= 6) {
+            for (sibling in movieDao.withTitleToken(movie.sourceId, movie.id, token)) {
+                codes += VodLanguages.codesInTitle(sibling.name)
+            }
+        }
+        codes += panelLanguages("movie:${movie.sourceId}:${movie.streamId}") {
+            val source = sourceDao.byId(movie.sourceId)
+            if (source?.kind == SourceKind.XTREAM) api.movieInfo(source, movie.streamId)?.languageCodes
+            else emptyList()
+        }
+        codes.toList()
+    }
+
+    /** Languages for a show, from its title and `get_series_info`. See [movieLanguageCodes]. */
+    suspend fun seriesLanguageCodes(id: Long): List<String> = withContext(Dispatchers.IO) {
+        val series = seriesDao.byId(id) ?: return@withContext emptyList()
+        val codes = LinkedHashSet<String>()
+        codes += VodLanguages.codesInTitle(series.name)
+        codes += panelLanguages("series:${series.sourceId}:${series.seriesId}") {
+            val source = sourceDao.byId(series.sourceId)
+            if (source?.kind == SourceKind.XTREAM) api.seriesInfo(source, series.seriesId)?.languageCodes
+            else emptyList()
+        }
+        codes.toList()
+    }
+
+    private suspend fun panelLanguages(key: String, load: suspend () -> List<String>?): List<String> {
+        languageCache[key]?.let { return it }
+        val loaded = runCatching { load() }.getOrNull().orEmpty()
+        languageCache[key] = loaded
+        return loaded
+    }
 
     // ---- Netflix-style home feeds ---------------------------------------------------------------
     // All local: derived from the catalogue already on disk plus the active profile's watch history.
@@ -448,6 +498,7 @@ class CatalogRepository(
         if (!result.isEnriched && source?.kind == SourceKind.XTREAM) {
             val info = runCatching { api.movieInfo(source, result.streamId) }.getOrNull()
             if (info != null) {
+                languageCache["movie:${result.sourceId}:${result.streamId}"] = info.languageCodes
                 result = result.copy(
                     backdropUrl = result.backdropUrl ?: info.backdropUrl,
                     cast = result.cast ?: info.cast,
@@ -498,6 +549,7 @@ class CatalogRepository(
         if (!result.isEnriched && source?.kind == SourceKind.XTREAM) {
             val info = runCatching { api.seriesInfo(source, result.seriesId) }.getOrNull()
             if (info != null) {
+                languageCache["series:${result.sourceId}:${result.seriesId}"] = info.languageCodes
                 result = result.copy(
                     backdropUrl = result.backdropUrl ?: info.backdropUrl,
                     cast = result.cast ?: info.cast,

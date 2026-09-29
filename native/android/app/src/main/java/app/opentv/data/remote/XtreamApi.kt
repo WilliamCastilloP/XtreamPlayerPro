@@ -11,6 +11,7 @@ import app.opentv.data.model.Episode
 import app.opentv.data.model.Movie
 import app.opentv.data.model.Series
 import app.opentv.data.model.Source
+import app.opentv.data.parser.VodLanguages
 import app.opentv.data.model.StreamKind
 import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
@@ -268,6 +269,7 @@ class XtreamApi(
             rating = info["rating"].asDoubleOrNull,
             year = info["year"].asIntOrNull ?: info["releasedate"].asStringOrNull?.take(4)?.toIntOrNull(),
             durationSeconds = info["duration_secs"].asIntOrNull,
+            languageCodes = VodLanguages.codesInJson(info),
         )
     }
 
@@ -290,6 +292,7 @@ class XtreamApi(
             plot = info["plot"].asStringOrNull ?: info["description"].asStringOrNull,
             rating = info["rating"].asDoubleOrNull,
             year = info["year"].asIntOrNull ?: info["releaseDate"].asStringOrNull?.take(4)?.toIntOrNull(),
+            languageCodes = VodLanguages.codesInJson(info),
         )
     }
 
@@ -451,6 +454,8 @@ class XtreamApi(
         val rating: Double?,
         val year: Int?,
         val durationSeconds: Int?,
+        /** Audio languages the panel listed on this title. Empty when the payload has none. */
+        val languageCodes: List<String> = emptyList(),
     )
 
     /** Rich per-series metadata from `get_series_info`. Series have no director. See [VodInfo]. */
@@ -462,6 +467,8 @@ class XtreamApi(
         val plot: String?,
         val rating: Double?,
         val year: Int?,
+        /** Audio languages the panel listed on this show. Empty when the payload has none. */
+        val languageCodes: List<String> = emptyList(),
     )
 }
 

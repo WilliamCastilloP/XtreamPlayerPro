@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.18.2
+
+- **Poster focus no longer shoves the row.** Cards keep a fixed size. The purple ring is drawn in a gutter that is always there, so moving between titles does not grow the card or shift its neighbours.
+- **Back from a category returns to that row.** The grid remembers how far you had scrolled and puts focus back on the poster you opened, instead of the search bar at the top.
+- **Languages on the detail page.** A film or show lists the languages stamped on its title (and on other copies of the same film) and any audio language the panel sends with the title info.
+- **Continue watching is split.** Movies only lists films in progress. Shows only lists episodes, titled with the series name.
+
+## 0.18.1
+
+- **Movies and series open again.** 0.18.0's adaptive buffer left Media3's LoadControl defaults
+  in place. Those throw as soon as ExoPlayer is created, so tapping play on a film or episode
+  closed the app. The VOD control now implements the same callbacks DefaultLoadControl does.
+  Live TV was already on DefaultLoadControl and is unchanged.
+
 ## 0.18.0
 
 - **VOD/series preload (Netflix-XP).** On a series page, the episode that is in progress is warmed

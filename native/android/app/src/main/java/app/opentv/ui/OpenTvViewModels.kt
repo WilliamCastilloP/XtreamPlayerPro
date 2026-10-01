@@ -708,6 +708,15 @@ class EpgViewModel(app: Application) : AndroidViewModel(app) {
     }
 }
 
+/**
+ * Continue Watching keeps the newest unfinished watch of each title.
+ * The list is already newest-first, so the first card for a [VodViewModel.ResumeItem.contentKey] wins.
+ */
+internal fun latestResumePerContent(items: List<VodViewModel.ResumeItem>): List<VodViewModel.ResumeItem> {
+    val seen = HashSet<String>()
+    return items.filter { seen.add(it.contentKey) }
+}
+
 /** Home vs starred grid vs a provider category — Movies and Shows share this browse model. */
 sealed interface VodBrowse {
     data object Home : VodBrowse
@@ -726,13 +735,17 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         val posterUrl: String?,
         val streamUrl: String,
         val progress: Float,
+        /** One shelf card per title: a series, or one copy of a film. Newest watch wins. */
+        val contentKey: String = mediaKey,
     )
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val continueWatching: StateFlow<List<ResumeItem>> =
         settings.activeProfileId
             .flatMapLatest { pid -> graph.playbackPositions.observeRecent(pid) }
-            .mapLatest { positions -> positions.filter { !it.isFinished }.mapNotNull { resolveResume(it) } }
+            .mapLatest { positions ->
+                latestResumePerContent(positions.filter { !it.isFinished }.mapNotNull { resolveResume(it) })
+            }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private suspend fun resolveResume(pos: PlaybackPosition): ResumeItem? {
@@ -743,7 +756,15 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
             if (pos.durationMillis > 0) (pos.positionMillis.toFloat() / pos.durationMillis).coerceIn(0f, 1f) else 0f
         return when (parts[0]) {
             "movie" -> graph.catalogRepository.movie(id)?.let {
-                ResumeItem(pos.mediaKey, it.displayTitle, it.posterUrl, it.streamUrl, progress)
+                val label = it.displayTitle.trim().lowercase().ifBlank { it.streamId }
+                ResumeItem(
+                    pos.mediaKey,
+                    it.displayTitle,
+                    it.posterUrl,
+                    it.streamUrl,
+                    progress,
+                    contentKey = "movie:${it.sourceId}:$label",
+                )
             }
             "ep" -> graph.catalogRepository.episode(id)?.let { episode ->
                 val show = graph.catalogRepository.seriesByProvider(episode.sourceId, episode.seriesId)
@@ -759,6 +780,7 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
                     show?.posterUrl ?: episode.stillUrl,
                     episode.streamUrl,
                     progress,
+                    contentKey = show?.let { s -> "series:${s.sourceId}:${s.seriesId}" } ?: pos.mediaKey,
                 )
             }
             else -> null

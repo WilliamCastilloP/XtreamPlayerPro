@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.7
+
+- El carrusel de Anime enseña la carta actual y un recorte de la siguiente. Un clic en la carta abre ese título. Las recomendaciones van en ese carrusel.
+- Hay más espacio entre las secciones de Anime.
+- Continuar viendo muestra una sola carta por serie o película: el capítulo o la copia que viste más reciente.
+
 ## 0.18.6
 
 - El aviso de actualización ahora dice qué trae esa versión. El texto es la sección de esta lista, en español, y así queda en cada versión que se publique.

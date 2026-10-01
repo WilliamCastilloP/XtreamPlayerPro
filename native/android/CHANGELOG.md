@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.6
+
+- El aviso de actualización ahora dice qué trae esa versión. El texto es la sección de esta lista, en español, y así queda en cada versión que se publique.
+- Anime recorre todo el catálogo ya guardado (TV en vivo, películas y series) y lo abre por categoría, año y género. El buscador de esa página solo mira anime.
+- El banner de recomendaciones cambia de imagen cada 10 segundos. El botón Anime se queda naranja, y la barra también mientras esa sección está abierta.
+
 ## 0.18.5
 
 - **Anime catalogue.** The tab now reads every live channel, movie and series already stored whose category, title or genre says anime (including manga). The home shows a sample. Categories, years and genres open the rest, and the search box on that page only looks inside anime.

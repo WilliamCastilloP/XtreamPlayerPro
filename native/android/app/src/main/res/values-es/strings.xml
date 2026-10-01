@@ -301,6 +301,7 @@
     <string name="about_title">Acerca de XTREAM</string>
     <string name="about_version">Versión</string>
     <string name="about_update_available">Actualización disponible: %1$s — consulta el aviso para instalarla.</string>
+    <string name="about_update_unreachable">No se pudo comprobar si hay actualización. Inténtalo de nuevo en un momento.</string>
     <string name="about_up_to_date">Tienes la versión más reciente.</string>
     <string name="about_checking">Comprobando…</string>
     <string name="about_check_updates">Buscar actualizaciones</string>

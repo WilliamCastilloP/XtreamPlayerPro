@@ -25,6 +25,7 @@ import app.opentv.data.model.Source
 import app.opentv.data.model.SourceKind
 import app.opentv.data.model.StreamKind
 import app.opentv.data.parser.AnimeCatalog
+import app.opentv.data.parser.AnimeIndex
 import app.opentv.data.parser.ChannelNameNormalizer
 import app.opentv.data.parser.M3uParser
 import app.opentv.data.parser.VodLanguages
@@ -52,13 +53,6 @@ internal fun distinctByQuality(channels: List<app.opentv.data.model.Channel>): L
     val seen = HashSet<String>()
     return channels.filter { seen.add("${it.qualityRank}|${it.qualityLabel.lowercase()}") }
 }
-
-/** Anime tab: featured movies, the series row, and a recommendations row. */
-data class AnimeHome(
-    val movies: List<Movie>,
-    val series: List<Series>,
-    val recommended: List<Series>,
-)
 
 /** A home/detail row: a genre label and the titles under it. Generic so movies and series share it. */
 @androidx.compose.runtime.Immutable
@@ -244,14 +238,21 @@ class CatalogRepository(
     suspend fun seriesByProvider(sourceId: Long, seriesId: String): Series? =
         seriesDao.byProviderId(sourceId, seriesId)
 
-    /** Featured anime movies, the series row, and recommendations. Reads the catalogue already on disk. */
-    suspend fun animeHome(profileId: Long): AnimeHome = withContext(Dispatchers.IO) {
-        val movies = movieDao.animeFeatured(24)
-        val shows = seriesDao.animeShelf(48)
-        val recommended = AnimeCatalog.recommend(shows, watchedAnimeGenres(profileId), 20)
-        val leadIds = shows.take(8).map { it.id }.toSet()
-        val rec = recommended.filter { it.id !in leadIds }.ifEmpty { recommended }.take(20)
-        AnimeHome(movies = movies, series = shows.take(20), recommended = rec)
+    /**
+     * The whole anime catalogue already on disk: live channels, movies and series whose category,
+     * title or genre says anime. The tab composes a sample; the lists stay here for the grids.
+     */
+    suspend fun animeIndex(profileId: Long): AnimeIndex = withContext(Dispatchers.IO) {
+        val categories = categoryDao.allByKind(StreamKind.LIVE) +
+            categoryDao.allByKind(StreamKind.MOVIE) +
+            categoryDao.allByKind(StreamKind.SERIES)
+        AnimeCatalog.build(
+            movies = movieDao.animeAll(),
+            series = seriesDao.animeAll(),
+            channels = channelDao.animeAll(),
+            categories = categories,
+            watchedGenres = watchedAnimeGenres(profileId),
+        )
     }
 
     /** Continue-watching keys that belong on the anime shelf. */

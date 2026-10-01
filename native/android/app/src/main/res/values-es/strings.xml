@@ -430,7 +430,15 @@
     <string name="anime_series">Series</string>
     <string name="anime_recommended">Recomendaciones</string>
     <string name="anime_empty_title">Todavía no hay anime</string>
-    <string name="anime_empty_body">Aparece cuando una categoría o un título está marcado como anime. Entra a Películas o Series una vez para que cargue la biblioteca.</string>
+    <string name="anime_empty_body">Lista canales en vivo, películas y series que el proveedor ya marca como anime. Entra a TV en vivo, Películas o Series una vez para que cargue la biblioteca.</string>
+    <string name="anime_search">Buscar</string>
+    <string name="anime_search_hint">Busca títulos, géneros y categorías dentro de anime</string>
+    <string name="anime_live">TV en vivo</string>
+    <string name="anime_years">Por año</string>
+    <string name="anime_genres">Géneros</string>
+    <string name="anime_categories">Categorías</string>
+    <string name="anime_see_all">Ver todo</string>
+    <string name="anime_no_results">Nada en esta sección</string>
     <string name="vod_new_episodes">Nuevos episodios</string>
     <string name="vod_detail_loading">Cargando…</string>
     <string name="vod_person_title">Con %1$s</string>

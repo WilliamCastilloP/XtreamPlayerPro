@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.5
+
+- **Anime catalogue.** The tab now reads every live channel, movie and series already stored whose category, title or genre says anime (including manga). The home shows a sample. Categories, years and genres open the rest, and the search box on that page only looks inside anime.
+- **Banner.** Recommendations rotate every 10 seconds on the backdrop. The panel does not send a trailer file, so the banner does not start the real episode.
+- **Orange rail.** The Anime button stays an orange pill. While that section is open, the side rail and the bottom bar turn orange. Live TV, Movies and Shows keep their own colours.
+
 ## 0.18.4
 
 - **Anime shelf.** A new tab, marked with ア, lists featured movies, series and recommendations taken from categories and titles the provider already marks as anime. The page, the detail buttons and the player controls use an orange-on-black theme. Playback is the same player as Movies and Shows. On that player the controls are icon-only, and a series gets a next-episode button. Live TV is unchanged.

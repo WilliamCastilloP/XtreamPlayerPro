@@ -11,7 +11,7 @@ import androidx.lifecycle.viewModelScope
 import app.opentv.core.ServiceLocator
 import app.opentv.data.model.Category
 import app.opentv.data.model.Channel
-import app.opentv.data.repo.AnimeHome
+import app.opentv.data.parser.AnimeIndex
 import app.opentv.data.model.EpgFeed
 import app.opentv.data.model.LiveStreamFormat
 import app.opentv.data.model.Movie
@@ -1020,13 +1020,13 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { syncSeriesIfStale(force = false) }
     }
 
-    private val _animeHome = MutableStateFlow(AnimeHome(emptyList(), emptyList(), emptyList()))
-    val animeHome: StateFlow<AnimeHome> = _animeHome.asStateFlow()
+    private val _animeIndex = MutableStateFlow(AnimeIndex.EMPTY)
+    val animeIndex: StateFlow<AnimeIndex> = _animeIndex.asStateFlow()
 
-    /** Reloads the anime shelf from the catalogue already on disk. */
+    /** Reloads the anime catalogue from what is already on disk. */
     fun loadAnimeHome() {
         viewModelScope.launch {
-            _animeHome.value = graph.catalogRepository.animeHome(settings.activeProfileId.value)
+            _animeIndex.value = graph.catalogRepository.animeIndex(settings.activeProfileId.value)
         }
     }
 

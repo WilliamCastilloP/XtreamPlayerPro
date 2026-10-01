@@ -554,7 +554,7 @@ internal fun MoviePosterRow(
     onRestored: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxWidth()) {
-        SectionHeader(title)
+        if (title.isNotEmpty()) SectionHeader(title)
         val rowState = rememberLazyListState()
         LaunchedEffect(restoreId, movies) {
             val id = restoreId ?: return@LaunchedEffect
@@ -599,7 +599,7 @@ internal fun SeriesPosterRow(
     onRestored: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxWidth()) {
-        SectionHeader(title)
+        if (title.isNotEmpty()) SectionHeader(title)
         val rowState = rememberLazyListState()
         LaunchedEffect(restoreId, series) {
             val id = restoreId ?: return@LaunchedEffect

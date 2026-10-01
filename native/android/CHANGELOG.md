@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.9
+
+- En el carrusel de Anime, izquierda y derecha recorren las recomendaciones. En la última, derecha sigue hacia abajo; en la primera, izquierda vuelve a la barra. Un clic abre la carta.
+
 ## 0.18.8
 
 - El carrusel de Anime enseña la carta actual y un recorte de la siguiente. Un clic en la carta abre ese título. Las recomendaciones van en ese carrusel.

@@ -44,8 +44,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -91,7 +97,8 @@ private sealed interface AnimeBrowse {
 /**
  * Anime tab. The home shows a sample of what the catalogue already has; categories, years and
  * genres open the rest, and search stays inside this tab. Recommendations are the carousel:
- * the current card and a peek of the next one. A click opens that title.
+ * the current card and a peek of the next one. Left and right move through the cards.
+ * A click opens that title.
  */
 @Composable
 fun AnimeScreen(
@@ -340,19 +347,19 @@ private fun AnimeHomeFeed(
 @Composable
 private fun AnimeCarousel(slides: List<AnimeSlide>, onOpen: (AnimeSlide) -> Unit) {
     var page by remember { mutableIntStateOf(0) }
-    val current = slides[page.coerceIn(slides.indices)]
-    val upcoming = if (slides.size > 1) slides[(page + 1) % slides.size] else null
+    val index = page.coerceIn(slides.indices)
+    val current = slides[index]
+    val upcoming = slides.getOrNull(index + 1)
     var mainFocused by remember { mutableStateOf(false) }
-    var peekFocused by remember { mutableStateOf(false) }
     val cardFocus = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
         runCatching { cardFocus.requestFocus() }
     }
-    LaunchedEffect(page, slides.size, mainFocused, peekFocused) {
-        if (mainFocused || peekFocused || slides.size <= 1) return@LaunchedEffect
+    LaunchedEffect(index, slides.size, mainFocused) {
+        if (mainFocused || slides.size <= 1) return@LaunchedEffect
         delay(SLIDE_MS)
-        page = (page + 1) % slides.size
+        page = (index + 1) % slides.size
     }
 
     Row(
@@ -368,15 +375,39 @@ private fun AnimeCarousel(slides: List<AnimeSlide>, onOpen: (AnimeSlide) -> Unit
             focusRequester = cardFocus,
             onFocused = { mainFocused = it },
             onClick = { onOpen(current) },
-            modifier = Modifier.weight(1f).fillMaxHeight(),
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionRight -> {
+                            if (index >= slides.lastIndex) false
+                            else {
+                                page = index + 1
+                                true
+                            }
+                        }
+                        Key.DirectionLeft -> {
+                            if (index <= 0) false
+                            else {
+                                page = index - 1
+                                true
+                            }
+                        }
+                        else -> false
+                    }
+                },
         )
         if (upcoming != null) {
             CarouselCard(
                 slide = upcoming,
                 showTitle = false,
-                onFocused = { peekFocused = it },
                 onClick = { onOpen(upcoming) },
-                modifier = Modifier.width(120.dp).fillMaxHeight(),
+                modifier = Modifier
+                    .width(120.dp)
+                    .fillMaxHeight()
+                    .focusProperties { canFocus = false },
             )
         }
     }

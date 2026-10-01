@@ -86,18 +86,22 @@ fun AboutScreen(onBack: () -> Unit) {
                         updateLine = null
                         scope.launch {
                             val graph = ServiceLocator.get(context)
-                            val update = runCatching {
-                                UpdateChecker(graph.httpClient, BuildConfig.VERSION_NAME).check()
-                            }.getOrNull()
-                            updateLine = when {
-                                update != null -> context.getString(R.string.about_update_available, update.versionName)
-                                else -> context.getString(R.string.about_up_to_date)
+                            val outcome = runCatching {
+                                UpdateChecker(graph.httpClient, BuildConfig.VERSION_NAME).checkOutcome()
+                            }.getOrDefault(UpdateChecker.CheckOutcome.Unreachable)
+                            updateLine = when (outcome) {
+                                is UpdateChecker.CheckOutcome.Available ->
+                                    context.getString(R.string.about_update_available, outcome.update.versionName)
+                                UpdateChecker.CheckOutcome.Current ->
+                                    context.getString(R.string.about_up_to_date)
+                                UpdateChecker.CheckOutcome.Unreachable ->
+                                    context.getString(R.string.about_update_unreachable)
                             }
                             // Raise the shared update prompt right here — UpdateGate overlays every
                             // screen, so the install dialog appears over About immediately.
-                            if (update != null) {
+                            if (outcome is UpdateChecker.CheckOutcome.Available) {
                                 app.opentv.update.UpdateHub.state.value =
-                                    app.opentv.update.UpdateUiState.Available(update)
+                                    app.opentv.update.UpdateUiState.Available(outcome.update)
                             }
                             checking = false
                         }

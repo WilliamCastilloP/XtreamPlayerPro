@@ -32,6 +32,24 @@ class UpdateCheckerTest {
     }
 
     @Test
+    fun `clean notes keep the changelog and drop the install footer`() {
+        val raw = """
+            - Catálogo de anime completo.
+            - El banner cambia cada 10 segundos.
+
+            Built by GitHub Actions from the tagged commit.
+            Do not uninstall.
+            **Full Changelog**: https://example.com
+        """.trimIndent()
+        val notes = UpdateChecker.cleanNotes(raw)
+        assertThat(notes).contains("Catálogo de anime")
+        assertThat(notes).contains("banner cambia")
+        assertThat(notes).doesNotContain("Do not uninstall")
+        assertThat(notes).doesNotContain("Built by GitHub Actions")
+        assertThat(notes).doesNotContain("Full Changelog")
+    }
+
+    @Test
     fun `displayVersion strips android and v prefixes`() {
         assertThat(UpdateChecker.displayVersion("android-v0.14.0")).isEqualTo("0.14.0")
         assertThat(UpdateChecker.displayVersion("v0.14.0")).isEqualTo("0.14.0")

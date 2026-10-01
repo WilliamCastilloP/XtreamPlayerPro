@@ -52,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -63,14 +64,17 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.opentv.data.model.Channel
 import app.opentv.data.model.Movie
 import app.opentv.data.model.Recording
 import app.opentv.data.model.Series
 import app.opentv.ui.channels.HomeScreen
 import app.opentv.ui.recordings.RecordingsScreen
+import app.opentv.ui.vod.AnimeScreen
 import app.opentv.ui.vod.MoviesScreen
 import app.opentv.ui.vod.SeriesScreen
+import app.opentv.ui.theme.CrunchyrollColors
 import app.opentv.ui.theme.XtreamFocus
 
 /**
@@ -79,10 +83,11 @@ import app.opentv.ui.theme.XtreamFocus
  * menu people asked for, instead of a top bar that ate a row of the guide. It overlays the content
  * rather than pushing it, so expanding the menu never reflows the guide underneath.
  */
-enum class Tab(val labelRes: Int, val icon: ImageVector) {
+enum class Tab(val labelRes: Int, val icon: ImageVector?, val glyph: String? = null) {
     LIVE(R.string.nav_live_tv, Icons.Filled.LiveTv),
     MOVIES(R.string.nav_movies, Icons.Filled.Movie),
     SHOWS(R.string.nav_shows, Icons.Filled.Tv),
+    ANIME(R.string.nav_anime, icon = null, glyph = "ア"),
     RECORDINGS(R.string.nav_recordings, Icons.Filled.FiberManualRecord),
 }
 
@@ -113,6 +118,9 @@ fun MainScreen(
     onOpenProfiles: () -> Unit,
     onPlayRecording: (Recording) -> Unit,
     onPlayCatchup: (mediaKey: String, url: String, title: String, ua: String) -> Unit,
+    onOpenAnimeMovie: (Movie) -> Unit,
+    onOpenAnimeSeries: (Series) -> Unit,
+    onResumeAnime: (mediaKey: String, url: String, title: String) -> Unit,
     activeProfileName: String,
 ) {
     // Content-type toggles: a switched-off type has its tab hidden here (and its sync skipped in
@@ -128,6 +136,7 @@ fun MainScreen(
             if (liveEnabled) add(Tab.LIVE)
             if (moviesEnabled) add(Tab.MOVIES)
             if (seriesEnabled) add(Tab.SHOWS)
+            if (liveEnabled || moviesEnabled || seriesEnabled) add(Tab.ANIME)
             add(Tab.RECORDINGS)
         }
     }
@@ -182,6 +191,7 @@ fun MainScreen(
         NavRail(
             tabs = visibleTabs,
             current = tab,
+            orangeBar = tab == Tab.ANIME,
             onSelect = { selectTab(it) },
             onOpenSearch = onOpenSearch,
             onOpenSettings = onOpenSettings,
@@ -214,11 +224,19 @@ fun MainScreen(
                     hasSources = hasSources,
                     isSyncing = isSyncing,
                 )
+                Tab.ANIME -> AnimeScreen(
+                    onOpenMovie = onOpenAnimeMovie,
+                    onOpenSeries = onOpenAnimeSeries,
+                    onResume = onResumeAnime,
+                    onPlayChannel = onPlayChannel,
+                    hasSources = hasSources,
+                    isSyncing = isSyncing,
+                )
                 Tab.RECORDINGS -> RecordingsScreen(onPlay = onPlayRecording)
             }
         }
       }
-      StatusBar()
+      StatusBar(orange = tab == Tab.ANIME)
     }
 }
 
@@ -228,15 +246,18 @@ fun MainScreen(
  * in progress, not a frozen screen. Invisible when there's nothing to report.
  */
 @Composable
-private fun StatusBar() {
+private fun StatusBar(orange: Boolean) {
     val message by StatusBus.message.collectAsState()
     val progress by StatusBus.progress.collectAsState()
     val text = message ?: return
     val p = progress
+    val accent = if (orange) CrunchyrollColors.orange else MaterialTheme.colorScheme.primary
+    val bar = if (orange) Color(0xFF140C08) else MaterialTheme.colorScheme.surfaceVariant
+    val onBar = if (orange) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
     Column(
         Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(bar)
             .padding(horizontal = 16.dp, vertical = 6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -244,20 +265,20 @@ private fun StatusBar() {
                 CircularProgressIndicator(
                     modifier = Modifier.size(14.dp),
                     strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = accent,
                 )
             } else {
                 Text(
                     "${(p * 100).toInt()}%",
                     style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = accent,
                 )
             }
             Spacer(Modifier.width(12.dp))
             Text(
                 text,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = onBar,
             )
         }
         if (p != null) {
@@ -265,7 +286,7 @@ private fun StatusBar() {
             LinearProgressIndicator(
                 progress = { p },
                 modifier = Modifier.fillMaxWidth().height(3.dp),
-                color = MaterialTheme.colorScheme.primary,
+                color = accent,
             )
         }
     }
@@ -275,6 +296,7 @@ private fun StatusBar() {
 private fun NavRail(
     tabs: List<Tab>,
     current: Tab,
+    orangeBar: Boolean,
     onSelect: (Tab) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -288,12 +310,13 @@ private fun NavRail(
         targetValue = if (expanded) RAIL_EXPANDED else RAIL_COLLAPSED,
         label = "railWidth",
     )
+    val railColor = if (orangeBar) Color(0xFF140C08) else MaterialTheme.colorScheme.surface
 
+    Box(modifier.width(width).fillMaxHeight()) {
     Column(
-        modifier
-            .width(width)
-            .fillMaxHeight()
-            .background(MaterialTheme.colorScheme.surface)
+        Modifier
+            .fillMaxSize()
+            .background(railColor)
             .focusGroup()
             .onFocusChanged { expanded = it.hasFocus }
             .padding(vertical = 16.dp),
@@ -314,7 +337,7 @@ private fun NavRail(
                 Text(
                     stringResource(R.string.app_name),
                     style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = if (orangeBar) CrunchyrollColors.orange else MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -324,35 +347,66 @@ private fun NavRail(
         Spacer(Modifier.height(8.dp))
 
         tabs.forEach { t ->
-            RailItem(t.icon, stringResource(t.labelRes), expanded, current == t) { onSelect(t) }
+            RailItem(
+                icon = t.icon,
+                glyph = t.glyph,
+                label = stringResource(t.labelRes),
+                expanded = expanded,
+                selected = current == t,
+                warm = orangeBar,
+                onClick = { onSelect(t) },
+            )
         }
 
         Spacer(Modifier.height(1.dp).fillMaxWidth())
         Spacer(Modifier.weight(1f))
 
-        RailItem(Icons.Filled.Search, stringResource(R.string.nav_search), expanded, false, onOpenSearch)
-        RailItem(Icons.Filled.Person, activeProfileName, expanded, false, onOpenProfiles)
-        RailItem(Icons.Filled.Settings, stringResource(R.string.nav_settings), expanded, false, onOpenSettings)
+        RailItem(Icons.Filled.Search, stringResource(R.string.nav_search), expanded, false, onOpenSearch, warm = orangeBar)
+        RailItem(Icons.Filled.Person, activeProfileName, expanded, false, onOpenProfiles, warm = orangeBar)
+        RailItem(Icons.Filled.Settings, stringResource(R.string.nav_settings), expanded, false, onOpenSettings, warm = orangeBar)
+    }
+    if (orangeBar) {
+        Box(
+            Modifier
+                .align(Alignment.CenterEnd)
+                .width(4.dp)
+                .fillMaxHeight()
+                .background(CrunchyrollColors.orange),
+        )
+    }
     }
 }
 
 @Composable
 private fun RailItem(
-    icon: ImageVector,
+    icon: ImageVector?,
     label: String,
     expanded: Boolean,
     selected: Boolean,
     onClick: () -> Unit,
+    glyph: String? = null,
+    warm: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val accent = glyph != null
     val bg = when {
+        accent && focused -> Color.White
+        accent -> CrunchyrollColors.orange
+        focused && warm -> CrunchyrollColors.orange
         focused -> XtreamFocus.fill
+        selected && warm -> Color(0xFF2A160C)
         selected -> MaterialTheme.colorScheme.surfaceVariant
-        else -> MaterialTheme.colorScheme.surface
+        else -> Color.Transparent
     }
-    val tint = if (focused) XtreamFocus.onFill
-    else if (selected) MaterialTheme.colorScheme.onSurface
-    else MaterialTheme.colorScheme.onSurfaceVariant
+    val tint = when {
+        accent && focused -> CrunchyrollColors.orange
+        accent -> Color.White
+        focused -> Color.White
+        warm && selected -> CrunchyrollColors.orange
+        warm -> Color(0xFFFFE8D6)
+        selected -> MaterialTheme.colorScheme.onSurface
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
 
     Row(
         Modifier
@@ -365,14 +419,25 @@ private fun RailItem(
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = label, tint = tint)
+        if (glyph != null) {
+            Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    glyph,
+                    color = tint,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Black,
+                )
+            }
+        } else if (icon != null) {
+            Icon(icon, contentDescription = label, tint = tint)
+        }
         if (expanded) {
             Spacer(Modifier.width(14.dp))
             Text(
                 label,
                 style = MaterialTheme.typography.titleMedium,
                 color = tint,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                fontWeight = if (selected || accent) FontWeight.SemiBold else FontWeight.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

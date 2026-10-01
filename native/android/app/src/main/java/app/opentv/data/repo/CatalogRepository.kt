@@ -24,12 +24,16 @@ import app.opentv.data.model.Series
 import app.opentv.data.model.Source
 import app.opentv.data.model.SourceKind
 import app.opentv.data.model.StreamKind
+import app.opentv.data.parser.AnimeCatalog
+import app.opentv.data.parser.AnimeIndex
 import app.opentv.data.parser.ChannelNameNormalizer
 import app.opentv.data.parser.M3uParser
+import app.opentv.data.parser.VodLanguages
 import app.opentv.data.parser.VodTitleCleaner
 import app.opentv.data.remote.StalkerApi
 import app.opentv.data.remote.TmdbClient
 import app.opentv.data.remote.XtreamApi
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -155,6 +159,9 @@ class CatalogRepository(
     /** TMDB back-fill for VOD detail pages, gated on a user-supplied key. See [TmdbClient]. */
     private val tmdb = TmdbClient(http, settings)
 
+    /** Panel audio languages seen this process, so a second open of the same title does not re-probe. */
+    private val languageCache = ConcurrentHashMap<String, List<String>>()
+
     sealed interface SyncResult {
         data class Success(
             val channelCount: Int,
@@ -227,6 +234,129 @@ class CatalogRepository(
     suspend fun episodeByStreamUrl(url: String): Episode? = episodeDao.byStreamUrl(url)
 
     suspend fun series(id: Long): app.opentv.data.model.Series? = seriesDao.byId(id)
+
+    suspend fun seriesByProvider(sourceId: Long, seriesId: String): Series? =
+        seriesDao.byProviderId(sourceId, seriesId)
+
+    /**
+     * The whole anime catalogue already on disk: live channels, movies and series whose category,
+     * title or genre says anime. The tab composes a sample; the lists stay here for the grids.
+     */
+    suspend fun animeIndex(profileId: Long): AnimeIndex = withContext(Dispatchers.IO) {
+        val categories = categoryDao.allByKind(StreamKind.LIVE) +
+            categoryDao.allByKind(StreamKind.MOVIE) +
+            categoryDao.allByKind(StreamKind.SERIES)
+        AnimeCatalog.build(
+            movies = movieDao.animeAll(),
+            series = seriesDao.animeAll(),
+            channels = channelDao.animeAll(),
+            categories = categories,
+            watchedGenres = watchedAnimeGenres(profileId),
+        )
+    }
+
+    /** Continue-watching keys that belong on the anime shelf. */
+    suspend fun animeMediaKeys(keys: List<String>): Set<String> = withContext(Dispatchers.IO) {
+        if (keys.isEmpty()) return@withContext emptySet()
+        val movieCats = animeCategoryKeys(StreamKind.MOVIE)
+        val seriesCats = animeCategoryKeys(StreamKind.SERIES)
+        val matched = HashSet<String>()
+        for (key in keys) {
+            val id = key.substringAfter(':', "").toLongOrNull() ?: continue
+            when {
+                key.startsWith("movie:") -> {
+                    val movie = movieDao.byId(id) ?: continue
+                    val inCategory = movie.categoryId?.let { movie.sourceId to it } in movieCats
+                    if (inCategory || AnimeCatalog.matches(movie.name) || AnimeCatalog.matches(movie.genre)) {
+                        matched += key
+                    }
+                }
+                key.startsWith("ep:") -> {
+                    val episode = episodeDao.byId(id) ?: continue
+                    val show = seriesDao.byProviderId(episode.sourceId, episode.seriesId) ?: continue
+                    val inCategory = show.categoryId?.let { show.sourceId to it } in seriesCats
+                    if (inCategory || AnimeCatalog.matches(show.name) || AnimeCatalog.matches(show.genre)) {
+                        matched += key
+                    }
+                }
+            }
+        }
+        matched
+    }
+
+    /** The next chapter after this episode, or null for a movie or the last episode. */
+    suspend fun nextEpisode(mediaKey: String): Episode? = withContext(Dispatchers.IO) {
+        val id = mediaKey.removePrefix("ep:").toLongOrNull() ?: return@withContext null
+        if (!mediaKey.startsWith("ep:")) return@withContext null
+        val current = episodeDao.byId(id) ?: return@withContext null
+        val episodes = episodeDao.listForSeries(current.sourceId, current.seriesId)
+        AnimeCatalog.nextEpisode(current.id, episodes)
+    }
+
+    private suspend fun animeCategoryKeys(kind: StreamKind): Set<Pair<Long, String>> =
+        categoryDao.allByKind(kind)
+            .filter { AnimeCatalog.matches(it.name) }
+            .map { it.sourceId to it.id }
+            .toSet()
+
+    private suspend fun watchedAnimeGenres(profileId: Long): Set<String> {
+        val seriesCats = animeCategoryKeys(StreamKind.SERIES)
+        val genres = HashSet<String>()
+        var looked = 0
+        for (mark in positionDao.forProfile(profileId)) {
+            if (looked >= 40 || !mark.mediaKey.startsWith("ep:")) continue
+            val id = mark.mediaKey.removePrefix("ep:").toLongOrNull() ?: continue
+            val episode = episodeDao.byId(id) ?: continue
+            val show = seriesDao.byProviderId(episode.sourceId, episode.seriesId) ?: continue
+            val inCategory = show.categoryId?.let { show.sourceId to it } in seriesCats
+            if (!inCategory && !AnimeCatalog.matches(show.name) && !AnimeCatalog.matches(show.genre)) continue
+            looked++
+            genres += AnimeCatalog.genres(show.genre)
+        }
+        return genres
+    }
+
+    /**
+     * Languages for a film: codes stamped on its title and on quality/language siblings, plus
+     * whatever `get_vod_info` lists as audio. Does not open the media file.
+     */
+    suspend fun movieLanguageCodes(id: Long): List<String> = withContext(Dispatchers.IO) {
+        val movie = movieDao.byId(id) ?: return@withContext emptyList()
+        val codes = LinkedHashSet<String>()
+        codes += VodLanguages.codesInTitle(movie.name)
+        val token = ChannelNameNormalizer.normalize(VOD_YEAR.replace(movie.name, " ")).baseName.trim()
+        if (token.length >= 6) {
+            for (sibling in movieDao.withTitleToken(movie.sourceId, movie.id, token)) {
+                codes += VodLanguages.codesInTitle(sibling.name)
+            }
+        }
+        codes += panelLanguages("movie:${movie.sourceId}:${movie.streamId}") {
+            val source = sourceDao.byId(movie.sourceId)
+            if (source?.kind == SourceKind.XTREAM) api.movieInfo(source, movie.streamId)?.languageCodes
+            else emptyList()
+        }
+        codes.toList()
+    }
+
+    /** Languages for a show, from its title and `get_series_info`. See [movieLanguageCodes]. */
+    suspend fun seriesLanguageCodes(id: Long): List<String> = withContext(Dispatchers.IO) {
+        val series = seriesDao.byId(id) ?: return@withContext emptyList()
+        val codes = LinkedHashSet<String>()
+        codes += VodLanguages.codesInTitle(series.name)
+        codes += panelLanguages("series:${series.sourceId}:${series.seriesId}") {
+            val source = sourceDao.byId(series.sourceId)
+            if (source?.kind == SourceKind.XTREAM) api.seriesInfo(source, series.seriesId)?.languageCodes
+            else emptyList()
+        }
+        codes.toList()
+    }
+
+    private suspend fun panelLanguages(key: String, load: suspend () -> List<String>?): List<String> {
+        languageCache[key]?.let { return it }
+        val loaded = runCatching { load() }.getOrNull().orEmpty()
+        languageCache[key] = loaded
+        return loaded
+    }
 
     // ---- Netflix-style home feeds ---------------------------------------------------------------
     // All local: derived from the catalogue already on disk plus the active profile's watch history.
@@ -448,6 +578,7 @@ class CatalogRepository(
         if (!result.isEnriched && source?.kind == SourceKind.XTREAM) {
             val info = runCatching { api.movieInfo(source, result.streamId) }.getOrNull()
             if (info != null) {
+                languageCache["movie:${result.sourceId}:${result.streamId}"] = info.languageCodes
                 result = result.copy(
                     backdropUrl = result.backdropUrl ?: info.backdropUrl,
                     cast = result.cast ?: info.cast,
@@ -498,6 +629,7 @@ class CatalogRepository(
         if (!result.isEnriched && source?.kind == SourceKind.XTREAM) {
             val info = runCatching { api.seriesInfo(source, result.seriesId) }.getOrNull()
             if (info != null) {
+                languageCache["series:${result.sourceId}:${result.seriesId}"] = info.languageCodes
                 result = result.copy(
                     backdropUrl = result.backdropUrl ?: info.backdropUrl,
                     cast = result.cast ?: info.cast,
@@ -653,12 +785,21 @@ class CatalogRepository(
     suspend fun markSeriesFavouriteBySeriesId(seriesId: String) =
         seriesDao.markFavouriteBySeriesId(seriesId)
 
-    /** Series episodes are fetched lazily — panels are slow and most series are never opened. */
-    suspend fun ensureEpisodes(source: Source, seriesId: String) {
-        if (source.kind != SourceKind.XTREAM) return
-        runCatching { api.episodes(source, seriesId) }
-            .onSuccess { if (it.isNotEmpty()) episodeDao.upsertAll(it) }
+    /**
+     * Series episodes are fetched lazily — panels are slow and most series are never opened.
+     * The same payload's season/episode dates are stored as [app.opentv.data.model.Series.contentYear]
+     * so the category can later file the show with that year. Returns that year, or null.
+     */
+    suspend fun ensureEpisodes(source: Source, seriesId: String): Int? {
+        if (source.kind != SourceKind.XTREAM) return null
+        return runCatching { api.episodes(source, seriesId) }
+            .onSuccess { listing ->
+                if (listing.episodes.isNotEmpty()) episodeDao.upsertAll(listing.episodes)
+                listing.contentYear?.let { seriesDao.raiseContentYear(source.id, seriesId, it) }
+            }
             .onFailure { Log.w(TAG, "Episode fetch failed for series $seriesId", it) }
+            .getOrNull()
+            ?.contentYear
     }
 
     /**

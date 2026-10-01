@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.18.9
+
+- En el carrusel de Anime, izquierda y derecha recorren las recomendaciones. En la última, derecha sigue hacia abajo; en la primera, izquierda vuelve a la barra. Un clic abre la carta.
+
+## 0.18.8
+
+- El carrusel de Anime enseña la carta actual y un recorte de la siguiente. Un clic en la carta abre ese título. Las recomendaciones van en ese carrusel.
+- Hay más espacio entre las secciones de Anime.
+- Continuar viendo muestra una sola carta por serie o película: el capítulo o la copia que viste más reciente.
+
+## 0.18.6
+
+- El aviso de actualización ahora dice qué trae esa versión. El texto es la sección de esta lista, en español, y así queda en cada versión que se publique.
+- Anime recorre todo el catálogo ya guardado (TV en vivo, películas y series) y lo abre por categoría, año y género. El buscador de esa página solo mira anime.
+- El banner de recomendaciones cambia de imagen cada 10 segundos. El botón Anime se queda naranja, y la barra también mientras esa sección está abierta.
+
+## 0.18.5
+
+- **Anime catalogue.** The tab now reads every live channel, movie and series already stored whose category, title or genre says anime (including manga). The home shows a sample. Categories, years and genres open the rest, and the search box on that page only looks inside anime.
+- **Banner.** Recommendations rotate every 10 seconds on the backdrop. The panel does not send a trailer file, so the banner does not start the real episode.
+- **Orange rail.** The Anime button stays an orange pill. While that section is open, the side rail and the bottom bar turn orange. Live TV, Movies and Shows keep their own colours.
+
+## 0.18.4
+
+- **Anime shelf.** A new tab, marked with ア, lists featured movies, series and recommendations taken from categories and titles the provider already marks as anime. The page, the detail buttons and the player controls use an orange-on-black theme. Playback is the same player as Movies and Shows. On that player the controls are icon-only, and a series gets a next-episode button. Live TV is unchanged.
+
+## 0.18.3
+
+- **New episodes.** Opening a series reads the season and episode air dates the panel already sends. A 2025 show that added a season in 2026 gets a small “New episodes” banner, and the category files it with 2026. The premiere year stays on the detail page. A show you have not opened yet stays on its premiere year — reading every series would be one request per title.
+
+## 0.18.2
+
+- **Poster focus no longer shoves the row.** Cards keep a fixed size. The purple ring is drawn in a gutter that is always there, so moving between titles does not grow the card or shift its neighbours.
+- **Back from a category returns to that row.** The grid remembers how far you had scrolled and puts focus back on the poster you opened, instead of the search bar at the top.
+- **Languages on the detail page.** A film or show lists the languages stamped on its title (and on other copies of the same film) and any audio language the panel sends with the title info.
+- **Continue watching is split.** Movies only lists films in progress. Shows only lists episodes, titled with the series name.
+
+## 0.18.1
+
+- **Movies and series open again.** 0.18.0's adaptive buffer left Media3's LoadControl defaults
+  in place. Those throw as soon as ExoPlayer is created, so tapping play on a film or episode
+  closed the app. The VOD control now implements the same callbacks DefaultLoadControl does.
+  Live TV was already on DefaultLoadControl and is unchanged.
+
 ## 0.18.0
 
 - **VOD/series preload (Netflix-XP).** On a series page, the episode that is in progress is warmed

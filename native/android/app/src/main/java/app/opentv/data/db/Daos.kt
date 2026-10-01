@@ -148,6 +148,39 @@ interface ChannelDao {
     )
     fun search(query: String, limit: Int = 200): Flow<List<Channel>>
 
+    /**
+     * Every visible live channel the anime tab should list: a live category whose name says anime,
+     * or a channel name that does. Same needles as [MovieDao.animeAll]. Hidden rows stay out.
+     */
+    @Query(
+        """
+        SELECT * FROM channels AS ch
+        WHERE ch.hidden = 0
+          AND (
+            EXISTS (
+                SELECT 1 FROM categories AS c
+                WHERE c.id = ch.categoryId AND c.sourceId = ch.sourceId AND c.kind = 'LIVE'
+                  AND (
+                    lower(c.name) LIKE '%anime%' OR lower(c.name) LIKE '%animé%'
+                    OR lower(c.name) LIKE '%animes%' OR c.name LIKE '%アニメ%'
+                    OR lower(c.name) LIKE '%donghua%' OR lower(c.name) LIKE '%otaku%'
+                    OR lower(c.name) LIKE '%crunchyroll%' OR lower(c.name) LIKE '%manga%'
+                  )
+            )
+            OR lower(ifnull(ch.displayName, '')) LIKE '%anime%'
+            OR lower(ifnull(ch.name, '')) LIKE '%anime%'
+            OR ifnull(ch.displayName, '') LIKE '%アニメ%' OR ifnull(ch.name, '') LIKE '%アニメ%'
+            OR lower(ifnull(ch.displayName, '')) LIKE '%donghua%' OR lower(ifnull(ch.name, '')) LIKE '%donghua%'
+            OR lower(ifnull(ch.displayName, '')) LIKE '%otaku%' OR lower(ifnull(ch.name, '')) LIKE '%otaku%'
+            OR lower(ifnull(ch.displayName, '')) LIKE '%crunchyroll%' OR lower(ifnull(ch.name, '')) LIKE '%crunchyroll%'
+            OR lower(ifnull(ch.displayName, '')) LIKE '%manga%' OR lower(ifnull(ch.name, '')) LIKE '%manga%'
+            OR lower(ifnull(ch.displayName, '')) LIKE '%animé%' OR lower(ifnull(ch.name, '')) LIKE '%animé%'
+          )
+        ORDER BY sortIndex, displayName
+        """
+    )
+    suspend fun animeAll(): List<Channel>
+
     /** Like [search] but keeps hidden channels in — the channel manager needs them to unhide. */
     @Query(
         """
@@ -430,6 +463,39 @@ interface MovieDao {
     )
     fun observe(categoryId: String?): Flow<List<Movie>>
 
+    /**
+     * Every movie the anime tab should list: a category whose name says anime, or a title/genre
+     * that does. The WHERE stays in SQL so a 40k library is not loaded to find the matches.
+     * Keep the needles in step with [app.opentv.data.parser.AnimeCatalog].
+     */
+    @Query(
+        """
+        SELECT * FROM movies AS m
+        WHERE EXISTS (
+            SELECT 1 FROM categories AS c
+            WHERE c.id = m.categoryId AND c.sourceId = m.sourceId AND c.kind = 'MOVIE'
+              AND (
+                lower(c.name) LIKE '%anime%' OR lower(c.name) LIKE '%animé%'
+                OR lower(c.name) LIKE '%animes%' OR c.name LIKE '%アニメ%'
+                OR lower(c.name) LIKE '%donghua%' OR lower(c.name) LIKE '%otaku%'
+                OR lower(c.name) LIKE '%crunchyroll%' OR lower(c.name) LIKE '%manga%'
+              )
+        )
+        OR lower(ifnull(m.genre, '')) LIKE '%anime%'
+        OR lower(ifnull(m.name, '')) LIKE '%anime%'
+        OR ifnull(m.genre, '') LIKE '%アニメ%' OR ifnull(m.name, '') LIKE '%アニメ%'
+        OR lower(ifnull(m.genre, '')) LIKE '%donghua%' OR lower(ifnull(m.name, '')) LIKE '%donghua%'
+        OR lower(ifnull(m.genre, '')) LIKE '%otaku%' OR lower(ifnull(m.name, '')) LIKE '%otaku%'
+        OR lower(ifnull(m.genre, '')) LIKE '%crunchyroll%' OR lower(ifnull(m.name, '')) LIKE '%crunchyroll%'
+        OR lower(ifnull(m.genre, '')) LIKE '%manga%' OR lower(ifnull(m.name, '')) LIKE '%manga%'
+        OR lower(ifnull(m.genre, '')) LIKE '%animé%' OR lower(ifnull(m.name, '')) LIKE '%animé%'
+        ORDER BY CASE WHEN rating IS NULL OR rating <= 0 THEN 0 ELSE rating END DESC,
+                 CASE WHEN year IS NULL OR year < 1900 THEN 0 ELSE year END DESC,
+                 name
+        """
+    )
+    suspend fun animeAll(): List<Movie>
+
     @Query("SELECT * FROM movies WHERE favourite = 1 ORDER BY name")
     fun observeFavourites(): Flow<List<Movie>>
 
@@ -553,18 +619,53 @@ interface SeriesDao {
         """
         SELECT * FROM series
         WHERE (:categoryId IS NULL OR categoryId = :categoryId)
-        ORDER BY CASE WHEN year IS NULL OR year < 1900 THEN 0 ELSE year END DESC,
+        ORDER BY CASE
+                   WHEN MAX(IFNULL(contentYear, 0), IFNULL(year, 0)) < 1900 THEN 0
+                   ELSE MAX(IFNULL(contentYear, 0), IFNULL(year, 0))
+                 END DESC,
                  addedMillis DESC, name
         """
     )
     fun observe(categoryId: String?): Flow<List<Series>>
+
+    /** Every series the anime tab should list. Same match as [MovieDao.animeAll], newest year first. */
+    @Query(
+        """
+        SELECT * FROM series AS s
+        WHERE EXISTS (
+            SELECT 1 FROM categories AS c
+            WHERE c.id = s.categoryId AND c.sourceId = s.sourceId AND c.kind = 'SERIES'
+              AND (
+                lower(c.name) LIKE '%anime%' OR lower(c.name) LIKE '%animé%'
+                OR lower(c.name) LIKE '%animes%' OR c.name LIKE '%アニメ%'
+                OR lower(c.name) LIKE '%donghua%' OR lower(c.name) LIKE '%otaku%'
+                OR lower(c.name) LIKE '%crunchyroll%' OR lower(c.name) LIKE '%manga%'
+              )
+        )
+        OR lower(ifnull(s.genre, '')) LIKE '%anime%'
+        OR lower(ifnull(s.name, '')) LIKE '%anime%'
+        OR ifnull(s.genre, '') LIKE '%アニメ%' OR ifnull(s.name, '') LIKE '%アニメ%'
+        OR lower(ifnull(s.genre, '')) LIKE '%donghua%' OR lower(ifnull(s.name, '')) LIKE '%donghua%'
+        OR lower(ifnull(s.genre, '')) LIKE '%otaku%' OR lower(ifnull(s.name, '')) LIKE '%otaku%'
+        OR lower(ifnull(s.genre, '')) LIKE '%crunchyroll%' OR lower(ifnull(s.name, '')) LIKE '%crunchyroll%'
+        OR lower(ifnull(s.genre, '')) LIKE '%manga%' OR lower(ifnull(s.name, '')) LIKE '%manga%'
+        OR lower(ifnull(s.genre, '')) LIKE '%animé%' OR lower(ifnull(s.name, '')) LIKE '%animé%'
+        ORDER BY CASE
+                   WHEN MAX(IFNULL(contentYear, 0), IFNULL(year, 0)) < 1900 THEN 0
+                   ELSE MAX(IFNULL(contentYear, 0), IFNULL(year, 0))
+                 END DESC,
+                 CASE WHEN rating IS NULL OR rating <= 0 THEN 0 ELSE rating END DESC,
+                 name
+        """
+    )
+    suspend fun animeAll(): List<Series>
 
     @Query("SELECT * FROM series WHERE favourite = 1 ORDER BY name")
     fun observeFavourites(): Flow<List<Series>>
 
     @Query(
         """
-        SELECT seriesId, id, favourite, posterUrl, plot, backdropUrl, `cast`, genre, tmdbId
+        SELECT seriesId, id, favourite, posterUrl, plot, backdropUrl, `cast`, genre, tmdbId, contentYear
         FROM series WHERE sourceId = :sourceId
         """
     )
@@ -616,6 +717,22 @@ interface SeriesDao {
     @Query("SELECT * FROM series WHERE id = :id")
     suspend fun byId(id: Long): Series?
 
+    @Query("SELECT * FROM series WHERE sourceId = :sourceId AND seriesId = :seriesId LIMIT 1")
+    suspend fun byProviderId(sourceId: Long, seriesId: String): Series?
+
+    /**
+     * Remember a newer season year learned from `get_series_info`. Never lowers a year already
+     * stored, and never touches the premiere [app.opentv.data.model.Series.year].
+     */
+    @Query(
+        """
+        UPDATE series SET contentYear = :year
+        WHERE sourceId = :sourceId AND seriesId = :seriesId
+          AND (contentYear IS NULL OR contentYear < :year)
+        """
+    )
+    suspend fun raiseContentYear(sourceId: Long, seriesId: String, year: Int)
+
     @Query("UPDATE series SET favourite = :favourite WHERE id = :id")
     suspend fun setFavourite(id: Long, favourite: Boolean)
 
@@ -637,6 +754,9 @@ interface SeriesDao {
 interface EpisodeDao {
     @Query("SELECT * FROM episodes WHERE sourceId = :sourceId AND seriesId = :seriesId ORDER BY season, episodeNumber")
     fun observeForSeries(sourceId: Long, seriesId: String): Flow<List<Episode>>
+
+    @Query("SELECT * FROM episodes WHERE sourceId = :sourceId AND seriesId = :seriesId ORDER BY season, episodeNumber, id")
+    suspend fun listForSeries(sourceId: Long, seriesId: String): List<Episode>
 
     @Query("SELECT * FROM episodes WHERE id = :id")
     suspend fun byId(id: Long): Episode?

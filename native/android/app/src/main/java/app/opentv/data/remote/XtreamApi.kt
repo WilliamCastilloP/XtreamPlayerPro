@@ -11,6 +11,8 @@ import app.opentv.data.model.Episode
 import app.opentv.data.model.Movie
 import app.opentv.data.model.Series
 import app.opentv.data.model.Source
+import app.opentv.data.parser.SeriesContentYear
+import app.opentv.data.parser.VodLanguages
 import app.opentv.data.model.StreamKind
 import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
@@ -200,16 +202,20 @@ class XtreamApi(
     }
 
     /**
-     * Episode list for one series.
+     * Episodes plus the newest season/episode year from the same `get_series_info` body.
      *
      * `episodes` is an object keyed by season number whose values are arrays — except on some
      * panels, where it is an array of arrays, and on others where a season with a single
      * episode collapses to a bare object. All three shapes are handled.
+     * [EpisodeListing.contentYear] stays null when the panel sent no air dates.
      */
-    suspend fun episodes(source: Source, seriesId: String): List<Episode> =
+    data class EpisodeListing(val episodes: List<Episode>, val contentYear: Int?)
+
+    suspend fun episodes(source: Source, seriesId: String): EpisodeListing =
         withContext(Dispatchers.IO) {
             val body = getJson(source, "get_series_info") { it.addQueryParameter("series_id", seriesId) }
-            val episodesNode = body.jsonObjectOrNull?.get("episodes") ?: return@withContext emptyList()
+            val contentYear = SeriesContentYear.latest(body)
+            val episodesNode = body.jsonObjectOrNull?.get("episodes") ?: return@withContext EpisodeListing(emptyList(), contentYear)
 
             val seasonBuckets: List<Pair<Int?, JsonElement>> = when (episodesNode) {
                 is JsonObject -> episodesNode.entries.map { it.key.toIntOrNull() to it.value }
@@ -217,7 +223,7 @@ class XtreamApi(
                 else -> emptyList()
             }
 
-            seasonBuckets.flatMap { (seasonHint, bucket) ->
+            val episodes = seasonBuckets.flatMap { (seasonHint, bucket) ->
                 val items: List<JsonElement> = when (bucket) {
                     is JsonArray -> bucket.toList()
                     is JsonObject -> listOf(bucket)
@@ -243,6 +249,7 @@ class XtreamApi(
                     )
                 }
             }
+            EpisodeListing(episodes, contentYear)
         }
 
     /**
@@ -268,6 +275,7 @@ class XtreamApi(
             rating = info["rating"].asDoubleOrNull,
             year = info["year"].asIntOrNull ?: info["releasedate"].asStringOrNull?.take(4)?.toIntOrNull(),
             durationSeconds = info["duration_secs"].asIntOrNull,
+            languageCodes = VodLanguages.codesInJson(info),
         )
     }
 
@@ -290,6 +298,7 @@ class XtreamApi(
             plot = info["plot"].asStringOrNull ?: info["description"].asStringOrNull,
             rating = info["rating"].asDoubleOrNull,
             year = info["year"].asIntOrNull ?: info["releaseDate"].asStringOrNull?.take(4)?.toIntOrNull(),
+            languageCodes = VodLanguages.codesInJson(info),
         )
     }
 
@@ -451,6 +460,8 @@ class XtreamApi(
         val rating: Double?,
         val year: Int?,
         val durationSeconds: Int?,
+        /** Audio languages the panel listed on this title. Empty when the payload has none. */
+        val languageCodes: List<String> = emptyList(),
     )
 
     /** Rich per-series metadata from `get_series_info`. Series have no director. See [VodInfo]. */
@@ -462,6 +473,8 @@ class XtreamApi(
         val plot: String?,
         val rating: Double?,
         val year: Int?,
+        /** Audio languages the panel listed on this show. Empty when the payload has none. */
+        val languageCodes: List<String> = emptyList(),
     )
 }
 

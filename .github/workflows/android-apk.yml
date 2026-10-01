@@ -98,30 +98,36 @@ jobs:
           path: native/android/dist/*.apk
           if-no-files-found: error
 
+      # The in-app update dialog shows this file up to the "Built by GitHub Actions" line.
+      # That line has to stay: UpdateChecker.cleanNotes drops everything from it downward,
+      # so the Stick sees the changelog and not the install boilerplate.
+      - name: Release notes from the changelog
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${VERSION#android-}"
+          awk -v v="$VERSION" '$0 ~ ("^## " v "([^0-9]|$)"){f=1;next} /^## /{f=0} f{print}' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/release-notes.md"; then
+            echo "::error::CHANGELOG.md has no section for ${VERSION}. The update dialog shows that section, so add ## ${VERSION} before tagging."
+            exit 1
+          fi
+          {
+            echo ""
+            echo "Built by GitHub Actions from the tagged commit."
+            echo ""
+            echo "Do not uninstall. This APK upgrades in place and keeps providers, favourites and watch history."
+            echo "Fire Stick — Downloader code: 8417717 (https://aftv.news/8417717)"
+            echo "Direct APK: https://github.com/WilliamCastilloP/XtreamPlayerPro/releases/latest/download/XTREAM.apk"
+            echo "In the app: Settings → About → Check for updates."
+          } >> "$RUNNER_TEMP/release-notes.md"
+
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: native/android/dist/*.apk
           fail_on_unmatched_files: true
-          generate_release_notes: true
+          generate_release_notes: false
           make_latest: true
-          body: |
-            Native XTREAM APK for Fire TV / Android TV (OpenTV fork).
-
-            **Do not uninstall.** This APK upgrades in place and keeps providers, favourites and watch history.
-
-            **Fire Stick — Downloader code:** `8417717`
-
-            (or https://aftv.news/8417717)
-
-            Direct APK:
-
-            `https://github.com/WilliamCastilloP/XtreamPlayerPro/releases/latest/download/XTREAM.apk`
-
-            In the app: Settings → About → Check for updates.
-
-            Package id: `app.xtream.player` (installs next to stock OpenTV).
-
-            Signed with the Android debug key unless repository signing secrets are set.
-            Enable *Apps from Unknown Sources* if prompted.
+          body_path: ${{ runner.temp }}/release-notes.md

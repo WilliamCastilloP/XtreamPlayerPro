@@ -23,6 +23,7 @@
     <string name="nav_live_tv">TV en vivo</string>
     <string name="nav_movies">Películas</string>
     <string name="nav_shows">Series</string>
+    <string name="nav_anime">Anime</string>
     <string name="nav_recordings">Grabaciones</string>
     <string name="nav_search">Buscar</string>
     <string name="nav_settings">Ajustes</string>
@@ -424,6 +425,12 @@
     <string name="vod_cast">Reparto</string>
     <string name="vod_director">Director</string>
     <string name="vod_season">Temporada %1$d</string>
+    <string name="vod_next_episode">Siguiente capítulo</string>
+    <string name="anime_featured">Películas destacadas</string>
+    <string name="anime_series">Series</string>
+    <string name="anime_recommended">Recomendaciones</string>
+    <string name="anime_empty_title">Todavía no hay anime</string>
+    <string name="anime_empty_body">Aparece cuando una categoría o un título está marcado como anime. Entra a Películas o Series una vez para que cargue la biblioteca.</string>
     <string name="vod_new_episodes">Nuevos episodios</string>
     <string name="vod_detail_loading">Cargando…</string>
     <string name="vod_person_title">Con %1$s</string>

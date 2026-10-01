@@ -51,9 +51,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import app.opentv.core.AppSettings
 import app.opentv.core.ServiceLocator
 import app.opentv.data.model.Source
@@ -200,8 +202,8 @@ object Routes {
     const val SYNC = "sync"
     const val REC_SETTINGS = "recording-settings"
     const val ABOUT = "about"
-    const val SERIES_DETAIL = "series/{seriesId}"
-    const val MOVIE_DETAIL = "movie/{movieId}"
+    const val SERIES_DETAIL = "series/{seriesId}?shelf={shelf}"
+    const val MOVIE_DETAIL = "movie/{movieId}?shelf={shelf}"
     const val EDIT_SOURCE = "edit-source/{sourceId}"
 
     // A person's name goes in a query arg, URL-encoded, so spaces and punctuation survive the round
@@ -210,16 +212,19 @@ object Routes {
 
     // VOD plays carry the stream inline; a movie/episode is a one-off URL, not a stored id
     // the player can look up the way a channel is.
-    const val VOD_PLAYER = "vod?key={key}&url={url}&title={title}&ua={ua}"
+    const val VOD_PLAYER = "vod?key={key}&url={url}&title={title}&ua={ua}&shelf={shelf}"
 
     fun player(channelId: Long) = "player/$channelId"
-    fun seriesDetail(seriesId: Long) = "series/$seriesId"
-    fun movieDetail(movieId: Long) = "movie/$movieId"
+    fun seriesDetail(seriesId: Long, anime: Boolean = false) =
+        "series/$seriesId?shelf=${if (anime) "anime" else "0"}"
+    fun movieDetail(movieId: Long, anime: Boolean = false) =
+        "movie/$movieId?shelf=${if (anime) "anime" else "0"}"
     fun editSource(sourceId: Long) = "edit-source/$sourceId"
     fun person(name: String) = "person?name=${java.net.URLEncoder.encode(name, "UTF-8")}"
-    fun vodPlayer(key: String, url: String, title: String, ua: String): String {
+    fun vodPlayer(key: String, url: String, title: String, ua: String, anime: Boolean = false): String {
         fun e(v: String) = java.net.URLEncoder.encode(v, "UTF-8")
-        return "vod?key=${e(key)}&url=${e(url)}&title=${e(title)}&ua=${e(ua)}"
+        val shelf = if (anime) "anime" else "0"
+        return "vod?key=${e(key)}&url=${e(url)}&title=${e(title)}&ua=${e(ua)}&shelf=$shelf"
     }
 }
 
@@ -375,6 +380,17 @@ private fun OpenTvApp(isTelevision: Boolean) {
                         // Catch-up is a seekable archive stream — plays through the VOD player.
                         navController.navigate(Routes.vodPlayer(key, url, title, ua))
                     },
+                    onOpenAnimeMovie = { movie ->
+                        navController.navigate(Routes.movieDetail(movie.id, anime = true))
+                    },
+                    onOpenAnimeSeries = { series ->
+                        navController.navigate(Routes.seriesDetail(series.id, anime = true))
+                    },
+                    onResumeAnime = { key, url, title ->
+                        navController.navigate(
+                            Routes.vodPlayer(key, url, title, Source.DEFAULT_USER_AGENT, anime = true),
+                        )
+                    },
                     activeProfileName = activeProfileName,
                 )
             }
@@ -466,25 +482,35 @@ private fun OpenTvApp(isTelevision: Boolean) {
                 )
             }
 
-            composable(Routes.SERIES_DETAIL) { entry ->
+            composable(
+                Routes.SERIES_DETAIL,
+                arguments = listOf(navArgument("shelf") { type = NavType.StringType; defaultValue = "0" }),
+            ) { entry ->
                 val seriesId = entry.arguments?.getString("seriesId")?.toLongOrNull() ?: return@composable
+                val anime = entry.arguments?.getString("shelf") == "anime"
                 SeriesDetailScreen(
                     seriesId = seriesId,
+                    anime = anime,
                     viewModel = vodViewModel,
                     onPlayEpisode = { key, url, title ->
                         navController.navigate(
-                            Routes.vodPlayer(key, url, title, Source.DEFAULT_USER_AGENT),
+                            Routes.vodPlayer(key, url, title, Source.DEFAULT_USER_AGENT, anime = anime),
                         )
                     },
-                    onOpenSeries = { series -> navController.navigate(Routes.seriesDetail(series.id)) },
+                    onOpenSeries = { series -> navController.navigate(Routes.seriesDetail(series.id, anime)) },
                     onOpenPerson = { name -> navController.navigate(Routes.person(name)) },
                 )
             }
 
-            composable(Routes.MOVIE_DETAIL) { entry ->
+            composable(
+                Routes.MOVIE_DETAIL,
+                arguments = listOf(navArgument("shelf") { type = NavType.StringType; defaultValue = "0" }),
+            ) { entry ->
                 val movieId = entry.arguments?.getString("movieId")?.toLongOrNull() ?: return@composable
+                val anime = entry.arguments?.getString("shelf") == "anime"
                 MovieDetailScreen(
                     movieId = movieId,
+                    anime = anime,
                     viewModel = vodViewModel,
                     onPlay = { movie ->
                         navController.navigate(
@@ -493,15 +519,16 @@ private fun OpenTvApp(isTelevision: Boolean) {
                                 url = movie.streamUrl,
                                 title = movie.displayTitle,
                                 ua = Source.DEFAULT_USER_AGENT,
+                                anime = anime,
                             ),
                         )
                     },
                     onPlayUrl = { key, url, title ->
                         navController.navigate(
-                            Routes.vodPlayer(key = key, url = url, title = title, ua = Source.DEFAULT_USER_AGENT),
+                            Routes.vodPlayer(key = key, url = url, title = title, ua = Source.DEFAULT_USER_AGENT, anime = anime),
                         )
                     },
-                    onOpenMovie = { movie -> navController.navigate(Routes.movieDetail(movie.id)) },
+                    onOpenMovie = { movie -> navController.navigate(Routes.movieDetail(movie.id, anime)) },
                     onOpenPerson = { name -> navController.navigate(Routes.person(name)) },
                 )
             }
@@ -518,14 +545,29 @@ private fun OpenTvApp(isTelevision: Boolean) {
                 )
             }
 
-            composable(Routes.VOD_PLAYER) { entry ->
+            composable(
+                Routes.VOD_PLAYER,
+                arguments = listOf(navArgument("shelf") { type = NavType.StringType; defaultValue = "0" }),
+            ) { entry ->
                 fun arg(name: String) = entry.arguments?.getString(name)
                     ?.let { java.net.URLDecoder.decode(it, "UTF-8") }.orEmpty()
+                val anime = entry.arguments?.getString("shelf") == "anime"
+                val ua = arg("ua").ifEmpty { Source.DEFAULT_USER_AGENT }
                 VodPlayerScreen(
                     mediaKey = arg("key"),
                     streamUrl = arg("url"),
                     title = arg("title"),
-                    userAgent = arg("ua").ifEmpty { Source.DEFAULT_USER_AGENT },
+                    userAgent = ua,
+                    anime = anime,
+                    onPlayNext = if (!anime) {
+                        null
+                    } else {
+                        { key, url, title ->
+                            navController.navigate(Routes.vodPlayer(key, url, title, ua, anime = true)) {
+                                popUpTo(Routes.VOD_PLAYER) { inclusive = true }
+                            }
+                        }
+                    },
                     onBack = { navController.popBackStack() },
                 )
             }

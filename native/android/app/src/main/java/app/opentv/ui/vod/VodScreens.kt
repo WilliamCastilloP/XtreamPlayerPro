@@ -68,6 +68,7 @@ import app.opentv.data.parser.displayTitle
 import app.opentv.ui.VodBrowse
 import app.opentv.ui.VodViewModel
 import app.opentv.data.repo.GenreGroup
+import app.opentv.ui.theme.LocalShelfChrome
 import app.opentv.ui.theme.XtreamFocus
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
@@ -741,12 +742,13 @@ internal fun PosterCard(
                 )
             }
             }
+            val chrome = LocalShelfChrome.current
             Box(
                 Modifier
                     .fillMaxSize()
                     .border(
                         width = FOCUS_RING,
-                        color = if (focused) XtreamFocus.fill else Color.Transparent,
+                        color = if (focused) chrome.focusFill else Color.Transparent,
                         shape = RoundedCornerShape(10.dp),
                     ),
             )
@@ -844,12 +846,13 @@ private fun ResumeCard(item: VodViewModel.ResumeItem, focusable: Boolean = true,
                     modifier = Modifier.fillMaxWidth().height(4.dp).align(Alignment.BottomStart),
                 )
             }
+            val chrome = LocalShelfChrome.current
             Box(
                 Modifier
                     .fillMaxSize()
                     .border(
                         width = FOCUS_RING,
-                        color = if (focused) XtreamFocus.fill else Color.Transparent,
+                        color = if (focused) chrome.focusFill else Color.Transparent,
                         shape = RoundedCornerShape(8.dp),
                     ),
             )
@@ -1005,7 +1008,7 @@ private fun SearchAffordance(onOpenSearch: () -> Unit, allowFocus: Boolean = tru
 }
 
 @Composable
-private fun EmptyVod(title: String, body: String) {
+internal fun EmptyVod(title: String, body: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(title, style = MaterialTheme.typography.headlineSmall)
@@ -1016,7 +1019,7 @@ private fun EmptyVod(title: String, body: String) {
 }
 
 @Composable
-private fun LoadingVod(message: String) {
+internal fun LoadingVod(message: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             CircularProgressIndicator()

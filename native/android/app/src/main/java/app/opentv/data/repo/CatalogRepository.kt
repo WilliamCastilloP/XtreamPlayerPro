@@ -24,6 +24,7 @@ import app.opentv.data.model.Series
 import app.opentv.data.model.Source
 import app.opentv.data.model.SourceKind
 import app.opentv.data.model.StreamKind
+import app.opentv.data.parser.AnimeCatalog
 import app.opentv.data.parser.ChannelNameNormalizer
 import app.opentv.data.parser.M3uParser
 import app.opentv.data.parser.VodLanguages
@@ -51,6 +52,13 @@ internal fun distinctByQuality(channels: List<app.opentv.data.model.Channel>): L
     val seen = HashSet<String>()
     return channels.filter { seen.add("${it.qualityRank}|${it.qualityLabel.lowercase()}") }
 }
+
+/** Anime tab: featured movies, the series row, and a recommendations row. */
+data class AnimeHome(
+    val movies: List<Movie>,
+    val series: List<Series>,
+    val recommended: List<Series>,
+)
 
 /** A home/detail row: a genre label and the titles under it. Generic so movies and series share it. */
 @androidx.compose.runtime.Immutable
@@ -235,6 +243,77 @@ class CatalogRepository(
 
     suspend fun seriesByProvider(sourceId: Long, seriesId: String): Series? =
         seriesDao.byProviderId(sourceId, seriesId)
+
+    /** Featured anime movies, the series row, and recommendations. Reads the catalogue already on disk. */
+    suspend fun animeHome(profileId: Long): AnimeHome = withContext(Dispatchers.IO) {
+        val movies = movieDao.animeFeatured(24)
+        val shows = seriesDao.animeShelf(48)
+        val recommended = AnimeCatalog.recommend(shows, watchedAnimeGenres(profileId), 20)
+        val leadIds = shows.take(8).map { it.id }.toSet()
+        val rec = recommended.filter { it.id !in leadIds }.ifEmpty { recommended }.take(20)
+        AnimeHome(movies = movies, series = shows.take(20), recommended = rec)
+    }
+
+    /** Continue-watching keys that belong on the anime shelf. */
+    suspend fun animeMediaKeys(keys: List<String>): Set<String> = withContext(Dispatchers.IO) {
+        if (keys.isEmpty()) return@withContext emptySet()
+        val movieCats = animeCategoryKeys(StreamKind.MOVIE)
+        val seriesCats = animeCategoryKeys(StreamKind.SERIES)
+        val matched = HashSet<String>()
+        for (key in keys) {
+            val id = key.substringAfter(':', "").toLongOrNull() ?: continue
+            when {
+                key.startsWith("movie:") -> {
+                    val movie = movieDao.byId(id) ?: continue
+                    val inCategory = movie.categoryId?.let { movie.sourceId to it } in movieCats
+                    if (inCategory || AnimeCatalog.matches(movie.name) || AnimeCatalog.matches(movie.genre)) {
+                        matched += key
+                    }
+                }
+                key.startsWith("ep:") -> {
+                    val episode = episodeDao.byId(id) ?: continue
+                    val show = seriesDao.byProviderId(episode.sourceId, episode.seriesId) ?: continue
+                    val inCategory = show.categoryId?.let { show.sourceId to it } in seriesCats
+                    if (inCategory || AnimeCatalog.matches(show.name) || AnimeCatalog.matches(show.genre)) {
+                        matched += key
+                    }
+                }
+            }
+        }
+        matched
+    }
+
+    /** The next chapter after this episode, or null for a movie or the last episode. */
+    suspend fun nextEpisode(mediaKey: String): Episode? = withContext(Dispatchers.IO) {
+        val id = mediaKey.removePrefix("ep:").toLongOrNull() ?: return@withContext null
+        if (!mediaKey.startsWith("ep:")) return@withContext null
+        val current = episodeDao.byId(id) ?: return@withContext null
+        val episodes = episodeDao.listForSeries(current.sourceId, current.seriesId)
+        AnimeCatalog.nextEpisode(current.id, episodes)
+    }
+
+    private suspend fun animeCategoryKeys(kind: StreamKind): Set<Pair<Long, String>> =
+        categoryDao.allByKind(kind)
+            .filter { AnimeCatalog.matches(it.name) }
+            .map { it.sourceId to it.id }
+            .toSet()
+
+    private suspend fun watchedAnimeGenres(profileId: Long): Set<String> {
+        val seriesCats = animeCategoryKeys(StreamKind.SERIES)
+        val genres = HashSet<String>()
+        var looked = 0
+        for (mark in positionDao.forProfile(profileId)) {
+            if (looked >= 40 || !mark.mediaKey.startsWith("ep:")) continue
+            val id = mark.mediaKey.removePrefix("ep:").toLongOrNull() ?: continue
+            val episode = episodeDao.byId(id) ?: continue
+            val show = seriesDao.byProviderId(episode.sourceId, episode.seriesId) ?: continue
+            val inCategory = show.categoryId?.let { show.sourceId to it } in seriesCats
+            if (!inCategory && !AnimeCatalog.matches(show.name) && !AnimeCatalog.matches(show.genre)) continue
+            looked++
+            genres += AnimeCatalog.genres(show.genre)
+        }
+        return genres
+    }
 
     /**
      * Languages for a film: codes stamped on its title and on quality/language siblings, plus

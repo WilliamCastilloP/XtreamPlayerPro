@@ -63,14 +63,17 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.opentv.data.model.Channel
 import app.opentv.data.model.Movie
 import app.opentv.data.model.Recording
 import app.opentv.data.model.Series
 import app.opentv.ui.channels.HomeScreen
 import app.opentv.ui.recordings.RecordingsScreen
+import app.opentv.ui.vod.AnimeScreen
 import app.opentv.ui.vod.MoviesScreen
 import app.opentv.ui.vod.SeriesScreen
+import app.opentv.ui.theme.CrunchyrollColors
 import app.opentv.ui.theme.XtreamFocus
 
 /**
@@ -79,10 +82,11 @@ import app.opentv.ui.theme.XtreamFocus
  * menu people asked for, instead of a top bar that ate a row of the guide. It overlays the content
  * rather than pushing it, so expanding the menu never reflows the guide underneath.
  */
-enum class Tab(val labelRes: Int, val icon: ImageVector) {
+enum class Tab(val labelRes: Int, val icon: ImageVector?, val glyph: String? = null) {
     LIVE(R.string.nav_live_tv, Icons.Filled.LiveTv),
     MOVIES(R.string.nav_movies, Icons.Filled.Movie),
     SHOWS(R.string.nav_shows, Icons.Filled.Tv),
+    ANIME(R.string.nav_anime, icon = null, glyph = "ア"),
     RECORDINGS(R.string.nav_recordings, Icons.Filled.FiberManualRecord),
 }
 
@@ -113,6 +117,9 @@ fun MainScreen(
     onOpenProfiles: () -> Unit,
     onPlayRecording: (Recording) -> Unit,
     onPlayCatchup: (mediaKey: String, url: String, title: String, ua: String) -> Unit,
+    onOpenAnimeMovie: (Movie) -> Unit,
+    onOpenAnimeSeries: (Series) -> Unit,
+    onResumeAnime: (mediaKey: String, url: String, title: String) -> Unit,
     activeProfileName: String,
 ) {
     // Content-type toggles: a switched-off type has its tab hidden here (and its sync skipped in
@@ -128,6 +135,7 @@ fun MainScreen(
             if (liveEnabled) add(Tab.LIVE)
             if (moviesEnabled) add(Tab.MOVIES)
             if (seriesEnabled) add(Tab.SHOWS)
+            if (moviesEnabled || seriesEnabled) add(Tab.ANIME)
             add(Tab.RECORDINGS)
         }
     }
@@ -211,6 +219,13 @@ fun MainScreen(
                     onOpenSeries = onOpenSeries,
                     onResume = onResume,
                     onOpenSearch = onOpenSearch,
+                    hasSources = hasSources,
+                    isSyncing = isSyncing,
+                )
+                Tab.ANIME -> AnimeScreen(
+                    onOpenMovie = onOpenAnimeMovie,
+                    onOpenSeries = onOpenAnimeSeries,
+                    onResume = onResumeAnime,
                     hasSources = hasSources,
                     isSyncing = isSyncing,
                 )
@@ -324,7 +339,14 @@ private fun NavRail(
         Spacer(Modifier.height(8.dp))
 
         tabs.forEach { t ->
-            RailItem(t.icon, stringResource(t.labelRes), expanded, current == t) { onSelect(t) }
+            RailItem(
+                icon = t.icon,
+                glyph = t.glyph,
+                label = stringResource(t.labelRes),
+                expanded = expanded,
+                selected = current == t,
+                onClick = { onSelect(t) },
+            )
         }
 
         Spacer(Modifier.height(1.dp).fillMaxWidth())
@@ -338,11 +360,12 @@ private fun NavRail(
 
 @Composable
 private fun RailItem(
-    icon: ImageVector,
+    icon: ImageVector?,
     label: String,
     expanded: Boolean,
     selected: Boolean,
     onClick: () -> Unit,
+    glyph: String? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
     val bg = when {
@@ -365,7 +388,18 @@ private fun RailItem(
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = label, tint = tint)
+        if (glyph != null) {
+            Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    glyph,
+                    color = if (focused) XtreamFocus.onFill else CrunchyrollColors.orange,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Black,
+                )
+            }
+        } else if (icon != null) {
+            Icon(icon, contentDescription = label, tint = tint)
+        }
         if (expanded) {
             Spacer(Modifier.width(14.dp))
             Text(

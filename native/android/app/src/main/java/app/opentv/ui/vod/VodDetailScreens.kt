@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
@@ -70,7 +71,7 @@ import app.opentv.data.model.Series
 import app.opentv.data.model.StremioStream
 import app.opentv.data.parser.displayTitle
 import app.opentv.ui.VodViewModel
-import app.opentv.ui.theme.XtreamFocus
+import app.opentv.ui.theme.LocalShelfChrome
 import coil.compose.AsyncImage
 import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.delay
@@ -90,8 +91,19 @@ fun MovieDetailScreen(
     onPlayUrl: (key: String, url: String, title: String) -> Unit,
     onOpenMovie: (Movie) -> Unit,
     onOpenPerson: (String) -> Unit,
+    anime: Boolean = false,
     viewModel: VodViewModel = viewModel(),
 ) {
+    if (anime) {
+        app.opentv.ui.theme.CrunchyrollTheme {
+            MovieDetailScreen(
+                movieId, onPlay, onPlayUrl, onOpenMovie, onOpenPerson,
+                anime = false,
+                viewModel = viewModel,
+            )
+        }
+        return
+    }
     var movie by remember(movieId) { mutableStateOf<Movie?>(null) }
     var moreLike by remember(movieId) { mutableStateOf<List<Movie>>(emptyList()) }
     var resumeExists by remember(movieId) { mutableStateOf(false) }
@@ -135,7 +147,7 @@ fun MovieDetailScreen(
         else graph.vodPreloader.preload(target, ua)
     }
 
-    LazyColumn(Modifier.fillMaxSize()) {
+    LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         item(key = "header") {
             DetailBackdrop(title = m.displayTitle, backdropUrl = m.backdropUrl, posterUrl = m.posterUrl, meta = movieMeta(m)) {
                 DetailButton(
@@ -295,8 +307,19 @@ fun SeriesDetailScreen(
     onPlayEpisode: (mediaKey: String, url: String, title: String) -> Unit,
     onOpenSeries: (Series) -> Unit,
     onOpenPerson: (String) -> Unit,
+    anime: Boolean = false,
     viewModel: VodViewModel = viewModel(),
 ) {
+    if (anime) {
+        app.opentv.ui.theme.CrunchyrollTheme {
+            SeriesDetailScreen(
+                seriesId, onPlayEpisode, onOpenSeries, onOpenPerson,
+                anime = false,
+                viewModel = viewModel,
+            )
+        }
+        return
+    }
     var series by remember(seriesId) { mutableStateOf<Series?>(null) }
     var moreLike by remember(seriesId) { mutableStateOf<List<Series>>(emptyList()) }
     var languages by remember(seriesId) { mutableStateOf<List<String>>(emptyList()) }
@@ -362,7 +385,7 @@ fun SeriesDetailScreen(
         }
     }
 
-    LazyColumn(Modifier.fillMaxSize()) {
+    LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         item(key = "header") {
             DetailBackdrop(
                 title = s.displayTitle,
@@ -700,8 +723,9 @@ private fun GenreChip(label: String) {
 @Composable
 private fun PersonChip(name: String, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    val container = if (focused) XtreamFocus.fill else MaterialTheme.colorScheme.surfaceVariant
-    val content = if (focused) XtreamFocus.onFill else MaterialTheme.colorScheme.onSurface
+    val chrome = LocalShelfChrome.current
+    val container = if (focused) chrome.focusFill else MaterialTheme.colorScheme.surfaceVariant
+    val content = if (focused) chrome.onFocus else MaterialTheme.colorScheme.onSurface
     Text(
         name,
         style = MaterialTheme.typography.titleSmall,
@@ -713,7 +737,7 @@ private fun PersonChip(name: String, onClick: () -> Unit) {
             .clip(RoundedCornerShape(22.dp))
             .background(container)
             .then(
-                if (focused) Modifier.border(2.dp, XtreamFocus.ring, RoundedCornerShape(22.dp))
+                if (focused) Modifier.border(2.dp, chrome.focusRing, RoundedCornerShape(22.dp))
                 else Modifier,
             )
             .clickable(onClick = onClick)
@@ -731,32 +755,42 @@ private fun DetailButton(
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val chrome = LocalShelfChrome.current
     val container = when {
-        focused -> XtreamFocus.fill
+        focused -> chrome.focusFill
         primary -> MaterialTheme.colorScheme.primaryContainer
         else -> Color.White.copy(alpha = 0.16f)
     }
     val content = when {
-        focused -> XtreamFocus.onFill
+        focused -> chrome.onFocus
         primary -> MaterialTheme.colorScheme.onPrimaryContainer
         else -> Color.White
     }
+    val shape = if (chrome.iconOnly) androidx.compose.foundation.shape.CircleShape else RoundedCornerShape(12.dp)
     Row(
         modifier
             .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(12.dp))
+            .clip(shape)
             .background(container)
             .then(
-                if (focused) Modifier.border(2.dp, XtreamFocus.ring, RoundedCornerShape(12.dp))
+                if (focused) Modifier.border(2.dp, chrome.focusRing, shape)
                 else Modifier,
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 12.dp),
+            .padding(if (chrome.iconOnly) 10.dp else 0.dp)
+            .padding(horizontal = if (chrome.iconOnly) 0.dp else 18.dp, vertical = if (chrome.iconOnly) 0.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = null, tint = content)
-        Spacer(Modifier.width(8.dp))
-        Text(label, style = MaterialTheme.typography.titleMedium, color = content)
+        Icon(
+            icon,
+            contentDescription = if (chrome.iconOnly) label else null,
+            tint = content,
+            modifier = if (chrome.iconOnly) Modifier.size(22.dp) else Modifier,
+        )
+        if (!chrome.iconOnly) {
+            Spacer(Modifier.width(8.dp))
+            Text(label, style = MaterialTheme.typography.titleMedium, color = content)
+        }
     }
 }
 
@@ -764,15 +798,16 @@ private fun DetailButton(
 @Composable
 private fun EpisodeRow(ep: Episode, onPlay: (mediaKey: String, url: String, title: String) -> Unit) {
     var focused by remember { mutableStateOf(false) }
+    val chrome = LocalShelfChrome.current
     Row(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 24.dp, vertical = 3.dp)
             .onFocusChanged { focused = it.isFocused }
             .clip(RoundedCornerShape(8.dp))
-            .background(if (focused) XtreamFocus.fill else MaterialTheme.colorScheme.surface)
+            .background(if (focused) chrome.focusFill else MaterialTheme.colorScheme.surface)
             .then(
-                if (focused) Modifier.border(2.dp, XtreamFocus.ring, RoundedCornerShape(8.dp))
+                if (focused) Modifier.border(2.dp, chrome.focusRing, RoundedCornerShape(8.dp))
                 else Modifier,
             )
             .clickable {
@@ -784,12 +819,13 @@ private fun EpisodeRow(ep: Episode, onPlay: (mediaKey: String, url: String, titl
         Text(
             "S${ep.season}E${ep.episodeNumber}",
             style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary,
+            color = if (focused) chrome.onFocus else MaterialTheme.colorScheme.primary,
             modifier = Modifier.width(72.dp),
         )
         Text(
             ep.title,
             style = MaterialTheme.typography.bodyLarge,
+            color = if (focused) chrome.onFocus else MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

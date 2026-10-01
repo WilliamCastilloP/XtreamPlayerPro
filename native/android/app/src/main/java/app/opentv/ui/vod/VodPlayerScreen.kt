@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -89,6 +90,8 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
 import app.opentv.R
+import app.opentv.data.model.Episode
+import app.opentv.ui.theme.LocalShelfChrome
 import app.opentv.core.ServiceLocator
 import app.opentv.core.SleepTimer
 import app.opentv.core.findActivity
@@ -126,7 +129,19 @@ fun VodPlayerScreen(
     title: String,
     userAgent: String,
     onBack: () -> Unit,
+    anime: Boolean = false,
+    onPlayNext: ((mediaKey: String, url: String, title: String) -> Unit)? = null,
 ) {
+    if (anime) {
+        app.opentv.ui.theme.CrunchyrollTheme {
+            VodPlayerScreen(
+                mediaKey, streamUrl, title, userAgent, onBack,
+                anime = false,
+                onPlayNext = onPlayNext,
+            )
+        }
+        return
+    }
     val context = LocalContext.current
     val view = LocalView.current
     val graph = remember { ServiceLocator.get(context) }
@@ -172,6 +187,10 @@ fun VodPlayerScreen(
     val tracks by controller.tracks.collectAsState()
 
     var paused by remember { mutableStateOf(false) }
+    var nextEpisode by remember(mediaKey) { mutableStateOf<Episode?>(null) }
+    LaunchedEffect(mediaKey, onPlayNext) {
+        nextEpisode = if (onPlayNext == null) null else graph.catalogRepository.nextEpisode(mediaKey)
+    }
     var vodPanel by remember { mutableStateOf(VodPanel.NONE) }
     val panelFocus = remember { FocusRequester() }
     var positionMs by remember { mutableLongStateOf(0L) }
@@ -555,6 +574,18 @@ fun VodPlayerScreen(
                     VodChip(Icons.Filled.FastForward, stringResource(R.string.player_forward)) {
                         if (growingRec) seekRelative(15_000) else controller.seekForward(); interaction++
                     }
+                    val upcoming = nextEpisode
+                    if (upcoming != null && onPlayNext != null) {
+                        Spacer(Modifier.width(10.dp))
+                        VodChip(Icons.Filled.SkipNext, stringResource(R.string.vod_next_episode)) {
+                            onPlayNext(
+                                "ep:${upcoming.id}",
+                                upcoming.streamUrl,
+                                "S${upcoming.season}E${upcoming.episodeNumber} · ${upcoming.title}",
+                            )
+                            interaction++
+                        }
+                    }
                     Spacer(Modifier.width(20.dp))
                     VodChip(Icons.Filled.ClosedCaption, stringResource(R.string.player_subtitles)) {
                         vodPanel = if (vodPanel == VodPanel.SUBTITLES) VodPanel.NONE else VodPanel.SUBTITLES
@@ -579,25 +610,35 @@ private fun VodChip(
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val container = if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.14f)
-    val content = if (focused) MaterialTheme.colorScheme.onPrimary else Color.White
+    val chrome = LocalShelfChrome.current
+    val container = if (focused) chrome.focusFill else Color.White.copy(alpha = 0.14f)
+    val content = if (focused) chrome.onFocus else Color.White
+    val shape = if (chrome.iconOnly) androidx.compose.foundation.shape.CircleShape else RoundedCornerShape(12.dp)
     Row(
         modifier = Modifier
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(12.dp))
+            .clip(shape)
             .background(container)
             .then(
-                if (focused) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
+                if (focused) Modifier.border(2.dp, chrome.focusRing, shape)
                 else Modifier,
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(if (chrome.iconOnly) 8.dp else 0.dp)
+            .padding(horizontal = if (chrome.iconOnly) 0.dp else 14.dp, vertical = if (chrome.iconOnly) 0.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = label, tint = content)
-        Spacer(Modifier.width(6.dp))
-        Text(label, style = MaterialTheme.typography.labelLarge, color = content)
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = content,
+            modifier = if (chrome.iconOnly) Modifier.size(22.dp) else Modifier,
+        )
+        if (!chrome.iconOnly) {
+            Spacer(Modifier.width(6.dp))
+            Text(label, style = MaterialTheme.typography.labelLarge, color = content)
+        }
     }
 }
 

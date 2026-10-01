@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.4
+
+- **Anime shelf.** A new tab, marked with ア, lists featured movies, series and recommendations taken from categories and titles the provider already marks as anime. The page, the detail buttons and the player controls use an orange-on-black theme. Playback is the same player as Movies and Shows. On that player the controls are icon-only, and a series gets a next-episode button. Live TV is unchanged.
+
 ## 0.18.3
 
 - **New episodes.** Opening a series reads the season and episode air dates the panel already sends. A 2025 show that added a season in 2026 gets a small “New episodes” banner, and the category files it with 2026. The premiere year stays on the detail page. A show you have not opened yet stays on its premiere year — reading every series would be one request per title.

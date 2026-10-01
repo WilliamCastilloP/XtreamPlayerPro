@@ -430,6 +430,37 @@ interface MovieDao {
     )
     fun observe(categoryId: String?): Flow<List<Movie>>
 
+    /**
+     * Movies for the anime shelf: a category whose name says anime, or a title/genre that does.
+     * Kept in SQL so a 40k library is not loaded to find a few dozen posters.
+     */
+    @Query(
+        """
+        SELECT * FROM movies AS m
+        WHERE EXISTS (
+            SELECT 1 FROM categories AS c
+            WHERE c.id = m.categoryId AND c.sourceId = m.sourceId AND c.kind = 'MOVIE'
+              AND (
+                lower(c.name) LIKE '%anime%' OR lower(c.name) LIKE '%animé%'
+                OR lower(c.name) LIKE '%animes%' OR c.name LIKE '%アニメ%'
+                OR lower(c.name) LIKE '%donghua%' OR lower(c.name) LIKE '%otaku%'
+                OR lower(c.name) LIKE '%crunchyroll%'
+              )
+        )
+        OR lower(ifnull(m.genre, '')) LIKE '%anime%'
+        OR lower(ifnull(m.name, '')) LIKE '%anime%'
+        OR ifnull(m.genre, '') LIKE '%アニメ%' OR ifnull(m.name, '') LIKE '%アニメ%'
+        OR lower(ifnull(m.genre, '')) LIKE '%donghua%' OR lower(ifnull(m.name, '')) LIKE '%donghua%'
+        OR lower(ifnull(m.genre, '')) LIKE '%otaku%' OR lower(ifnull(m.name, '')) LIKE '%otaku%'
+        OR lower(ifnull(m.genre, '')) LIKE '%crunchyroll%' OR lower(ifnull(m.name, '')) LIKE '%crunchyroll%'
+        ORDER BY CASE WHEN rating IS NULL OR rating <= 0 THEN 0 ELSE rating END DESC,
+                 CASE WHEN year IS NULL OR year < 1900 THEN 0 ELSE year END DESC,
+                 name
+        LIMIT :limit
+        """
+    )
+    suspend fun animeFeatured(limit: Int): List<Movie>
+
     @Query("SELECT * FROM movies WHERE favourite = 1 ORDER BY name")
     fun observeFavourites(): Flow<List<Movie>>
 
@@ -562,6 +593,37 @@ interface SeriesDao {
     )
     fun observe(categoryId: String?): Flow<List<Series>>
 
+    /** Series for the anime shelf. Same match as [MovieDao.animeFeatured], newest year first. */
+    @Query(
+        """
+        SELECT * FROM series AS s
+        WHERE EXISTS (
+            SELECT 1 FROM categories AS c
+            WHERE c.id = s.categoryId AND c.sourceId = s.sourceId AND c.kind = 'SERIES'
+              AND (
+                lower(c.name) LIKE '%anime%' OR lower(c.name) LIKE '%animé%'
+                OR lower(c.name) LIKE '%animes%' OR c.name LIKE '%アニメ%'
+                OR lower(c.name) LIKE '%donghua%' OR lower(c.name) LIKE '%otaku%'
+                OR lower(c.name) LIKE '%crunchyroll%'
+              )
+        )
+        OR lower(ifnull(s.genre, '')) LIKE '%anime%'
+        OR lower(ifnull(s.name, '')) LIKE '%anime%'
+        OR ifnull(s.genre, '') LIKE '%アニメ%' OR ifnull(s.name, '') LIKE '%アニメ%'
+        OR lower(ifnull(s.genre, '')) LIKE '%donghua%' OR lower(ifnull(s.name, '')) LIKE '%donghua%'
+        OR lower(ifnull(s.genre, '')) LIKE '%otaku%' OR lower(ifnull(s.name, '')) LIKE '%otaku%'
+        OR lower(ifnull(s.genre, '')) LIKE '%crunchyroll%' OR lower(ifnull(s.name, '')) LIKE '%crunchyroll%'
+        ORDER BY CASE
+                   WHEN MAX(IFNULL(contentYear, 0), IFNULL(year, 0)) < 1900 THEN 0
+                   ELSE MAX(IFNULL(contentYear, 0), IFNULL(year, 0))
+                 END DESC,
+                 CASE WHEN rating IS NULL OR rating <= 0 THEN 0 ELSE rating END DESC,
+                 name
+        LIMIT :limit
+        """
+    )
+    suspend fun animeShelf(limit: Int): List<Series>
+
     @Query("SELECT * FROM series WHERE favourite = 1 ORDER BY name")
     fun observeFavourites(): Flow<List<Series>>
 
@@ -656,6 +718,9 @@ interface SeriesDao {
 interface EpisodeDao {
     @Query("SELECT * FROM episodes WHERE sourceId = :sourceId AND seriesId = :seriesId ORDER BY season, episodeNumber")
     fun observeForSeries(sourceId: Long, seriesId: String): Flow<List<Episode>>
+
+    @Query("SELECT * FROM episodes WHERE sourceId = :sourceId AND seriesId = :seriesId ORDER BY season, episodeNumber, id")
+    suspend fun listForSeries(sourceId: Long, seriesId: String): List<Episode>
 
     @Query("SELECT * FROM episodes WHERE id = :id")
     suspend fun byId(id: Long): Episode?

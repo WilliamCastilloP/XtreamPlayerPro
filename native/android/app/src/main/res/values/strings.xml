@@ -27,6 +27,7 @@
     <string name="nav_live_tv">Live TV</string>
     <string name="nav_movies">Movies</string>
     <string name="nav_shows">Shows</string>
+    <string name="nav_anime">Anime</string>
     <string name="nav_recordings">Recordings</string>
     <string name="nav_search">Search</string>
     <string name="nav_settings">Settings</string>
@@ -473,6 +474,12 @@
     <string name="vod_cast">Cast</string>
     <string name="vod_director">Director</string>
     <string name="vod_season">Season %1$d</string>
+    <string name="vod_next_episode">Next episode</string>
+    <string name="anime_featured">Featured movies</string>
+    <string name="anime_series">Series</string>
+    <string name="anime_recommended">Recommended</string>
+    <string name="anime_empty_title">No anime yet</string>
+    <string name="anime_empty_body">This appears when a category or a title is marked as anime. Open Movies or Shows once so the library can load.</string>
     <string name="vod_new_episodes">New episodes</string>
     <string name="vod_detail_loading">Loading…</string>
     <string name="vod_person_title">With %1$s</string>

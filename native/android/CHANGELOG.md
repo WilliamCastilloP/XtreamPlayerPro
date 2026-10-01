@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.18.7
+## 0.18.8
 
 - El carrusel de Anime enseña la carta actual y un recorte de la siguiente. Un clic en la carta abre ese título. Las recomendaciones van en ese carrusel.
 - Hay más espacio entre las secciones de Anime.

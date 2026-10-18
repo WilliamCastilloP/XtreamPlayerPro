@@ -28,6 +28,7 @@ import app.opentv.data.parser.AnimeCatalog
 import app.opentv.data.parser.AnimeIndex
 import app.opentv.data.parser.ChannelNameNormalizer
 import app.opentv.data.parser.M3uParser
+import app.opentv.data.parser.SeriesReleaseOrder
 import app.opentv.data.parser.VodLanguages
 import app.opentv.data.parser.VodTitleCleaner
 import app.opentv.data.remote.StalkerApi
@@ -451,9 +452,11 @@ class CatalogRepository(
     suspend fun moviesByGenre(maxGenres: Int = 12, perGenre: Int = 30): List<GenreGroup<Movie>> =
         withContext(Dispatchers.IO) { groupByGenre(movieDao.homeFeedSample(HOME_FEED_SAMPLE), Movie::genre, maxGenres, perGenre) }
 
-    /** Series grouped by genre for the by-genre home rows. See [moviesByGenre]. */
+    /** Series grouped by genre for the by-genre home rows. Each row is newest release year first. */
     suspend fun seriesByGenre(maxGenres: Int = 12, perGenre: Int = 30): List<GenreGroup<Series>> =
-        withContext(Dispatchers.IO) { groupByGenre(seriesDao.homeFeedSample(HOME_FEED_SAMPLE), Series::genre, maxGenres, perGenre) }
+        withContext(Dispatchers.IO) {
+            seriesGenreGroups(seriesDao.homeFeedSample(HOME_FEED_SAMPLE), maxGenres, perGenre)
+        }
 
     /**
      * Movies grouped by genre from an ALREADY-LOADED list — the single-scan path the home screen
@@ -466,7 +469,7 @@ class CatalogRepository(
 
     /** Series grouped by genre from an already-loaded list — the single-scan path. See [moviesByGenreFrom]. */
     suspend fun seriesByGenreFrom(all: List<Series>, maxGenres: Int = 12, perGenre: Int = 30): List<GenreGroup<Series>> =
-        withContext(Dispatchers.Default) { groupByGenre(all, Series::genre, maxGenres, perGenre) }
+        withContext(Dispatchers.Default) { seriesGenreGroups(all, maxGenres, perGenre) }
 
     /**
      * "Recommended for you" — a simple, explainable genre-affinity heuristic, no ML.
@@ -753,6 +756,15 @@ class CatalogRepository(
             ?.filter { it.isNotEmpty() }
             ?.distinct()
             .orEmpty()
+
+    private fun seriesGenreGroups(
+        items: List<Series>,
+        maxGenres: Int,
+        perGenre: Int,
+    ): List<GenreGroup<Series>> =
+        groupByGenre(items, Series::genre, maxGenres, perGenre).map { group ->
+            group.copy(items = group.items.sortedWith(SeriesReleaseOrder.COMPARATOR))
+        }
 
     private fun <T> groupByGenre(
         items: List<T>,

@@ -641,6 +641,10 @@ interface MovieDao {
 
 @Dao
 interface SeriesDao {
+    /**
+     * One category, newest release year first. A premiere of that year comes before an older show
+     * whose newest season landed in the same year. See [app.opentv.data.parser.SeriesReleaseOrder].
+     */
     @Query(
         """
         SELECT * FROM series
@@ -649,6 +653,10 @@ interface SeriesDao {
                    WHEN MAX(IFNULL(contentYear, 0), IFNULL(year, 0)) < 1900 THEN 0
                    ELSE MAX(IFNULL(contentYear, 0), IFNULL(year, 0))
                  END DESC,
+                 CASE
+                   WHEN IFNULL(year, 0) >= 1900 AND IFNULL(contentYear, 0) > year THEN 1
+                   ELSE 0
+                 END ASC,
                  addedMillis DESC, name
         """
     )
@@ -680,8 +688,11 @@ interface SeriesDao {
                    WHEN MAX(IFNULL(contentYear, 0), IFNULL(year, 0)) < 1900 THEN 0
                    ELSE MAX(IFNULL(contentYear, 0), IFNULL(year, 0))
                  END DESC,
-                 CASE WHEN rating IS NULL OR rating <= 0 THEN 0 ELSE rating END DESC,
-                 name
+                 CASE
+                   WHEN IFNULL(year, 0) >= 1900 AND IFNULL(contentYear, 0) > year THEN 1
+                   ELSE 0
+                 END ASC,
+                 addedMillis DESC, name
         """
     )
     suspend fun animeAll(): List<Series>
@@ -695,8 +706,11 @@ interface SeriesDao {
                    WHEN MAX(IFNULL(contentYear, 0), IFNULL(year, 0)) < 1900 THEN 0
                    ELSE MAX(IFNULL(contentYear, 0), IFNULL(year, 0))
                  END DESC,
-                 CASE WHEN rating IS NULL OR rating <= 0 THEN 0 ELSE rating END DESC,
-                 name
+                 CASE
+                   WHEN IFNULL(year, 0) >= 1900 AND IFNULL(contentYear, 0) > year THEN 1
+                   ELSE 0
+                 END ASC,
+                 addedMillis DESC, name
         """
     )
     suspend fun inCategories(sourceId: Long, categoryIds: List<String>): List<Series>
@@ -719,12 +733,29 @@ interface SeriesDao {
     @Query("SELECT * FROM series ORDER BY addedMillis DESC LIMIT :limit")
     fun observeRecentlyAdded(limit: Int): Flow<List<Series>>
 
-    /** Every series, newest first — working set for the Kotlin-side by-genre / more-like-this feeds. */
+    /** Every series, newest panel edit first — not the release-year browse order. */
     @Query("SELECT * FROM series ORDER BY addedMillis DESC")
     suspend fun all(): List<Series>
 
-    /** Bounded newest-first slice for home shelves. See [MovieDao.homeFeedSample]. */
-    @Query("SELECT * FROM series ORDER BY addedMillis DESC LIMIT :limit")
+    /**
+     * The series home shelves. Newest release year first, same order as [observe], so a genre row
+     * starts at 2026 instead of whatever the panel edited last. See SeriesReleaseOrder.
+     */
+    @Query(
+        """
+        SELECT * FROM series
+        ORDER BY CASE
+                   WHEN MAX(IFNULL(contentYear, 0), IFNULL(year, 0)) < 1900 THEN 0
+                   ELSE MAX(IFNULL(contentYear, 0), IFNULL(year, 0))
+                 END DESC,
+                 CASE
+                   WHEN IFNULL(year, 0) >= 1900 AND IFNULL(contentYear, 0) > year THEN 1
+                   ELSE 0
+                 END ASC,
+                 addedMillis DESC, name
+        LIMIT :limit
+        """
+    )
     suspend fun homeFeedSample(limit: Int): List<Series>
 
     /** How many series are on disk — the cheap "did the library grow" check for the home feeds. */

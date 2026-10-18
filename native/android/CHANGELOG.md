@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.13
+
+- Series queda ordenada por la fecha de salida más reciente. 2026 va primero. Dentro de un mismo año, el estreno va antes que una serie vieja que llegó a ese año con capítulos nuevos. El indicador de nuevos episodios no adelanta una temporada de 2025 por encima de un estreno de 2026.
+- Las filas de género en Series y la lista de series en Anime usan ese mismo orden.
+
 ## 0.18.12
 
 - El carrusel de Anime llena varias páginas con los títulos más nuevos, películas y series. Derecha sigue pasando de dos en dos.

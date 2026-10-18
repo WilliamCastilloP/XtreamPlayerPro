@@ -20,6 +20,8 @@ import app.opentv.data.model.StreamKind
  */
 object AnimeCatalog {
 
+    private const val SLIDE_LIMIT = 8
+
     private val NEEDLES = listOf(
         "anime",
         "animé",
@@ -83,10 +85,8 @@ object AnimeCatalog {
         val liveCategories = facetsFor(AnimeKind.LIVE, channels.map { it.sourceId to it.categoryId }, names)
         val years = yearFacets(movies, series)
         val genres = genreFacets(movies, series)
-        val recommended = recommend(series, watchedGenres, 6)
-        val movieSlides = movies.sortedByDescending { it.rating ?: 0.0 }.take(4)
-        val slides = (recommended.map { AnimeSlide.SeriesSlide(it) } + movieSlides.map { AnimeSlide.MovieSlide(it) })
-            .take(8)
+        val slides = carouselSlides(series, movies, watchedGenres)
+        val recommended = slides.mapNotNull { (it as? AnimeSlide.SeriesSlide)?.series }.take(6)
         return AnimeIndex(
             movies = movies,
             series = series,
@@ -125,6 +125,32 @@ object AnimeCatalog {
 
     fun categoryKey(sourceId: Long, categoryId: String?, kind: AnimeKind): String? =
         categoryId?.takeIf { it.isNotBlank() }?.let { "$kind:$sourceId:$it" }
+
+    /**
+     * Banner cards: recommended series first, then the highest-rated films. One card per cleaned
+     * title, so a series and a film (or two copies of the same show) do not both appear.
+     */
+    fun carouselSlides(series: List<Series>, movies: List<Movie>, watchedGenres: Set<String>): List<AnimeSlide> {
+        val seen = HashSet<String>()
+        val out = ArrayList<AnimeSlide>(SLIDE_LIMIT)
+        fun consider(slide: AnimeSlide): Boolean {
+            if (out.size >= SLIDE_LIMIT) return false
+            val key = slide.title.trim().lowercase()
+            if (key.isEmpty() || !seen.add(key)) return false
+            out += slide
+            return true
+        }
+        var seriesCards = 0
+        for (show in recommend(series, watchedGenres, 24)) {
+            if (seriesCards >= 6) break
+            if (consider(AnimeSlide.SeriesSlide(show))) seriesCards++
+        }
+        for (film in movies.sortedByDescending { it.rating ?: 0.0 }) {
+            if (out.size >= SLIDE_LIMIT) break
+            consider(AnimeSlide.MovieSlide(film))
+        }
+        return out
+    }
 
     /** The episode after [currentId] in season, then episode-number order. Null at the end. */
     fun nextEpisode(currentId: Long, episodes: List<Episode>): Episode? {
@@ -191,6 +217,25 @@ object AnimeCatalog {
             .sortedByDescending { it.value }
             .map { AnimeFacet(AnimeKind.MOVIE, "genre:${it.key}", labels.getValue(it.key), it.value) }
     }
+}
+
+/**
+ * The banner moves two cards at a time: the page shows two titles and a peek of the third.
+ * Left and right inside the page stay on those two cards. Crossing from the second card to the
+ * third, or back, is a page change.
+ */
+object AnimeCarouselPages {
+    const val STRIDE = 2
+
+    fun canAdvance(pageStart: Int, count: Int): Boolean = pageStart + STRIDE < count
+
+    fun canRetreat(pageStart: Int): Boolean = pageStart >= STRIDE
+
+    fun advance(pageStart: Int, count: Int): Int =
+        if (canAdvance(pageStart, count)) pageStart + STRIDE else pageStart
+
+    fun retreat(pageStart: Int): Int =
+        if (canRetreat(pageStart)) pageStart - STRIDE else pageStart
 }
 
 enum class AnimeKind { LIVE, MOVIE, SERIES }

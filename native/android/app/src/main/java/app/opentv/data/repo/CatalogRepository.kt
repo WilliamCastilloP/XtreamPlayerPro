@@ -239,6 +239,29 @@ class CatalogRepository(
         seriesDao.byProviderId(sourceId, seriesId)
 
     /**
+     * Anime already filed in a category whose name says anime. That lookup uses the category
+     * index, so the shelf can draw before [animeIndex] finishes scanning every title and genre.
+     */
+    suspend fun animeFromCategories(): AnimeIndex = withContext(Dispatchers.IO) {
+        val categories = categoryDao.allByKind(StreamKind.LIVE) +
+            categoryDao.allByKind(StreamKind.MOVIE) +
+            categoryDao.allByKind(StreamKind.SERIES)
+        AnimeCatalog.build(
+            movies = inAnimeCategories(categories, StreamKind.MOVIE) { sourceId, ids ->
+                movieDao.inCategories(sourceId, ids)
+            },
+            series = inAnimeCategories(categories, StreamKind.SERIES) { sourceId, ids ->
+                seriesDao.inCategories(sourceId, ids)
+            },
+            channels = inAnimeCategories(categories, StreamKind.LIVE) { sourceId, ids ->
+                channelDao.inCategories(sourceId, ids)
+            },
+            categories = categories,
+            watchedGenres = emptySet(),
+        )
+    }
+
+    /**
      * The whole anime catalogue already on disk: live channels, movies and series whose category,
      * title or genre says anime. The tab composes a sample; the lists stay here for the grids.
      */
@@ -291,6 +314,25 @@ class CatalogRepository(
         val current = episodeDao.byId(id) ?: return@withContext null
         val episodes = episodeDao.listForSeries(current.sourceId, current.seriesId)
         AnimeCatalog.nextEpisode(current.id, episodes)
+    }
+
+    private suspend fun <T> inAnimeCategories(
+        categories: List<Category>,
+        kind: StreamKind,
+        load: suspend (sourceId: Long, ids: List<String>) -> List<T>,
+    ): List<T> {
+        val grouped = categories
+            .filter { it.kind == kind && AnimeCatalog.matches(it.name) }
+            .groupBy { it.sourceId }
+        val out = ArrayList<T>()
+        for ((sourceId, rows) in grouped) {
+            val ids = rows.map { it.id }.distinct()
+            for (chunk in ids.chunked(500)) {
+                if (chunk.isEmpty()) continue
+                out += load(sourceId, chunk)
+            }
+        }
+        return out
     }
 
     private suspend fun animeCategoryKeys(kind: StreamKind): Set<Pair<Long, String>> =

@@ -60,6 +60,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -1045,10 +1046,37 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     private val _animeIndex = MutableStateFlow(AnimeIndex.EMPTY)
     val animeIndex: StateFlow<AnimeIndex> = _animeIndex.asStateFlow()
 
-    /** Reloads the anime catalogue from what is already on disk. */
-    fun loadAnimeHome() {
-        viewModelScope.launch {
-            _animeIndex.value = graph.catalogRepository.animeIndex(settings.activeProfileId.value)
+    private val _animeLoading = MutableStateFlow(false)
+    val animeLoading: StateFlow<Boolean> = _animeLoading.asStateFlow()
+
+    private var animeJob: Job? = null
+    private var animeLoad = 0
+
+    /**
+     * Fills the anime shelf from disk. Category rows are published first — the same indexed read
+     * Movies and Shows use — and the title/genre scan follows without hiding what is already on
+     * screen. [force] restarts the scan after a catalogue sync finishes.
+     */
+    fun loadAnimeHome(force: Boolean = false) {
+        if (!force && animeJob?.isActive == true) return
+        animeJob?.cancel()
+        val generation = ++animeLoad
+        animeJob = viewModelScope.launch {
+            val spin = _animeIndex.value.isEmpty
+            if (spin) _animeLoading.value = true
+            try {
+                val partial = runCatching { graph.catalogRepository.animeFromCategories() }.getOrNull()
+                if (generation != animeLoad) return@launch
+                if (partial != null && !partial.isEmpty) {
+                    _animeIndex.value = partial
+                    _animeLoading.value = false
+                }
+                val full = graph.catalogRepository.animeIndex(settings.activeProfileId.value)
+                if (generation != animeLoad) return@launch
+                _animeIndex.value = full
+            } finally {
+                if (generation == animeLoad) _animeLoading.value = false
+            }
         }
     }
 

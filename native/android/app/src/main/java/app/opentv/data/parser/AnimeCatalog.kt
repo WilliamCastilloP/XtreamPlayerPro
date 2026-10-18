@@ -20,7 +20,7 @@ import app.opentv.data.model.StreamKind
  */
 object AnimeCatalog {
 
-    private const val SLIDE_LIMIT = 8
+    private const val SLIDE_LIMIT = 12
 
     private val NEEDLES = listOf(
         "anime",
@@ -85,7 +85,7 @@ object AnimeCatalog {
         val liveCategories = facetsFor(AnimeKind.LIVE, channels.map { it.sourceId to it.categoryId }, names)
         val years = yearFacets(movies, series)
         val genres = genreFacets(movies, series)
-        val slides = carouselSlides(series, movies, watchedGenres)
+        val slides = carouselSlides(series, movies)
         val recommended = slides.mapNotNull { (it as? AnimeSlide.SeriesSlide)?.series }.take(6)
         return AnimeIndex(
             movies = movies,
@@ -127,30 +127,27 @@ object AnimeCatalog {
         categoryId?.takeIf { it.isNotBlank() }?.let { "$kind:$sourceId:$it" }
 
     /**
-     * Banner cards: recommended series first, then the highest-rated films. One card per cleaned
-     * title, so a series and a film (or two copies of the same show) do not both appear.
+     * Banner cards, newest first. A 2026 season outranks an older higher-rated title. One card
+     * per cleaned title, so a series and a film (or two copies) do not both appear. Enough cards
+     * for several pages: the screen shows two plus a peek, and right moves to the next pair.
      */
-    fun carouselSlides(series: List<Series>, movies: List<Movie>, watchedGenres: Set<String>): List<AnimeSlide> {
+    fun carouselSlides(series: List<Series>, movies: List<Movie>): List<AnimeSlide> {
+        val ranked = buildList {
+            series.forEach { add(Triple(AnimeSlide.SeriesSlide(it), recencyYear(it.listedYear), it.addedMillis)) }
+            movies.forEach { add(Triple(AnimeSlide.MovieSlide(it), recencyYear(it.year), it.addedMillis)) }
+        }.sortedWith(compareByDescending<Triple<AnimeSlide, Int, Long>> { it.second }.thenByDescending { it.third })
         val seen = HashSet<String>()
         val out = ArrayList<AnimeSlide>(SLIDE_LIMIT)
-        fun consider(slide: AnimeSlide): Boolean {
-            if (out.size >= SLIDE_LIMIT) return false
+        for ((slide, _, _) in ranked) {
             val key = slide.title.trim().lowercase()
-            if (key.isEmpty() || !seen.add(key)) return false
+            if (key.isEmpty() || !seen.add(key)) continue
             out += slide
-            return true
-        }
-        var seriesCards = 0
-        for (show in recommend(series, watchedGenres, 24)) {
-            if (seriesCards >= 6) break
-            if (consider(AnimeSlide.SeriesSlide(show))) seriesCards++
-        }
-        for (film in movies.sortedByDescending { it.rating ?: 0.0 }) {
-            if (out.size >= SLIDE_LIMIT) break
-            consider(AnimeSlide.MovieSlide(film))
+            if (out.size == SLIDE_LIMIT) break
         }
         return out
     }
+
+    private fun recencyYear(year: Int?): Int = year?.takeIf { it >= 1900 } ?: 0
 
     /** The episode after [currentId] in season, then episode-number order. Null at the end. */
     fun nextEpisode(currentId: Long, episodes: List<Episode>): Episode? {
@@ -245,15 +242,21 @@ data class AnimeFacet(val kind: AnimeKind, val key: String, val label: String, v
 sealed interface AnimeSlide {
     val title: String
     val imageUrl: String?
+    val isSeries: Boolean
+    val hasNewEpisodes: Boolean
 
     data class MovieSlide(val movie: Movie) : AnimeSlide {
         override val title: String get() = movie.displayTitle
         override val imageUrl: String? get() = movie.backdropUrl ?: movie.posterUrl
+        override val isSeries: Boolean get() = false
+        override val hasNewEpisodes: Boolean get() = false
     }
 
     data class SeriesSlide(val series: Series) : AnimeSlide {
         override val title: String get() = series.displayTitle
         override val imageUrl: String? get() = series.backdropUrl ?: series.posterUrl
+        override val isSeries: Boolean get() = true
+        override val hasNewEpisodes: Boolean get() = series.hasNewEpisodes
     }
 }
 

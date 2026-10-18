@@ -69,6 +69,7 @@ import app.opentv.player.vod.VodServerOption
 import app.opentv.data.model.Episode
 import app.opentv.data.model.Movie
 import app.opentv.data.model.Series
+import app.opentv.data.model.StreamKind
 import app.opentv.data.model.StremioStream
 import app.opentv.data.parser.displayTitle
 import app.opentv.ui.VodViewModel
@@ -116,13 +117,18 @@ fun MovieDetailScreen(
     var addonStreams by remember(movieId) { mutableStateOf<List<StremioStream>?>(null) }
     var addonLoading by remember(movieId) { mutableStateOf(false) }
     var languages by remember(movieId) { mutableStateOf<List<String>>(emptyList()) }
+    var origin by remember(movieId) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(movieId) {
         val loaded = viewModel.movieDetail(movieId)
         movie = loaded
+        origin = null
         if (loaded != null) {
             resumeExists = viewModel.resumePosition("movie:${loaded.id}")?.let { !it.isFinished } == true
             launch { languages = viewModel.movieLanguageCodes(loaded.id) }
+            launch {
+                origin = viewModel.contentOrigin(loaded.name, loaded.sourceId, loaded.categoryId, StreamKind.MOVIE)
+            }
             moreLike = viewModel.moreLikeThis(loaded)
         }
     }
@@ -150,7 +156,13 @@ fun MovieDetailScreen(
 
     LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         item(key = "header") {
-            DetailBackdrop(title = m.displayTitle, backdropUrl = m.backdropUrl, posterUrl = m.posterUrl, meta = movieMeta(m)) {
+            DetailBackdrop(
+                title = m.displayTitle,
+                backdropUrl = m.backdropUrl,
+                posterUrl = m.posterUrl,
+                meta = movieMeta(m),
+                origin = origin,
+            ) {
                 DetailButton(
                     icon = Icons.Filled.PlayArrow,
                     label = stringResource(if (resumeExists) R.string.vod_resume else R.string.vod_watch_now),
@@ -324,14 +336,19 @@ fun SeriesDetailScreen(
     var series by remember(seriesId) { mutableStateOf<Series?>(null) }
     var moreLike by remember(seriesId) { mutableStateOf<List<Series>>(emptyList()) }
     var languages by remember(seriesId) { mutableStateOf<List<String>>(emptyList()) }
+    var origin by remember(seriesId) { mutableStateOf<String?>(null) }
     val favFocus = remember { FocusRequester() }
     val context = LocalContext.current
 
     LaunchedEffect(seriesId) {
         val loaded = viewModel.seriesDetail(seriesId)
         series = loaded
+        origin = null
         if (loaded != null) {
             launch { languages = viewModel.seriesLanguageCodes(loaded.id) }
+            launch {
+                origin = viewModel.contentOrigin(loaded.name, loaded.sourceId, loaded.categoryId, StreamKind.SERIES)
+            }
             moreLike = viewModel.moreLikeThisSeries(loaded)
             val year = viewModel.refreshSeriesEpisodes(loaded)
             if (year != null) {
@@ -394,6 +411,7 @@ fun SeriesDetailScreen(
                 posterUrl = s.posterUrl,
                 meta = seriesMeta(s),
                 newEpisodes = s.hasNewEpisodes,
+                origin = origin,
             ) {
                 DetailButton(
                     icon = if (s.favourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
@@ -471,6 +489,7 @@ private fun DetailBackdrop(
     posterUrl: String?,
     meta: String,
     newEpisodes: Boolean = false,
+    origin: String? = null,
     actions: @Composable RowScope.() -> Unit,
 ) {
     Box(
@@ -504,6 +523,22 @@ private fun DetailBackdrop(
                 ),
             ),
         )
+        if (!origin.isNullOrBlank()) {
+            Text(
+                origin,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.Black.copy(alpha = 0.68f))
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+            )
+        }
         Row(
             Modifier
                 .align(Alignment.BottomStart)

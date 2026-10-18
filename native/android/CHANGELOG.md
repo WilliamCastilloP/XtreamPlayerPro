@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.12
+
+- El carrusel de Anime llena varias páginas con los títulos más nuevos, películas y series. Derecha sigue pasando de dos en dos.
+- Cada carta muestra el logo y si es película o serie. Si una serie ya abierta tiene capítulos más nuevos que su estreno, la carta también lo dice.
+- En la ficha de una película o serie, si el título o la categoría dice de dónde viene (Netflix, Prime Video, Disney+ y otros), ese nombre aparece arriba a la derecha.
+
 ## 0.18.11
 
 - Anime muestra el catálogo en cuanto entras, con lo que ya está guardado en categorías de anime. El resto de títulos se completa después, sin dejar la página en blanco.

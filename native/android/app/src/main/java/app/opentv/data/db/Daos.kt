@@ -344,6 +344,10 @@ interface CategoryDao {
     @Query("SELECT id, name FROM categories WHERE id IN (:ids)")
     suspend fun namesFor(ids: Set<String>): List<CategoryName>
 
+    /** One category on one panel. Ids repeat across sources, so the lookup stays scoped. */
+    @Query("SELECT * FROM categories WHERE sourceId = :sourceId AND id = :id AND kind = :kind LIMIT 1")
+    suspend fun one(sourceId: Long, id: String, kind: StreamKind): Category?
+
     @Upsert
     suspend fun upsertAll(categories: List<Category>)
 

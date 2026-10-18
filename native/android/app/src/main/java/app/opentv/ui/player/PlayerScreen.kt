@@ -40,6 +40,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -883,19 +884,22 @@ private fun BarChip(
         modifier = Modifier
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(12.dp))
+            .clip(CircleShape)
             .background(container)
             .then(
-                if (focused) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
+                if (focused) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
                 else Modifier,
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = label, tint = if (focused) content else (iconTint ?: content))
-        Spacer(Modifier.width(6.dp))
-        Text(label, style = MaterialTheme.typography.labelLarge, color = content)
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = if (focused) content else (iconTint ?: content),
+            modifier = Modifier.size(22.dp),
+        )
     }
 }
 

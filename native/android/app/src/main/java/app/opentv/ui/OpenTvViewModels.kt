@@ -11,6 +11,7 @@ import androidx.lifecycle.viewModelScope
 import app.opentv.core.ServiceLocator
 import app.opentv.data.model.Category
 import app.opentv.data.model.Channel
+import app.opentv.data.parser.AnimeIndex
 import app.opentv.data.model.EpgFeed
 import app.opentv.data.model.LiveStreamFormat
 import app.opentv.data.model.Movie
@@ -24,6 +25,8 @@ import app.opentv.data.model.StremioStream
 import app.opentv.data.model.StreamKind
 import app.opentv.data.parser.displayTitle
 import app.opentv.data.parser.ChannelNameNormalizer
+import app.opentv.ui.vod.GridAnchor
+import app.opentv.ui.vod.matchingAnchor
 import app.opentv.data.repo.CatalogRepository
 import app.opentv.data.repo.GenreGroup
 import app.opentv.data.repo.MovieVariantGroup
@@ -705,6 +708,15 @@ class EpgViewModel(app: Application) : AndroidViewModel(app) {
     }
 }
 
+/**
+ * Continue Watching keeps the newest unfinished watch of each title.
+ * The list is already newest-first, so the first card for a [VodViewModel.ResumeItem.contentKey] wins.
+ */
+internal fun latestResumePerContent(items: List<VodViewModel.ResumeItem>): List<VodViewModel.ResumeItem> {
+    val seen = HashSet<String>()
+    return items.filter { seen.add(it.contentKey) }
+}
+
 /** Home vs starred grid vs a provider category — Movies and Shows share this browse model. */
 sealed interface VodBrowse {
     data object Home : VodBrowse
@@ -723,13 +735,17 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         val posterUrl: String?,
         val streamUrl: String,
         val progress: Float,
+        /** One shelf card per title: a series, or one copy of a film. Newest watch wins. */
+        val contentKey: String = mediaKey,
     )
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val continueWatching: StateFlow<List<ResumeItem>> =
         settings.activeProfileId
             .flatMapLatest { pid -> graph.playbackPositions.observeRecent(pid) }
-            .mapLatest { positions -> positions.filter { !it.isFinished }.mapNotNull { resolveResume(it) } }
+            .mapLatest { positions ->
+                latestResumePerContent(positions.filter { !it.isFinished }.mapNotNull { resolveResume(it) })
+            }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private suspend fun resolveResume(pos: PlaybackPosition): ResumeItem? {
@@ -740,15 +756,31 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
             if (pos.durationMillis > 0) (pos.positionMillis.toFloat() / pos.durationMillis).coerceIn(0f, 1f) else 0f
         return when (parts[0]) {
             "movie" -> graph.catalogRepository.movie(id)?.let {
-                ResumeItem(pos.mediaKey, it.displayTitle, it.posterUrl, it.streamUrl, progress)
-            }
-            "ep" -> graph.catalogRepository.episode(id)?.let {
+                val label = it.displayTitle.trim().lowercase().ifBlank { it.streamId }
                 ResumeItem(
                     pos.mediaKey,
-                    it.title.ifBlank { "S${it.season} E${it.episodeNumber}" },
-                    it.stillUrl,
+                    it.displayTitle,
+                    it.posterUrl,
                     it.streamUrl,
                     progress,
+                    contentKey = "movie:${it.sourceId}:$label",
+                )
+            }
+            "ep" -> graph.catalogRepository.episode(id)?.let { episode ->
+                val show = graph.catalogRepository.seriesByProvider(episode.sourceId, episode.seriesId)
+                val chapter = "S${episode.season}E${episode.episodeNumber}"
+                val title = when {
+                    show != null -> "${show.displayTitle} · $chapter"
+                    episode.title.isNotBlank() -> "$chapter · ${episode.title}"
+                    else -> chapter
+                }
+                ResumeItem(
+                    pos.mediaKey,
+                    title,
+                    show?.posterUrl ?: episode.stillUrl,
+                    episode.streamUrl,
+                    progress,
+                    contentKey = show?.let { s -> "series:${s.sourceId}:${s.seriesId}" } ?: pos.mediaKey,
                 )
             }
             else -> null
@@ -864,6 +896,27 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     fun markSeriesOpened(id: Long) { _seriesReturnId.value = id }
     fun clearMovieReturnFocus() { _movieReturnId.value = null }
     fun clearSeriesReturnFocus() { _seriesReturnId.value = null }
+
+    /**
+     * Scroll position of the movies category/favourites grid. Survives the detail page, which
+     * disposes the grid; the next composition starts at this row instead of the top.
+     */
+    private var movieGridAnchor: GridAnchor? = null
+    private var seriesGridAnchor: GridAnchor? = null
+
+    internal fun movieGridStart(key: String): GridAnchor? = matchingAnchor(movieGridAnchor, key)
+
+    internal fun saveMovieGrid(key: String, index: Int, offset: Int) {
+        if (key.isBlank() || index < 0) return
+        movieGridAnchor = GridAnchor(key, index, offset)
+    }
+
+    internal fun seriesGridStart(key: String): GridAnchor? = matchingAnchor(seriesGridAnchor, key)
+
+    internal fun saveSeriesGrid(key: String, index: Int, offset: Int) {
+        if (key.isBlank() || index < 0) return
+        seriesGridAnchor = GridAnchor(key, index, offset)
+    }
 
     // ---- Netflix-style home rows ----------------------------------------------------------------
     // "Recently added" is reactive: it fills in live as a VOD sync lands. The computed feeds
@@ -989,6 +1042,19 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { syncSeriesIfStale(force = false) }
     }
 
+    private val _animeIndex = MutableStateFlow(AnimeIndex.EMPTY)
+    val animeIndex: StateFlow<AnimeIndex> = _animeIndex.asStateFlow()
+
+    /** Reloads the anime catalogue from what is already on disk. */
+    fun loadAnimeHome() {
+        viewModelScope.launch {
+            _animeIndex.value = graph.catalogRepository.animeIndex(settings.activeProfileId.value)
+        }
+    }
+
+    suspend fun animeMediaKeys(keys: List<String>): Set<String> =
+        graph.catalogRepository.animeMediaKeys(keys)
+
     /** @deprecated Opening Movies/Shows must not fetch the other catalogue. */
     fun ensureVodLoaded() = ensureMoviesLoaded()
 
@@ -1097,11 +1163,13 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
      * Pulling every episode of every series up front is what makes a first sync take twenty
      * minutes on a large provider, and most of it is never looked at.
      */
-    fun loadEpisodes(series: Series) {
-        viewModelScope.launch {
-            val source = graph.sourceRepository.byId(series.sourceId) ?: return@launch
-            graph.catalogRepository.ensureEpisodes(source, series.seriesId)
-        }
+    /**
+     * Fetches episodes and returns the newest season year from that same payload, or null when
+     * the panel sent no air dates. The year is persisted so the category can file the show later.
+     */
+    suspend fun refreshSeriesEpisodes(series: Series): Int? {
+        val source = graph.sourceRepository.byId(series.sourceId) ?: return null
+        return graph.catalogRepository.ensureEpisodes(source, series.seriesId)
     }
 
     fun episodes(series: Series) =
@@ -1127,6 +1195,12 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Loads a series, lazily enriching backdrop/cast/genre on first open. See CatalogRepository.seriesDetail. */
     suspend fun seriesDetail(id: Long): Series? = graph.catalogRepository.seriesDetail(id)
+
+    /** Languages advertised by the film's title, its copies, and the panel info payload. */
+    suspend fun movieLanguageCodes(id: Long): List<String> = graph.catalogRepository.movieLanguageCodes(id)
+
+    /** Languages advertised by the show's title and the panel info payload. */
+    suspend fun seriesLanguageCodes(id: Long): List<String> = graph.catalogRepository.seriesLanguageCodes(id)
 
     /** "More like this" for the movie detail screen. */
     suspend fun moreLikeThis(movie: Movie): List<Movie> = graph.catalogRepository.moreLikeThis(movie)

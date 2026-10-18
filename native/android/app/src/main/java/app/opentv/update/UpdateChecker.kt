@@ -46,8 +46,24 @@ class UpdateChecker(
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** Returns the newer release, or null if we are current / could not tell. */
-    suspend fun check(): Update? = withContext(Dispatchers.IO) {
+    /** A check that says whether we are current, or whether GitHub could not be read. */
+    sealed interface CheckOutcome {
+        data class Available(val update: Update) : CheckOutcome
+        data object Current : CheckOutcome
+        data object Unreachable : CheckOutcome
+    }
+
+    /**
+     * Returns the newer release, or null when we are current or could not tell.
+     * Prefer [checkOutcome] when the screen must not call a failed check "up to date".
+     */
+    suspend fun check(): Update? = when (val outcome = checkOutcome()) {
+        is CheckOutcome.Available -> outcome.update
+        CheckOutcome.Current, CheckOutcome.Unreachable -> null
+    }
+
+    /** Latest release compared with this build. A network or HTTP failure is [CheckOutcome.Unreachable]. */
+    suspend fun checkOutcome(): CheckOutcome = withContext(Dispatchers.IO) {
         runCatching {
             val request = Request.Builder()
                 .url("https://api.github.com/repos/$repoSlug/releases/latest")
@@ -56,26 +72,28 @@ class UpdateChecker(
                 .build()
 
             http.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
+                if (!response.isSuccessful) return@withContext CheckOutcome.Unreachable
                 val body = response.body?.string().orEmpty()
-                if (body.isBlank()) return@withContext null
+                if (body.isBlank()) return@withContext CheckOutcome.Unreachable
 
                 val release = json.decodeFromString<GitHubRelease>(body)
-                if (release.draft || release.prerelease) return@withContext null
+                if (release.draft || release.prerelease) return@withContext CheckOutcome.Current
 
-                val asset = release.apkAsset() ?: return@withContext null
-                if (!isNewer(release.tagName, currentVersionName)) return@withContext null
+                val asset = release.apkAsset() ?: return@withContext CheckOutcome.Unreachable
+                if (!isNewer(release.tagName, currentVersionName)) return@withContext CheckOutcome.Current
 
-                Update(
-                    versionName = displayVersion(release.tagName),
-                    title = release.name.ifBlank { release.tagName },
-                    notes = cleanNotes(release.body),
-                    apkUrl = asset.browserDownloadUrl,
-                    apkSizeBytes = asset.size,
-                    releaseUrl = release.htmlUrl,
+                CheckOutcome.Available(
+                    Update(
+                        versionName = displayVersion(release.tagName),
+                        title = release.name.ifBlank { release.tagName },
+                        notes = cleanNotes(release.body),
+                        apkUrl = asset.browserDownloadUrl,
+                        apkSizeBytes = asset.size,
+                        releaseUrl = release.htmlUrl,
+                    ),
                 )
             }
-        }.getOrNull()
+        }.getOrDefault(CheckOutcome.Unreachable)
     }
 
     companion object {

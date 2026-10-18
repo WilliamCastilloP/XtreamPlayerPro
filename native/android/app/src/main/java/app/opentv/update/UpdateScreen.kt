@@ -180,9 +180,17 @@ class UpdateViewModel(app: Application) : AndroidViewModel(app) {
             val now = System.currentTimeMillis()
             if (now - prefs.getLong(KEY_LAST_CHECK, 0L) < CHECK_INTERVAL_MS) return@launch
 
-            val update = checker.check()
-            prefs.edit().putLong(KEY_LAST_CHECK, now).apply()
-            if (update != null) _state.value = UpdateUiState.Available(update)
+            when (val outcome = checker.checkOutcome()) {
+                is UpdateChecker.CheckOutcome.Available -> {
+                    prefs.edit().putLong(KEY_LAST_CHECK, now).apply()
+                    _state.value = UpdateUiState.Available(outcome.update)
+                }
+                UpdateChecker.CheckOutcome.Current ->
+                    prefs.edit().putLong(KEY_LAST_CHECK, now).apply()
+                // A failed read must not count as "already checked", or the next launch
+                // stays quiet for half an hour after GitHub was briefly unreachable.
+                UpdateChecker.CheckOutcome.Unreachable -> Unit
+            }
         }
     }
 

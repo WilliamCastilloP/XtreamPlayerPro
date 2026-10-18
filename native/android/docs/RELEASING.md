@@ -12,6 +12,11 @@ GitHub release named after the tag. Prefer `v0.14.0` over `android-v0.14.0`: ins
 0.12.0 compare tags with a checker that does not strip the `android-` prefix, so `android-v*`
 never looks newer to them.
 
+The release refuses to publish unless `native/android/CHANGELOG.md` has a `## x.y.z` section for
+that tag. That section is the text of the in-app update dialog (everything after
+`Built by GitHub Actions` is hidden on the Stick). Write it in Spanish, as a short list of what
+the person installing actually gets. A tag without that section does not ship.
+
 ## Updating on a Fire Stick
 
 **Do not uninstall.** Same package id + higher `versionCode` + the same signing key = Android

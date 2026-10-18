@@ -142,7 +142,11 @@ fun SearchScreen(
                         if (seriesResults.isNotEmpty()) {
                             item { SectionHeader(stringResource(R.string.nav_shows)) }
                             items(seriesResults, key = { "s${it.id}" }) { show ->
-                                VodResultRow(show.displayTitle, show.posterUrl, show.year?.toString()) {
+                                VodResultRow(
+                                    show.displayTitle,
+                                    show.posterUrl,
+                                    seriesSearchSubtitle(show),
+                                ) {
                                     onOpenSeries(show)
                                 }
                             }
@@ -169,6 +173,14 @@ private fun SectionHeader(title: String) {
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
     )
+}
+
+@Composable
+private fun seriesSearchSubtitle(show: Series): String? {
+    val year = show.listedYear?.toString()
+    if (!show.hasNewEpisodes) return year
+    val banner = stringResource(R.string.vod_new_episodes)
+    return if (year == null) banner else "$year · $banner"
 }
 
 @Composable

@@ -9,6 +9,7 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import app.opentv.data.parser.SeriesContentYear
 
 /**
  * The domain models double as Room entities.
@@ -327,7 +328,24 @@ data class Series(
     val genre: String? = null,
     /** TMDB id, stored only — resolved/used by a later agent. Coerced to String (panels vary). */
     val tmdbId: String? = null,
-)
+    /**
+     * Year of the newest season or episode, from `get_series_info` air dates. Null until that
+     * payload has been read. The premiere stays in [year]; this is what files the show with a
+     * later year's releases when a new season arrives.
+     */
+    val contentYear: Int? = null,
+) {
+    /** A later season than the premiere, e.g. a 2025 show that added episodes in 2026. */
+    val hasNewEpisodes: Boolean
+        get() = SeriesContentYear.hasNewEpisodes(year, contentYear)
+
+    /**
+     * Year printed on the poster and used to file the show. A 2025 premiere with a 2026 season
+     * lists as 2026; the premiere itself stays in [year].
+     */
+    val listedYear: Int?
+        get() = SeriesContentYear.sortYear(year, contentYear) ?: year
+}
 
 @Entity(
     tableName = "episodes",

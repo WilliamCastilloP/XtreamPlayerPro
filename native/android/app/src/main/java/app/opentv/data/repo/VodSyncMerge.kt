@@ -47,6 +47,7 @@ object VodSyncMerge {
             cast = incoming.cast ?: existing.cast,
             genre = incoming.genre ?: existing.genre,
             tmdbId = incoming.tmdbId ?: existing.tmdbId,
+            contentYear = listOfNotNull(incoming.contentYear, existing.contentYear).maxOrNull(),
         )
     }
 }

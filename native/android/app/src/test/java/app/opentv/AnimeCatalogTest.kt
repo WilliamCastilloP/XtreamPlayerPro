@@ -116,6 +116,21 @@ class AnimeCatalogTest {
     }
 
     @Test
+    fun `series on the shelf follow the newest release year`() {
+        val premiere2026 = show(1, "Action", name = "Premiere", year = 2026, addedMillis = 10)
+        val returning = show(2, "Action", name = "Returning", year = 2018, contentYear = 2026, addedMillis = 90)
+        val older = show(3, "Action", name = "Older", year = 2025, addedMillis = 500)
+        val index = AnimeCatalog.build(
+            movies = emptyList(),
+            series = listOf(older, returning, premiere2026),
+            channels = emptyList(),
+            categories = emptyList(),
+            watchedGenres = emptySet(),
+        )
+        assertThat(index.series.map { it.name }).containsExactly("Premiere", "Returning", "Older").inOrder()
+    }
+
+    @Test
     fun `carousel ranks a newer year ahead of a higher rating`() {
         val oldHit = show(1, "Drama", name = "Old Hit", rating = 9.0, year = 2010, addedMillis = 9_000)
         val fresh = movie(2, "Fresh", "a", 2026, "Anime")

@@ -79,17 +79,18 @@ object AnimeCatalog {
         categories: List<Category>,
         watchedGenres: Set<String>,
     ): AnimeIndex {
+        val shows = series.sortedWith(SeriesReleaseOrder.COMPARATOR)
         val names = categories.associateBy { Triple(it.sourceId, it.id, it.kind) }
         val movieCategories = facetsFor(AnimeKind.MOVIE, movies.map { it.sourceId to it.categoryId }, names)
-        val seriesCategories = facetsFor(AnimeKind.SERIES, series.map { it.sourceId to it.categoryId }, names)
+        val seriesCategories = facetsFor(AnimeKind.SERIES, shows.map { it.sourceId to it.categoryId }, names)
         val liveCategories = facetsFor(AnimeKind.LIVE, channels.map { it.sourceId to it.categoryId }, names)
-        val years = yearFacets(movies, series)
-        val genres = genreFacets(movies, series)
-        val slides = carouselSlides(series, movies)
+        val years = yearFacets(movies, shows)
+        val genres = genreFacets(movies, shows)
+        val slides = carouselSlides(shows, movies)
         val recommended = slides.mapNotNull { (it as? AnimeSlide.SeriesSlide)?.series }.take(6)
         return AnimeIndex(
             movies = movies,
-            series = series,
+            series = shows,
             channels = channels,
             liveCategories = liveCategories,
             movieCategories = movieCategories,

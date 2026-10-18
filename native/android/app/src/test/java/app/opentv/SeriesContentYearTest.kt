@@ -5,7 +5,9 @@
  */
 package app.opentv
 
+import app.opentv.data.model.Series
 import app.opentv.data.parser.SeriesContentYear
+import app.opentv.data.parser.SeriesReleaseOrder
 import com.google.common.truth.Truth.assertThat
 import kotlinx.serialization.json.Json
 import org.junit.Test
@@ -61,6 +63,33 @@ class SeriesContentYearTest {
     }
 
     @Test
+    fun `browse order is the newest release year, with premieres before later seasons`() {
+        val premiere2026 = show("Premiere", year = 2026, added = 10)
+        val returning2026 = show("Returning", year = 2018, content = 2026, added = 99)
+        val premiere2025 = show("Older", year = 2025, added = 1_000)
+        val returning2025 = show("Old Season", year = 2010, content = 2025, added = 5_000)
+        val undated = show("Unknown", year = null, added = 9_000)
+        val sorted = listOf(undated, returning2025, premiere2025, returning2026, premiere2026)
+            .sortedWith(SeriesReleaseOrder.COMPARATOR)
+
+        assertThat(sorted.map { it.name }).containsExactly(
+            "Premiere",
+            "Returning",
+            "Older",
+            "Old Season",
+            "Unknown",
+        ).inOrder()
+    }
+
+    @Test
+    fun `the same year and the same kind of release use the panel edit only as a tie`() {
+        val later = show("Later", year = 2026, added = 50)
+        val earlier = show("Earlier", year = 2026, added = 10)
+        val sorted = listOf(earlier, later).sortedWith(SeriesReleaseOrder.COMPARATOR)
+        assertThat(sorted.map { it.name }).containsExactly("Later", "Earlier").inOrder()
+    }
+
+    @Test
     fun `plot and codec text are not scanned for a year`() {
         val body = json.parseToJsonElement(
             """
@@ -70,4 +99,17 @@ class SeriesContentYearTest {
 
         assertThat(SeriesContentYear.latest(body)).isNull()
     }
+
+    private fun show(name: String, year: Int?, content: Int? = null, added: Long) = Series(
+        sourceId = 1,
+        seriesId = name,
+        name = name,
+        categoryId = "s",
+        posterUrl = null,
+        rating = null,
+        year = year,
+        plot = null,
+        addedMillis = added,
+        contentYear = content,
+    )
 }

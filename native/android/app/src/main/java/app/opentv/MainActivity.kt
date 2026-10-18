@@ -559,13 +559,9 @@ private fun OpenTvApp(isTelevision: Boolean) {
                     title = arg("title"),
                     userAgent = ua,
                     anime = anime,
-                    onPlayNext = if (!anime) {
-                        null
-                    } else {
-                        { key, url, title ->
-                            navController.navigate(Routes.vodPlayer(key, url, title, ua, anime = true)) {
-                                popUpTo(Routes.VOD_PLAYER) { inclusive = true }
-                            }
+                    onPlayNext = { key, url, nextTitle ->
+                        navController.navigate(Routes.vodPlayer(key, url, nextTitle, ua, anime = anime)) {
+                            popUpTo(Routes.VOD_PLAYER) { inclusive = true }
                         }
                     },
                     onBack = { navController.popBackStack() },

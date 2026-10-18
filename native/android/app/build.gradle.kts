@@ -14,8 +14,8 @@ android {
         applicationId = "app.xtream.player"
         minSdk = 23
         targetSdk = 35
-        versionCode = 39
-        versionName = "0.18.9"
+        versionCode = 40
+        versionName = "0.18.10"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

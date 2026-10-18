@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Extension
@@ -766,31 +767,25 @@ private fun DetailButton(
         primary -> MaterialTheme.colorScheme.onPrimaryContainer
         else -> Color.White
     }
-    val shape = if (chrome.iconOnly) androidx.compose.foundation.shape.CircleShape else RoundedCornerShape(12.dp)
     Row(
         modifier
             .onFocusChanged { focused = it.isFocused }
-            .clip(shape)
+            .clip(CircleShape)
             .background(container)
             .then(
-                if (focused) Modifier.border(2.dp, chrome.focusRing, shape)
+                if (focused) Modifier.border(2.dp, chrome.focusRing, CircleShape)
                 else Modifier,
             )
             .clickable(onClick = onClick)
-            .padding(if (chrome.iconOnly) 10.dp else 0.dp)
-            .padding(horizontal = if (chrome.iconOnly) 0.dp else 18.dp, vertical = if (chrome.iconOnly) 0.dp else 12.dp),
+            .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             icon,
-            contentDescription = if (chrome.iconOnly) label else null,
+            contentDescription = label,
             tint = content,
-            modifier = if (chrome.iconOnly) Modifier.size(22.dp) else Modifier,
+            modifier = Modifier.size(22.dp),
         )
-        if (!chrome.iconOnly) {
-            Spacer(Modifier.width(8.dp))
-            Text(label, style = MaterialTheme.typography.titleMedium, color = content)
-        }
     }
 }
 

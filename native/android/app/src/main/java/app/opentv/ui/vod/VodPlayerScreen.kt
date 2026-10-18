@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -96,7 +97,10 @@ import app.opentv.core.ServiceLocator
 import app.opentv.core.SleepTimer
 import app.opentv.core.findActivity
 import app.opentv.player.PlayerController
+import app.opentv.player.vod.NextEpisodePrompt
+import app.opentv.player.vod.PlaybackLanguage
 import app.opentv.player.vod.RebufferBreaker
+import app.opentv.player.vod.SeriesLanguagePrefs
 import app.opentv.player.vod.VodBufferMath
 import app.opentv.player.vod.VodPlaybackExtras
 import app.opentv.player.vod.VodPlaybackTuning
@@ -188,8 +192,56 @@ fun VodPlayerScreen(
 
     var paused by remember { mutableStateOf(false) }
     var nextEpisode by remember(mediaKey) { mutableStateOf<Episode?>(null) }
-    LaunchedEffect(mediaKey, onPlayNext) {
-        nextEpisode = if (onPlayNext == null) null else graph.catalogRepository.nextEpisode(mediaKey)
+    LaunchedEffect(mediaKey) {
+        nextEpisode = if (growingRec || onPlayNext == null || !mediaKey.startsWith("ep:")) {
+            null
+        } else {
+            graph.catalogRepository.nextEpisode(mediaKey)
+        }
+    }
+    val languagePrefs = remember { SeriesLanguagePrefs(context.applicationContext) }
+    var seriesKey by remember(mediaKey) { mutableStateOf<SeriesLanguagePrefs.Key?>(null) }
+    var savedLanguage by remember(mediaKey) { mutableStateOf(SeriesLanguagePrefs.Choice(null, null)) }
+    var languageReady by remember(mediaKey) { mutableStateOf(false) }
+    var userPickedLanguage by remember(mediaKey) { mutableStateOf(false) }
+    LaunchedEffect(mediaKey) {
+        if (growingRec || !mediaKey.startsWith("ep:")) return@LaunchedEffect
+        val id = mediaKey.removePrefix("ep:").toLongOrNull() ?: return@LaunchedEffect
+        val episode = graph.catalogRepository.episode(id) ?: return@LaunchedEffect
+        val key = SeriesLanguagePrefs.Key(episode.sourceId, episode.seriesId)
+        seriesKey = key
+        savedLanguage = languagePrefs.read(key)
+        languageReady = true
+    }
+    LaunchedEffect(tracks, languageReady, userPickedLanguage, savedLanguage) {
+        if (!languageReady || userPickedLanguage) return@LaunchedEffect
+        if (savedLanguage.audio == null && savedLanguage.text == null) return@LaunchedEffect
+        applySeriesLanguage(controller, tracks, savedLanguage)
+    }
+    fun persistSeriesLanguage(save: (SeriesLanguagePrefs.Key) -> Unit) {
+        val key = seriesKey
+        if (key != null) {
+            save(key)
+            return
+        }
+        scope.launch {
+            if (growingRec || !mediaKey.startsWith("ep:")) return@launch
+            val id = mediaKey.removePrefix("ep:").toLongOrNull() ?: return@launch
+            val episode = graph.catalogRepository.episode(id) ?: return@launch
+            val resolved = SeriesLanguagePrefs.Key(episode.sourceId, episode.seriesId)
+            seriesKey = resolved
+            save(resolved)
+        }
+    }
+    fun rememberAudio(language: String?, label: String?) {
+        userPickedLanguage = true
+        val token = PlaybackLanguage.token(language, label) ?: return
+        persistSeriesLanguage { languagePrefs.saveAudio(it, token) }
+    }
+    fun rememberText(token: String?) {
+        userPickedLanguage = true
+        if (token == null) return
+        persistSeriesLanguage { languagePrefs.saveText(it, token) }
     }
     var vodPanel by remember { mutableStateOf(VodPanel.NONE) }
     val panelFocus = remember { FocusRequester() }
@@ -201,7 +253,11 @@ fun VodPlayerScreen(
     var controlsVisible by remember { mutableStateOf(true) }
     var interaction by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val barFocus = remember { FocusRequester() }
+    val nextFocus = remember { FocusRequester() }
     val rootFocus = remember { FocusRequester() }
+    var promptedNext by remember(mediaKey) { mutableStateOf(false) }
+    var focusNext by remember(mediaKey) { mutableStateOf(false) }
+    var nextPrompt by remember(mediaKey) { mutableIntStateOf(0) }
 
     fun reveal() { controlsVisible = true; interaction++ }
 
@@ -330,6 +386,19 @@ fun VodPlayerScreen(
         }
     }
 
+    // Once, in the last minute, bring the bar back and put OK on the next-episode icon.
+    // Later opens of the bar leave focus on play, so the prompt does not keep stealing the remote.
+    LaunchedEffect(positionMs, durationMs, nextEpisode, onPlayNext) {
+        if (promptedNext || onPlayNext == null || nextEpisode == null || growingRec) return@LaunchedEffect
+        if (!NextEpisodePrompt.remainingInWindow(durationMs, positionMs)) return@LaunchedEffect
+        promptedNext = true
+        if (!controlsVisible && vodPanel == VodPanel.NONE && !paused && !scrubbing) {
+            focusNext = true
+            nextPrompt++
+            reveal()
+        }
+    }
+
     LaunchedEffect(state, mediaKey) {
         if (growingRec) return@LaunchedEffect
         when (state) {
@@ -380,12 +449,22 @@ fun VodPlayerScreen(
         }
     }
 
-    LaunchedEffect(controlsVisible, vodPanel) {
-        if (controlsVisible) {
-            delay(40)
-            runCatching { if (vodPanel != VodPanel.NONE) panelFocus.requestFocus() else barFocus.requestFocus() }
-        } else {
+    LaunchedEffect(controlsVisible, vodPanel, nextPrompt) {
+        if (!controlsVisible) {
             runCatching { rootFocus.requestFocus() }
+            return@LaunchedEffect
+        }
+        val target = when {
+            vodPanel != VodPanel.NONE -> panelFocus
+            focusNext && nextEpisode != null -> nextFocus
+            else -> barFocus
+        }
+        repeat(6) {
+            delay(50)
+            if (runCatching { target.requestFocus() }.isSuccess) {
+                if (target == nextFocus) focusNext = false
+                return@LaunchedEffect
+            }
         }
     }
 
@@ -487,6 +566,8 @@ fun VodPlayerScreen(
                         controller = controller,
                         tracks = tracks,
                         firstFocus = panelFocus,
+                        onRememberAudio = ::rememberAudio,
+                        onRememberText = ::rememberText,
                         onDone = { vodPanel = VodPanel.NONE; interaction++ },
                     )
                     Spacer(Modifier.height(16.dp))
@@ -577,7 +658,11 @@ fun VodPlayerScreen(
                     val upcoming = nextEpisode
                     if (upcoming != null && onPlayNext != null) {
                         Spacer(Modifier.width(10.dp))
-                        VodChip(Icons.Filled.SkipNext, stringResource(R.string.vod_next_episode)) {
+                        VodChip(
+                            Icons.Filled.SkipNext,
+                            stringResource(R.string.vod_next_episode),
+                            focusRequester = nextFocus,
+                        ) {
                             onPlayNext(
                                 "ep:${upcoming.id}",
                                 upcoming.streamUrl,
@@ -613,32 +698,26 @@ private fun VodChip(
     val chrome = LocalShelfChrome.current
     val container = if (focused) chrome.focusFill else Color.White.copy(alpha = 0.14f)
     val content = if (focused) chrome.onFocus else Color.White
-    val shape = if (chrome.iconOnly) androidx.compose.foundation.shape.CircleShape else RoundedCornerShape(12.dp)
     Row(
         modifier = Modifier
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged { focused = it.isFocused }
-            .clip(shape)
+            .clip(CircleShape)
             .background(container)
             .then(
-                if (focused) Modifier.border(2.dp, chrome.focusRing, shape)
+                if (focused) Modifier.border(2.dp, chrome.focusRing, CircleShape)
                 else Modifier,
             )
             .clickable(onClick = onClick)
-            .padding(if (chrome.iconOnly) 8.dp else 0.dp)
-            .padding(horizontal = if (chrome.iconOnly) 0.dp else 14.dp, vertical = if (chrome.iconOnly) 0.dp else 10.dp),
+            .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             icon,
             contentDescription = label,
             tint = content,
-            modifier = if (chrome.iconOnly) Modifier.size(22.dp) else Modifier,
+            modifier = Modifier.size(22.dp),
         )
-        if (!chrome.iconOnly) {
-            Spacer(Modifier.width(6.dp))
-            Text(label, style = MaterialTheme.typography.labelLarge, color = content)
-        }
     }
 }
 
@@ -651,6 +730,8 @@ private fun TrackPanel(
     controller: PlayerController,
     tracks: Tracks,
     firstFocus: FocusRequester,
+    onRememberAudio: (language: String?, label: String?) -> Unit,
+    onRememberText: (token: String?) -> Unit,
     onDone: () -> Unit,
 ) {
     val trackType = if (panel == VodPanel.SUBTITLES) C.TRACK_TYPE_TEXT else C.TRACK_TYPE_AUDIO
@@ -659,14 +740,21 @@ private fun TrackPanel(
 
     if (panel == VodPanel.SUBTITLES) {
         val anySelected = groups.any { g -> (0 until g.length).any { g.isTrackSelected(it) } }
-        options += Triple(stringResource(R.string.player_subtitles_off), !anySelected) { controller.disableText(); onDone() }
+        options += Triple(stringResource(R.string.player_subtitles_off), !anySelected) {
+            controller.disableText()
+            onRememberText(PlaybackLanguage.OFF)
+            onDone()
+        }
     }
     groups.forEach { group ->
         for (i in 0 until group.length) {
             if (!group.isTrackSupported(i)) continue
             val format = group.getTrackFormat(i)
             options += Triple(vodTrackLabel(format.label, format.language, options.size), group.isTrackSelected(i)) {
-                controller.selectTrack(group, i); onDone()
+                controller.selectTrack(group, i)
+                if (panel == VodPanel.SUBTITLES) onRememberText(PlaybackLanguage.token(format.language, format.label))
+                else onRememberAudio(format.language, format.label)
+                onDone()
             }
         }
     }
@@ -714,6 +802,45 @@ private fun TrackRow(label: String, selected: Boolean, onClick: () -> Unit, focu
         Text(label, style = MaterialTheme.typography.titleMedium, color = fg, modifier = Modifier.weight(1f))
         if (selected) Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.common_selected), tint = fg)
     }
+}
+
+@OptIn(UnstableApi::class)
+private fun applySeriesLanguage(
+    controller: PlayerController,
+    tracks: Tracks,
+    choice: SeriesLanguagePrefs.Choice,
+) {
+    val audio = PlaybackLanguage.audioAction(choice.audio, listedTracks(tracks, C.TRACK_TYPE_AUDIO))
+    val text = PlaybackLanguage.textAction(choice.text, listedTracks(tracks, C.TRACK_TYPE_TEXT))
+    if (audio is PlaybackLanguage.Action.Select) {
+        tracks.groups.getOrNull(audio.groupIndex)?.let { controller.selectTrack(it, audio.trackIndex) }
+    }
+    when (text) {
+        PlaybackLanguage.Action.DisableText -> controller.disableText()
+        is PlaybackLanguage.Action.Select ->
+            tracks.groups.getOrNull(text.groupIndex)?.let { controller.selectTrack(it, text.trackIndex) }
+        PlaybackLanguage.Action.None -> Unit
+    }
+}
+
+@OptIn(UnstableApi::class)
+private fun listedTracks(tracks: Tracks, type: Int): List<PlaybackLanguage.ListedTrack> {
+    val out = ArrayList<PlaybackLanguage.ListedTrack>()
+    tracks.groups.forEachIndexed { groupIndex, group ->
+        if (group.type != type) return@forEachIndexed
+        for (i in 0 until group.length) {
+            if (!group.isTrackSupported(i)) continue
+            val format = group.getTrackFormat(i)
+            out += PlaybackLanguage.ListedTrack(
+                groupIndex = groupIndex,
+                trackIndex = i,
+                language = format.language,
+                label = format.label,
+                selected = group.isTrackSelected(i),
+            )
+        }
+    }
+    return out
 }
 
 private fun vodTrackLabel(label: String?, language: String?, index: Int): String {

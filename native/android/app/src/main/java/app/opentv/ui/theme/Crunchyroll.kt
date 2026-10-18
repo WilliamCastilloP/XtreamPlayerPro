@@ -28,7 +28,6 @@ object CrunchyrollColors {
 }
 
 data class ShelfChrome(
-    val iconOnly: Boolean,
     val focusFill: Color,
     val onFocus: Color,
     val focusRing: Color,
@@ -36,7 +35,6 @@ data class ShelfChrome(
 
 val LocalShelfChrome = staticCompositionLocalOf {
     ShelfChrome(
-        iconOnly = false,
         focusFill = XtreamFocus.fill,
         onFocus = XtreamFocus.onFill,
         focusRing = XtreamFocus.ring,
@@ -61,7 +59,6 @@ private val CrunchyrollScheme = darkColorScheme(
 @Composable
 fun CrunchyrollTheme(content: @Composable () -> Unit) {
     val chrome = ShelfChrome(
-        iconOnly = true,
         focusFill = CrunchyrollColors.orange,
         onFocus = Color.White,
         focusRing = CrunchyrollColors.ring,

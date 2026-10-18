@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.10
+
+- Al terminar un capítulo, en el último minuto aparece el botón de siguiente capítulo. Funciona en cualquier serie. OK salta al siguiente; no cambia solo.
+- Los botones de reproducción quedan solo con icono, en el reproductor y en la ficha del título.
+- El audio y los subtítulos que eliges en una serie se usan en los capítulos siguientes de esa misma serie.
+
 ## 0.18.9
 
 - En el carrusel de Anime, izquierda y derecha recorren las recomendaciones. En la última, derecha sigue hacia abajo; en la primera, izquierda vuelve a la barra. Un clic abre la carta.

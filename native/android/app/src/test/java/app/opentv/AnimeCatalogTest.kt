@@ -11,6 +11,7 @@ import app.opentv.data.model.Episode
 import app.opentv.data.model.Movie
 import app.opentv.data.model.Series
 import app.opentv.data.model.StreamKind
+import app.opentv.data.parser.AnimeCarouselPages
 import app.opentv.data.parser.AnimeCatalog
 import app.opentv.data.parser.AnimeKind
 import com.google.common.truth.Truth.assertThat
@@ -99,6 +100,32 @@ class AnimeCatalogTest {
     }
 
     @Test
+    fun `carousel keeps one card per cleaned title`() {
+        val series = show(1, "Action", name = "Naruto", rating = 8.0)
+        val copy = show(2, "Action", name = "Naruto", rating = 9.0)
+        val film = movie(3, "Naruto", categoryId = "a", year = 2020, genre = "Anime")
+        val other = movie(4, "Spirited Away", categoryId = "a", year = 2001, genre = "Fantasy")
+        val index = AnimeCatalog.build(
+            movies = listOf(film, other),
+            series = listOf(series, copy),
+            channels = emptyList(),
+            categories = emptyList(),
+            watchedGenres = emptySet(),
+        )
+        assertThat(index.slides.map { it.title }).containsExactly("Naruto", "Spirited Away").inOrder()
+    }
+
+    @Test
+    fun `carousel pages move two cards at a time`() {
+        assertThat(AnimeCarouselPages.canAdvance(0, 5)).isTrue()
+        assertThat(AnimeCarouselPages.advance(0, 5)).isEqualTo(2)
+        assertThat(AnimeCarouselPages.advance(2, 5)).isEqualTo(4)
+        assertThat(AnimeCarouselPages.canAdvance(4, 5)).isFalse()
+        assertThat(AnimeCarouselPages.retreat(2)).isEqualTo(0)
+        assertThat(AnimeCarouselPages.canRetreat(0)).isFalse()
+    }
+
+    @Test
     fun `next episode is the following chapter in season order`() {
         val episodes = listOf(
             episode(1, season = 1, number = 1),
@@ -117,11 +144,12 @@ class AnimeCatalogTest {
         year: Int? = 2024,
         contentYear: Int? = null,
         categoryId: String = "anime",
+        name: String = "Show $id",
     ) = Series(
         id = id,
         sourceId = 1,
         seriesId = "s$id",
-        name = "Show $id",
+        name = name,
         categoryId = categoryId,
         posterUrl = null,
         rating = rating,

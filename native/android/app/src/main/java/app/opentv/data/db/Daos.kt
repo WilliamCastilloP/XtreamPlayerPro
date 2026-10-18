@@ -181,6 +181,16 @@ interface ChannelDao {
     )
     suspend fun animeAll(): List<Channel>
 
+    /** Visible channels already filed in the given categories. Indexed by source and category. */
+    @Query(
+        """
+        SELECT * FROM channels
+        WHERE hidden = 0 AND sourceId = :sourceId AND categoryId IN (:categoryIds)
+        ORDER BY sortIndex, displayName
+        """
+    )
+    suspend fun inCategories(sourceId: Long, categoryIds: List<String>): List<Channel>
+
     /** Like [search] but keeps hidden channels in — the channel manager needs them to unhide. */
     @Query(
         """
@@ -496,6 +506,18 @@ interface MovieDao {
     )
     suspend fun animeAll(): List<Movie>
 
+    /** Films already filed in the given categories. Uses the source/category index. */
+    @Query(
+        """
+        SELECT * FROM movies
+        WHERE sourceId = :sourceId AND categoryId IN (:categoryIds)
+        ORDER BY CASE WHEN rating IS NULL OR rating <= 0 THEN 0 ELSE rating END DESC,
+                 CASE WHEN year IS NULL OR year < 1900 THEN 0 ELSE year END DESC,
+                 name
+        """
+    )
+    suspend fun inCategories(sourceId: Long, categoryIds: List<String>): List<Movie>
+
     @Query("SELECT * FROM movies WHERE favourite = 1 ORDER BY name")
     fun observeFavourites(): Flow<List<Movie>>
 
@@ -659,6 +681,21 @@ interface SeriesDao {
         """
     )
     suspend fun animeAll(): List<Series>
+
+    /** Shows already filed in the given categories. Uses the source/category index. */
+    @Query(
+        """
+        SELECT * FROM series
+        WHERE sourceId = :sourceId AND categoryId IN (:categoryIds)
+        ORDER BY CASE
+                   WHEN MAX(IFNULL(contentYear, 0), IFNULL(year, 0)) < 1900 THEN 0
+                   ELSE MAX(IFNULL(contentYear, 0), IFNULL(year, 0))
+                 END DESC,
+                 CASE WHEN rating IS NULL OR rating <= 0 THEN 0 ELSE rating END DESC,
+                 name
+        """
+    )
+    suspend fun inCategories(sourceId: Long, categoryIds: List<String>): List<Series>
 
     @Query("SELECT * FROM series WHERE favourite = 1 ORDER BY name")
     fun observeFavourites(): Flow<List<Series>>

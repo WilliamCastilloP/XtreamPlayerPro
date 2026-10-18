@@ -7,10 +7,15 @@ package app.opentv.ui.vod
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -42,7 +47,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -55,9 +62,11 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -66,6 +75,7 @@ import app.opentv.data.model.Channel
 import app.opentv.data.model.Movie
 import app.opentv.data.model.Series
 import app.opentv.data.model.shownName
+import app.opentv.data.parser.AnimeCarouselPages
 import app.opentv.data.parser.AnimeCatalog
 import app.opentv.data.parser.AnimeFacet
 import app.opentv.data.parser.AnimeHits
@@ -78,6 +88,7 @@ import app.opentv.ui.theme.CrunchyrollColors
 import app.opentv.ui.theme.CrunchyrollTheme
 import app.opentv.ui.theme.LocalShelfChrome
 import coil.compose.AsyncImage
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 private const val SAMPLE = 12
@@ -96,8 +107,8 @@ private sealed interface AnimeBrowse {
 
 /**
  * Anime tab. The home shows a sample of what the catalogue already has; categories, years and
- * genres open the rest, and search stays inside this tab. Recommendations are the carousel:
- * the current card and a peek of the next one. Left and right move through the cards.
+ * genres open the rest, and search stays inside this tab. The banner shows two cards and a peek
+ * of the third. Left and right move inside the page; crossing to the next pair bounces.
  * A click opens that title.
  */
 @Composable
@@ -111,27 +122,37 @@ fun AnimeScreen(
     viewModel: VodViewModel = viewModel(),
 ) {
     val index by viewModel.animeIndex.collectAsState()
+    val animeLoading by viewModel.animeLoading.collectAsState()
     val resume by viewModel.continueWatching.collectAsState()
     var animeKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
     val moviesLoading by viewModel.moviesLoading.collectAsState()
     val seriesLoading by viewModel.seriesLoading.collectAsState()
     var browse by remember { mutableStateOf<AnimeBrowse>(AnimeBrowse.Home) }
+    var sawCatalogLoad by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         if (hasSources) {
             viewModel.ensureMoviesLoaded()
             viewModel.ensureSeriesLoaded()
         }
-    }
-    LaunchedEffect(isSyncing, moviesLoading, seriesLoading) {
         viewModel.loadAnimeHome()
+    }
+    // A sync that started after the shelf opened has to be read again, or the first pass
+    // keeps the empty catalogue it saw before the rows landed.
+    LaunchedEffect(moviesLoading, seriesLoading) {
+        val busy = moviesLoading || seriesLoading
+        if (busy) sawCatalogLoad = true
+        else if (sawCatalogLoad) {
+            sawCatalogLoad = false
+            viewModel.loadAnimeHome(force = true)
+        }
     }
     LaunchedEffect(resume) {
         animeKeys = viewModel.animeMediaKeys(resume.map { it.mediaKey })
     }
 
     val animeResume = remember(resume, animeKeys) { resume.filter { it.mediaKey in animeKeys } }
-    val loading = isSyncing || moviesLoading || seriesLoading
+    val loading = isSyncing || moviesLoading || seriesLoading || animeLoading
 
     BackHandler(enabled = browse !is AnimeBrowse.Home) { browse = AnimeBrowse.Home }
 
@@ -346,69 +367,116 @@ private fun AnimeHomeFeed(
 
 @Composable
 private fun AnimeCarousel(slides: List<AnimeSlide>, onOpen: (AnimeSlide) -> Unit) {
-    var page by remember { mutableIntStateOf(0) }
-    val index = page.coerceIn(slides.indices)
-    val current = slides[index]
-    val upcoming = slides.getOrNull(index + 1)
-    var mainFocused by remember { mutableStateOf(false) }
-    val cardFocus = remember { FocusRequester() }
+    if (slides.isEmpty()) return
+    var pageStart by remember { mutableIntStateOf(0) }
+    var focusSlot by remember { mutableIntStateOf(0) }
+    var followFocus by remember { mutableStateOf(true) }
+    var pageFocused by remember { mutableStateOf(false) }
+    val firstFocus = remember { FocusRequester() }
+    val secondFocus = remember { FocusRequester() }
 
-    LaunchedEffect(Unit) {
-        runCatching { cardFocus.requestFocus() }
+    LaunchedEffect(slides.size) {
+        if (pageStart >= slides.size) {
+            pageStart = 0
+            focusSlot = 0
+        }
     }
-    LaunchedEffect(index, slides.size, mainFocused) {
-        if (mainFocused || slides.size <= 1) return@LaunchedEffect
+    LaunchedEffect(pageStart, focusSlot, followFocus) {
+        if (!followFocus) return@LaunchedEffect
+        delay(40)
+        val target = if (focusSlot == 0 || pageStart + 1 >= slides.size) firstFocus else secondFocus
+        runCatching { target.requestFocus() }
+    }
+    LaunchedEffect(pageStart, slides.size, pageFocused) {
+        if (pageFocused || slides.size <= AnimeCarouselPages.STRIDE) return@LaunchedEffect
         delay(SLIDE_MS)
-        page = (index + 1) % slides.size
+        followFocus = false
+        pageStart = if (AnimeCarouselPages.canAdvance(pageStart, slides.size)) {
+            AnimeCarouselPages.advance(pageStart, slides.size)
+        } else {
+            0
+        }
     }
 
-    Row(
+    BoxWithConstraints(
         Modifier
             .fillMaxWidth()
-            .height(280.dp)
-            .padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+            .height(188.dp)
+            .padding(horizontal = 16.dp)
+            .clipToBounds()
+            .focusGroup()
+            .onFocusChanged { pageFocused = it.hasFocus },
     ) {
-        CarouselCard(
-            slide = current,
-            showTitle = true,
-            focusRequester = cardFocus,
-            onFocused = { mainFocused = it },
-            onClick = { onOpen(current) },
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .onPreviewKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    when (event.key) {
-                        Key.DirectionRight -> {
-                            if (index >= slides.lastIndex) false
-                            else {
-                                page = index + 1
-                                true
-                            }
-                        }
-                        Key.DirectionLeft -> {
-                            if (index <= 0) false
-                            else {
-                                page = index - 1
-                                true
-                            }
-                        }
-                        else -> false
-                    }
-                },
-        )
-        if (upcoming != null) {
-            CarouselCard(
-                slide = upcoming,
-                showTitle = false,
-                onClick = { onOpen(upcoming) },
-                modifier = Modifier
-                    .width(120.dp)
-                    .fillMaxHeight()
-                    .focusProperties { canFocus = false },
+        val density = LocalDensity.current
+        val gapPx = with(density) { 12.dp.toPx() }
+        val peekPx = with(density) { 72.dp.toPx() }
+        val cardPx = ((constraints.maxWidth - peekPx - gapPx * 2f) / 2f).coerceAtLeast(1f)
+        val stride = cardPx + gapPx
+        val offset = remember { Animatable(0f) }
+        LaunchedEffect(pageStart, stride) {
+            val target = -pageStart * stride
+            val wrapped = kotlin.math.abs(target - offset.value) > stride * (AnimeCarouselPages.STRIDE + 0.5f)
+            if (wrapped) offset.snapTo(target)
+            else offset.animateTo(
+                target,
+                spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMedium,
+                ),
             )
+        }
+        val cardWidth = with(density) { cardPx.toDp() }
+        Row(
+            Modifier.offset { IntOffset(offset.value.roundToInt(), 0) },
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            slides.forEachIndexed { index, slide ->
+                val slot = index - pageStart
+                val onPage = slot == 0 || slot == 1
+                CarouselCard(
+                    slide = slide,
+                    showTitle = onPage,
+                    allowFocus = onPage,
+                    focusRequester = when (slot) {
+                        0 -> firstFocus
+                        1 -> secondFocus
+                        else -> null
+                    },
+                    onClick = { onOpen(slide) },
+                    modifier = Modifier
+                        .width(cardWidth)
+                        .fillMaxHeight()
+                        .then(
+                            if (!onPage) Modifier
+                            else Modifier.onPreviewKeyEvent { event ->
+                                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                when (event.key) {
+                                    Key.DirectionRight -> when {
+                                        slot == 0 && pageStart + 1 < slides.size -> false
+                                        AnimeCarouselPages.canAdvance(pageStart, slides.size) -> {
+                                            followFocus = true
+                                            focusSlot = 0
+                                            pageStart = AnimeCarouselPages.advance(pageStart, slides.size)
+                                            true
+                                        }
+                                        else -> false
+                                    }
+                                    Key.DirectionLeft -> when {
+                                        slot == 1 -> false
+                                        AnimeCarouselPages.canRetreat(pageStart) -> {
+                                            followFocus = true
+                                            focusSlot = 1
+                                            pageStart = AnimeCarouselPages.retreat(pageStart)
+                                            true
+                                        }
+                                        else -> false
+                                    }
+                                    else -> false
+                                }
+                            },
+                        ),
+                )
+            }
         }
     }
 }
@@ -419,18 +487,16 @@ private fun CarouselCard(
     showTitle: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    allowFocus: Boolean = true,
     focusRequester: FocusRequester? = null,
-    onFocused: (Boolean) -> Unit = {},
 ) {
     var focused by remember { mutableStateOf(false) }
     Box(
         modifier
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .onFocusChanged {
-                focused = it.isFocused
-                onFocused(it.isFocused)
-            }
+            .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
+            .focusProperties { canFocus = allowFocus }
             .border(
                 width = if (focused) 3.dp else 0.dp,
                 color = if (focused) CrunchyrollColors.orange else Color.Transparent,
@@ -463,11 +529,12 @@ private fun CarouselCard(
             )
             Text(
                 slide.title,
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.titleMedium,
                 color = Color.White,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.align(Alignment.BottomStart).padding(20.dp),
+                modifier = Modifier.align(Alignment.BottomStart).padding(14.dp),
             )
         }
     }

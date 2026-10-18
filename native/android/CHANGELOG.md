@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.11
+
+- Anime muestra el catálogo en cuanto entras, con lo que ya está guardado en categorías de anime. El resto de títulos se completa después, sin dejar la página en blanco.
+- El carrusel enseña dos cartas y un recorte de la tercera. No repite el mismo título. Al pasar de una pareja a la siguiente, la página rebota; igual al volver.
+
 ## 0.18.10
 
 - Al terminar un capítulo, en el último minuto aparece el botón de siguiente capítulo. Funciona en cualquier serie. OK salta al siguiente; no cambia solo.

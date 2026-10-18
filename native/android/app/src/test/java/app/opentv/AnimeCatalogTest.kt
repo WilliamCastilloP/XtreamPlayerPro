@@ -116,6 +116,35 @@ class AnimeCatalogTest {
     }
 
     @Test
+    fun `carousel ranks a newer year ahead of a higher rating`() {
+        val oldHit = show(1, "Drama", name = "Old Hit", rating = 9.0, year = 2010, addedMillis = 9_000)
+        val fresh = movie(2, "Fresh", "a", 2026, "Anime")
+        val slides = AnimeCatalog.carouselSlides(listOf(oldHit), listOf(fresh))
+        assertThat(slides.map { it.title }).containsExactly("Fresh", "Old Hit").inOrder()
+    }
+
+    @Test
+    fun `carousel uses added time when the year matches`() {
+        val first = show(1, "Action", name = "First", year = 2024, addedMillis = 10)
+        val second = show(2, "Action", name = "Second", year = 2024, addedMillis = 50)
+        val slides = AnimeCatalog.carouselSlides(listOf(first, second), emptyList())
+        assertThat(slides.map { it.title }).containsExactly("Second", "First").inOrder()
+    }
+
+    @Test
+    fun `carousel marks a later season and a movie is not a series`() {
+        val show = show(1, "Action", name = "Old Show", year = 2018, contentYear = 2026)
+        val film = movie(2, "Film", "a", 2020, "Anime")
+        val slides = AnimeCatalog.carouselSlides(listOf(show), listOf(film))
+        val seriesSlide = slides.first { it.title == "Old Show" }
+        val movieSlide = slides.first { it.title == "Film" }
+        assertThat(seriesSlide.isSeries).isTrue()
+        assertThat(seriesSlide.hasNewEpisodes).isTrue()
+        assertThat(movieSlide.isSeries).isFalse()
+        assertThat(movieSlide.hasNewEpisodes).isFalse()
+    }
+
+    @Test
     fun `carousel pages move two cards at a time`() {
         assertThat(AnimeCarouselPages.canAdvance(0, 5)).isTrue()
         assertThat(AnimeCarouselPages.advance(0, 5)).isEqualTo(2)
@@ -145,6 +174,7 @@ class AnimeCatalogTest {
         contentYear: Int? = null,
         categoryId: String = "anime",
         name: String = "Show $id",
+        addedMillis: Long = 0,
     ) = Series(
         id = id,
         sourceId = 1,
@@ -157,6 +187,7 @@ class AnimeCatalogTest {
         plot = null,
         genre = genre,
         contentYear = contentYear,
+        addedMillis = addedMillis,
     )
 
     private fun movie(id: Long, name: String, categoryId: String, year: Int, genre: String) = Movie(

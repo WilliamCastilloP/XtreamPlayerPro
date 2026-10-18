@@ -23,6 +23,7 @@ import app.opentv.data.model.Source
 import app.opentv.data.model.SourceKind
 import app.opentv.data.model.StremioStream
 import app.opentv.data.model.StreamKind
+import app.opentv.data.parser.ContentOrigin
 import app.opentv.data.parser.displayTitle
 import app.opentv.data.parser.ChannelNameNormalizer
 import app.opentv.ui.vod.GridAnchor
@@ -1223,6 +1224,22 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Loads a series, lazily enriching backdrop/cast/genre on first open. See CatalogRepository.seriesDetail. */
     suspend fun seriesDetail(id: Long): Series? = graph.catalogRepository.seriesDetail(id)
+
+    /**
+     * Service named in the raw title or its category (`NF - …`, `… - Netflix`, `Netflix Series`).
+     * Null when the panel never says. The IPTV account name is not a studio.
+     */
+    suspend fun contentOrigin(
+        rawTitle: String,
+        sourceId: Long,
+        categoryId: String?,
+        kind: StreamKind,
+    ): String? {
+        val category = categoryId?.takeIf { it.isNotBlank() }?.let {
+            graph.catalogRepository.categoryName(sourceId, it, kind)
+        }
+        return ContentOrigin.from(rawTitle, category)
+    }
 
     /** Languages advertised by the film's title, its copies, and the panel info payload. */
     suspend fun movieLanguageCodes(id: Long): List<String> = graph.catalogRepository.movieLanguageCodes(id)

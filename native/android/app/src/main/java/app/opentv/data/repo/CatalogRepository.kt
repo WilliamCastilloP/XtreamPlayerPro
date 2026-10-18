@@ -218,6 +218,12 @@ class CatalogRepository(
 
     suspend fun movie(id: Long): Movie? = movieDao.byId(id)
 
+    /** Category label for one title. Scoped to its source so two panels cannot share an id. */
+    suspend fun categoryName(sourceId: Long, categoryId: String, kind: StreamKind): String? =
+        withContext(Dispatchers.IO) {
+            categoryDao.one(sourceId, categoryId, kind)?.name
+        }
+
     /**
      * The IMDb id for a film, for Stremio add-on stream lookups. Resolved through the user's TMDB
      * key (using the provider's TMDB id when present, else a title+year search). Null without a key

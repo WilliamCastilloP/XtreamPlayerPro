@@ -6,6 +6,7 @@
 package app.opentv.ui.vod
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.border
@@ -63,6 +64,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -401,7 +403,7 @@ private fun AnimeCarousel(slides: List<AnimeSlide>, onOpen: (AnimeSlide) -> Unit
     BoxWithConstraints(
         Modifier
             .fillMaxWidth()
-            .height(188.dp)
+            .height(226.dp)
             .padding(horizontal = 16.dp)
             .clipToBounds()
             .focusGroup()
@@ -536,6 +538,45 @@ private fun CarouselCard(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.align(Alignment.BottomStart).padding(14.dp),
             )
+        }
+        Column(
+            Modifier.align(Alignment.TopStart).padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.Black.copy(alpha = 0.68f))
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.ic_opentv_logo),
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    stringResource(if (slide.isSeries) R.string.vod_kind_series else R.string.vod_kind_movie),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+            }
+            if (slide.hasNewEpisodes) {
+                Text(
+                    stringResource(R.string.vod_new_episodes),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.68f))
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                )
+            }
         }
     }
 }

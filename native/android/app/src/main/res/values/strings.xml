@@ -492,6 +492,8 @@
     <string name="vod_new_episodes">New episodes</string>
     <string name="vod_kind_movie">Movie</string>
     <string name="vod_kind_series">Series</string>
+    <string name="vod_refresh_series">Update episodes</string>
+    <string name="vod_refreshing_series">Updating…</string>
     <string name="vod_detail_loading">Loading…</string>
     <string name="vod_person_title">With %1$s</string>
     <string name="vod_person_empty">Nothing else with %1$s in your library.</string>

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.14
+
+- En Continuar viendo, si terminas un capítulo y hay otro después, la fila muestra ese siguiente aunque no lo hayas empezado. Vale en Series y en Anime.
+- En la ficha de una película o una serie se ve el progreso: barra llena en lo ya visto y parcial donde te quedaste.
+- Los favoritos se ordenan por lo que viste más reciente.
+- En la ficha de una serie hay un botón para actualizar solo esa serie y traer temporadas o capítulos nuevos, sin sincronizar todo el catálogo.
+
 ## 0.18.13
 
 - Series queda ordenada por la fecha de salida más reciente. 2026 va primero. Dentro de un mismo año, el estreno va antes que una serie vieja que llegó a ese año con capítulos nuevos. El indicador de nuevos episodios no adelanta una temporada de 2025 por encima de un estreno de 2026.

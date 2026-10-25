@@ -29,10 +29,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -118,13 +120,17 @@ fun MovieDetailScreen(
     var addonLoading by remember(movieId) { mutableStateOf(false) }
     var languages by remember(movieId) { mutableStateOf<List<String>>(emptyList()) }
     var origin by remember(movieId) { mutableStateOf<String?>(null) }
+    var watchProgress by remember(movieId) { mutableStateOf<Float?>(null) }
 
     LaunchedEffect(movieId) {
         val loaded = viewModel.movieDetail(movieId)
         movie = loaded
         origin = null
+        watchProgress = null
         if (loaded != null) {
-            resumeExists = viewModel.resumePosition("movie:${loaded.id}")?.let { !it.isFinished } == true
+            val mark = viewModel.resumePosition("movie:${loaded.id}")
+            resumeExists = mark?.let { !it.isFinished } == true
+            watchProgress = viewModel.watchProgress("movie:${loaded.id}")
             launch { languages = viewModel.movieLanguageCodes(loaded.id) }
             launch {
                 origin = viewModel.contentOrigin(loaded.name, loaded.sourceId, loaded.categoryId, StreamKind.MOVIE)
@@ -162,6 +168,7 @@ fun MovieDetailScreen(
                 posterUrl = m.posterUrl,
                 meta = movieMeta(m),
                 origin = origin,
+                progress = watchProgress,
             ) {
                 DetailButton(
                     icon = Icons.Filled.PlayArrow,
@@ -337,13 +344,17 @@ fun SeriesDetailScreen(
     var moreLike by remember(seriesId) { mutableStateOf<List<Series>>(emptyList()) }
     var languages by remember(seriesId) { mutableStateOf<List<String>>(emptyList()) }
     var origin by remember(seriesId) { mutableStateOf<String?>(null) }
+    var episodeProgress by remember(seriesId) { mutableStateOf<Map<Long, Float>>(emptyMap()) }
+    var refreshing by remember(seriesId) { mutableStateOf(false) }
     val favFocus = remember { FocusRequester() }
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(seriesId) {
         val loaded = viewModel.seriesDetail(seriesId)
         series = loaded
         origin = null
+        episodeProgress = emptyMap()
         if (loaded != null) {
             launch { languages = viewModel.seriesLanguageCodes(loaded.id) }
             launch {
@@ -365,6 +376,14 @@ fun SeriesDetailScreen(
         .collectAsState(initial = emptyList())
 
     if (s == null) { LoadingDetail(); return }
+
+    LaunchedEffect(s.id, episodes) {
+        if (episodes.isEmpty()) {
+            episodeProgress = emptyMap()
+            return@LaunchedEffect
+        }
+        episodeProgress = viewModel.episodeWatchProgress(s.sourceId, s.seriesId)
+    }
 
     LaunchedEffect(s.id, episodes) {
         if (episodes.isEmpty()) return@LaunchedEffect
@@ -422,6 +441,21 @@ fun SeriesDetailScreen(
                     viewModel.toggleSeriesFavourite(s)
                     series = s.copy(favourite = !s.favourite)
                 }
+                DetailButton(
+                    icon = Icons.Filled.Refresh,
+                    label = stringResource(
+                        if (refreshing) R.string.vod_refreshing_series else R.string.vod_refresh_series,
+                    ),
+                ) {
+                    if (refreshing) return@DetailButton
+                    refreshing = true
+                    scope.launch {
+                        val updated = runCatching { viewModel.refreshSeriesFromPanel(s) }.getOrNull()
+                        if (updated != null) series = updated
+                        episodeProgress = viewModel.episodeWatchProgress(s.sourceId, s.seriesId)
+                        refreshing = false
+                    }
+                }
             }
         }
         item(key = "info") {
@@ -453,7 +487,7 @@ fun SeriesDetailScreen(
                     SectionHeader(stringResource(R.string.vod_season, season))
                 }
                 items(items = eps, key = { ep -> ep.id }) { ep ->
-                    EpisodeRow(ep, onPlayEpisode)
+                    EpisodeRow(ep, episodeProgress[ep.id], onPlayEpisode)
                 }
                 seasonIndex++
             }
@@ -490,6 +524,7 @@ private fun DetailBackdrop(
     meta: String,
     newEpisodes: Boolean = false,
     origin: String? = null,
+    progress: Float? = null,
     actions: @Composable RowScope.() -> Unit,
 ) {
     Box(
@@ -547,7 +582,7 @@ private fun DetailBackdrop(
             horizontalArrangement = Arrangement.spacedBy(20.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
-            HeroPosterCard(posterUrl = posterUrl, title = title)
+            HeroPosterCard(posterUrl = posterUrl, title = title, progress = progress)
             Column(Modifier.weight(1f)) {
                 Text(
                     title,
@@ -592,13 +627,14 @@ private fun DetailBackdrop(
  * hero's d-pad targets.
  */
 @Composable
-private fun HeroPosterCard(posterUrl: String?, title: String) {
+private fun HeroPosterCard(posterUrl: String?, title: String, progress: Float? = null) {
     var posterFailed by remember(posterUrl) { mutableStateOf(false) }
     Box(
         Modifier
             .width(128.dp)
             .height(192.dp)
             .shadow(12.dp, RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center,
     ) {
@@ -626,6 +662,15 @@ private fun HeroPosterCard(posterUrl: String?, title: String) {
                     color = Color.White,
                 )
             }
+        }
+        progress?.let {
+            LinearProgressIndicator(
+                progress = { it.coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(5.dp)
+                    .align(Alignment.BottomCenter),
+            )
         }
     }
 }
@@ -824,12 +869,16 @@ private fun DetailButton(
     }
 }
 
-/** One episode row: season/episode marker, title, and a focus highlight; plays on click. */
+/** One episode row: season/episode marker, title, watch bar, and a focus highlight; plays on click. */
 @Composable
-private fun EpisodeRow(ep: Episode, onPlay: (mediaKey: String, url: String, title: String) -> Unit) {
+private fun EpisodeRow(
+    ep: Episode,
+    progress: Float?,
+    onPlay: (mediaKey: String, url: String, title: String) -> Unit,
+) {
     var focused by remember { mutableStateOf(false) }
     val chrome = LocalShelfChrome.current
-    Row(
+    Column(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 24.dp, vertical = 3.dp)
@@ -843,22 +892,34 @@ private fun EpisodeRow(ep: Episode, onPlay: (mediaKey: String, url: String, titl
             .clickable {
                 onPlay("ep:${ep.id}", ep.streamUrl, "S${ep.season}E${ep.episodeNumber} · ${ep.title}")
             }
-            .padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
-        Text(
-            "S${ep.season}E${ep.episodeNumber}",
-            style = MaterialTheme.typography.titleMedium,
-            color = if (focused) chrome.onFocus else MaterialTheme.colorScheme.primary,
-            modifier = Modifier.width(72.dp),
-        )
-        Text(
-            ep.title,
-            style = MaterialTheme.typography.bodyLarge,
-            color = if (focused) chrome.onFocus else MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "S${ep.season}E${ep.episodeNumber}",
+                style = MaterialTheme.typography.titleMedium,
+                color = if (focused) chrome.onFocus else MaterialTheme.colorScheme.primary,
+                modifier = Modifier.width(72.dp),
+            )
+            Text(
+                ep.title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (focused) chrome.onFocus else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        if (progress != null) {
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(
+                progress = { progress.coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp)),
+            )
+        }
     }
 }
 

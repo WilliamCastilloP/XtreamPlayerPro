@@ -24,8 +24,11 @@ import app.opentv.data.model.SourceKind
 import app.opentv.data.model.StremioStream
 import app.opentv.data.model.StreamKind
 import app.opentv.data.parser.ContentOrigin
+import app.opentv.data.parser.FavouriteWatchOrder
 import app.opentv.data.parser.displayTitle
 import app.opentv.data.parser.ChannelNameNormalizer
+import app.opentv.player.vod.ContinueWatching
+import app.opentv.player.vod.WatchProgress
 import app.opentv.ui.vod.GridAnchor
 import app.opentv.ui.vod.matchingAnchor
 import app.opentv.data.repo.CatalogRepository
@@ -711,7 +714,7 @@ class EpgViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 /**
- * Continue Watching keeps the newest unfinished watch of each title.
+ * Continue Watching keeps the newest watch of each title.
  * The list is already newest-first, so the first card for a [VodViewModel.ResumeItem.contentKey] wins.
  */
 internal fun latestResumePerContent(items: List<VodViewModel.ResumeItem>): List<VodViewModel.ResumeItem> {
@@ -744,9 +747,19 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     @OptIn(ExperimentalCoroutinesApi::class)
     val continueWatching: StateFlow<List<ResumeItem>> =
         settings.activeProfileId
-            .flatMapLatest { pid -> graph.playbackPositions.observeRecent(pid) }
+            .flatMapLatest { pid -> graph.playbackPositions.observeRecent(pid, limit = 60) }
             .mapLatest { positions ->
-                latestResumePerContent(positions.filter { !it.isFinished }.mapNotNull { resolveResume(it) })
+                val episodeLists = HashMap<String, List<app.opentv.data.model.Episode>>()
+                val items = ArrayList<ResumeItem>(positions.size)
+                for (pos in positions) {
+                    when (val action = ContinueWatching.actionFor(pos)) {
+                        is ContinueWatching.Action.Keep -> resolveResume(action.position)?.let { items += it }
+                        is ContinueWatching.Action.NextEpisode ->
+                            resolveNextResume(action.finished, episodeLists)?.let { items += it }
+                        ContinueWatching.Action.Drop -> Unit
+                    }
+                }
+                latestResumePerContent(items)
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -754,8 +767,7 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         val parts = pos.mediaKey.split(":", limit = 2)
         if (parts.size != 2) return null
         val id = parts[1].toLongOrNull() ?: return null
-        val progress =
-            if (pos.durationMillis > 0) (pos.positionMillis.toFloat() / pos.durationMillis).coerceIn(0f, 1f) else 0f
+        val progress = WatchProgress.fraction(pos) ?: 0f
         return when (parts[0]) {
             "movie" -> graph.catalogRepository.movie(id)?.let {
                 val label = it.displayTitle.trim().lowercase().ifBlank { it.streamId }
@@ -768,25 +780,47 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
                     contentKey = "movie:${it.sourceId}:$label",
                 )
             }
-            "ep" -> graph.catalogRepository.episode(id)?.let { episode ->
-                val show = graph.catalogRepository.seriesByProvider(episode.sourceId, episode.seriesId)
-                val chapter = "S${episode.season}E${episode.episodeNumber}"
-                val title = when {
-                    show != null -> "${show.displayTitle} · $chapter"
-                    episode.title.isNotBlank() -> "$chapter · ${episode.title}"
-                    else -> chapter
-                }
-                ResumeItem(
-                    pos.mediaKey,
-                    title,
-                    show?.posterUrl ?: episode.stillUrl,
-                    episode.streamUrl,
-                    progress,
-                    contentKey = show?.let { s -> "series:${s.sourceId}:${s.seriesId}" } ?: pos.mediaKey,
-                )
-            }
+            "ep" -> episodeResume(id, progress)
             else -> null
         }
+    }
+
+    /**
+     * Finished episode → the next chapter at progress 0, so Continuar viendo does not drop the show
+     * after the credits. Null when that was the last episode or the row is gone.
+     */
+    private suspend fun resolveNextResume(
+        finished: PlaybackPosition,
+        episodeLists: MutableMap<String, List<app.opentv.data.model.Episode>>,
+    ): ResumeItem? {
+        val id = finished.mediaKey.removePrefix("ep:").toLongOrNull() ?: return null
+        if (!finished.mediaKey.startsWith("ep:")) return null
+        val episode = graph.catalogRepository.episode(id) ?: return null
+        val cacheKey = "${episode.sourceId}:${episode.seriesId}"
+        val episodes = episodeLists.getOrPut(cacheKey) {
+            graph.catalogRepository.episodesForSeries(episode.sourceId, episode.seriesId)
+        }
+        val next = ContinueWatching.nextAfter(episode.id, episodes) ?: return null
+        return episodeResume(next.id, progress = 0f)
+    }
+
+    private suspend fun episodeResume(episodeId: Long, progress: Float): ResumeItem? {
+        val episode = graph.catalogRepository.episode(episodeId) ?: return null
+        val show = graph.catalogRepository.seriesByProvider(episode.sourceId, episode.seriesId)
+        val chapter = "S${episode.season}E${episode.episodeNumber}"
+        val title = when {
+            show != null -> "${show.displayTitle} · $chapter"
+            episode.title.isNotBlank() -> "$chapter · ${episode.title}"
+            else -> chapter
+        }
+        return ResumeItem(
+            mediaKey = "ep:${episode.id}",
+            title = title,
+            posterUrl = show?.posterUrl ?: episode.stillUrl,
+            streamUrl = episode.streamUrl,
+            progress = progress,
+            contentKey = show?.let { s -> "series:${s.sourceId}:${s.seriesId}" } ?: "ep:${episode.id}",
+        )
     }
 
     private val movieCategory = MutableStateFlow<String?>(null)
@@ -933,13 +967,55 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         graph.catalogRepository.recentlyAddedSeries()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     val favouriteMovies: StateFlow<List<Movie>> =
-        graph.catalogRepository.observeFavouriteMovies()
+        combine(
+            graph.catalogRepository.observeFavouriteMovies(),
+            settings.activeProfileId.flatMapLatest { pid ->
+                graph.playbackPositions.observeForProfile(pid)
+            },
+        ) { movies, positions ->
+            val watched = HashMap<Long, Long>()
+            for (pos in positions) {
+                if (!pos.mediaKey.startsWith("movie:")) continue
+                val id = pos.mediaKey.removePrefix("movie:").toLongOrNull() ?: continue
+                watched[id] = maxOf(watched[id] ?: 0L, pos.updatedAtMillis)
+            }
+            FavouriteWatchOrder.sort(movies, { watched[it.id] ?: 0L }, { it.name })
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val favouriteSeries: StateFlow<List<Series>> =
+        combine(
+            graph.catalogRepository.observeFavouriteSeries(),
+            settings.activeProfileId.flatMapLatest { pid ->
+                graph.playbackPositions.observeForProfile(pid)
+            },
+        ) { series, positions -> series to positions }
+            .mapLatest { (series, positions) -> sortFavouriteSeries(series, positions) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val favouriteSeries: StateFlow<List<Series>> =
-        graph.catalogRepository.observeFavouriteSeries()
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    private suspend fun sortFavouriteSeries(
+        series: List<Series>,
+        positions: List<PlaybackPosition>,
+    ): List<Series> {
+        if (series.isEmpty()) return series
+        val byKey = series.associateBy { "${it.sourceId}:${it.seriesId}" }
+        val watched = HashMap<String, Long>()
+        for (pos in positions) {
+            if (!pos.mediaKey.startsWith("ep:")) continue
+            val id = pos.mediaKey.removePrefix("ep:").toLongOrNull() ?: continue
+            val episode = graph.catalogRepository.episode(id) ?: continue
+            val key = "${episode.sourceId}:${episode.seriesId}"
+            if (key !in byKey) continue
+            watched[key] = maxOf(watched[key] ?: 0L, pos.updatedAtMillis)
+        }
+        return FavouriteWatchOrder.sort(
+            series,
+            { watched["${it.sourceId}:${it.seriesId}"] ?: 0L },
+            { it.name },
+        )
+    }
 
     private val _recommendedMovies = MutableStateFlow<List<Movie>>(emptyList())
     val recommendedMovies: StateFlow<List<Movie>> = _recommendedMovies.asStateFlow()
@@ -1201,8 +1277,36 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         return graph.catalogRepository.ensureEpisodes(source, series.seriesId)
     }
 
+    /**
+     * Manual refresh of one series from its detail page: new seasons/episodes and detail fields.
+     * Does not sync the rest of the catalogue.
+     */
+    suspend fun refreshSeriesFromPanel(series: Series): Series? =
+        graph.catalogRepository.refreshSeriesFromPanel(series)
+
     fun episodes(series: Series) =
         graph.catalogRepository.observeEpisodes(series.sourceId, series.seriesId)
+
+    /** Watch progress 0..1 for a movie/episode, or null when nothing is saved. Finished is 1. */
+    suspend fun watchProgress(mediaKey: String): Float? =
+        resumePosition(mediaKey)?.let { WatchProgress.fraction(it) }
+
+    /**
+     * Progress for every episode of a show that has a mark. Finished chapters are 1. Used by the
+     * series detail list so each row can draw its own bar.
+     */
+    suspend fun episodeWatchProgress(sourceId: Long, seriesId: String): Map<Long, Float> {
+        val episodes = graph.catalogRepository.episodesForSeries(sourceId, seriesId)
+        if (episodes.isEmpty()) return emptyMap()
+        val profileId = settings.activeProfileId.value
+        val out = HashMap<Long, Float>(episodes.size)
+        for (episode in episodes) {
+            val mark = graph.playbackPositions.get(profileId, "ep:${episode.id}") ?: continue
+            val fraction = WatchProgress.fraction(mark) ?: continue
+            out[episode.id] = fraction
+        }
+        return out
+    }
 
     /** For the series detail screen: look the series up by row id. */
     fun seriesById(id: Long): kotlinx.coroutines.flow.Flow<Series?> =

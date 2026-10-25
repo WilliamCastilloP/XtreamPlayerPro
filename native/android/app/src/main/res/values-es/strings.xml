@@ -443,6 +443,8 @@
     <string name="vod_new_episodes">Nuevos episodios</string>
     <string name="vod_kind_movie">Película</string>
     <string name="vod_kind_series">Serie</string>
+    <string name="vod_refresh_series">Actualizar capítulos</string>
+    <string name="vod_refreshing_series">Actualizando…</string>
     <string name="vod_detail_loading">Cargando…</string>
     <string name="vod_person_title">Con %1$s</string>
     <string name="vod_person_empty">No hay nada más con %1$s en tu biblioteca.</string>

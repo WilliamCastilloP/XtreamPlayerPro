@@ -206,6 +206,10 @@ class CatalogRepository(
     fun observeEpisodes(sourceId: Long, seriesId: String): Flow<List<Episode>> =
         episodeDao.observeForSeries(sourceId, seriesId)
 
+    /** One-shot episode list for continue-watching next-chapter promotion. */
+    suspend fun episodesForSeries(sourceId: Long, seriesId: String): List<Episode> =
+        withContext(Dispatchers.IO) { episodeDao.listForSeries(sourceId, seriesId) }
+
     fun searchChannels(query: String): Flow<List<Channel>> = channelDao.search(query)
 
     fun searchChannelsIncludingHidden(query: String): Flow<List<Channel>> =
@@ -860,6 +864,35 @@ class CatalogRepository(
             .onFailure { Log.w(TAG, "Episode fetch failed for series $seriesId", it) }
             .getOrNull()
             ?.contentYear
+    }
+
+    /**
+     * Re-fetch one series from the panel: episodes and the detail fields. Does not touch the rest
+     * of the catalogue. Returns the updated row, or null when the source is missing.
+     */
+    suspend fun refreshSeriesFromPanel(series: Series): Series? = withContext(Dispatchers.IO) {
+        val source = sourceDao.byId(series.sourceId) ?: return@withContext null
+        if (source.kind != SourceKind.XTREAM) {
+            ensureEpisodes(source, series.seriesId)
+            return@withContext seriesDao.byId(series.id)
+        }
+        ensureEpisodes(source, series.seriesId)
+        var result = seriesDao.byId(series.id) ?: series
+        val info = runCatching { api.seriesInfo(source, series.seriesId) }.getOrNull()
+        if (info != null) {
+            languageCache["series:${result.sourceId}:${result.seriesId}"] = info.languageCodes
+            result = result.copy(
+                backdropUrl = info.backdropUrl ?: result.backdropUrl,
+                cast = info.cast ?: result.cast,
+                genre = info.genre ?: result.genre,
+                tmdbId = info.tmdbId ?: result.tmdbId,
+                plot = info.plot ?: result.plot,
+                rating = info.rating ?: result.rating,
+                year = info.year ?: result.year,
+            )
+            seriesDao.upsertAll(listOf(result))
+        }
+        seriesDao.byId(series.id) ?: result
     }
 
     /**

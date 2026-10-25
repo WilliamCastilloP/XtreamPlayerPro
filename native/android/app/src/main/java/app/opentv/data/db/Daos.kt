@@ -861,6 +861,13 @@ interface PlaybackPositionDao {
     @Query("SELECT * FROM playback_positions WHERE profileId = :profileId")
     suspend fun forProfile(profileId: Long): List<PlaybackPosition>
 
+    /** Reactive watch history for a profile — favourites order and detail progress. */
+    @Query(
+        "SELECT * FROM playback_positions WHERE profileId = :profileId " +
+            "ORDER BY updatedAtMillis DESC",
+    )
+    fun observeForProfile(profileId: Long): Flow<List<PlaybackPosition>>
+
     @Upsert
     suspend fun upsert(position: PlaybackPosition)
 
